@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { api, formatBytes, formatDate, formatDuration, uploadFile, useApi } from "@/lib/client";
-import type { AnalysisStatus, AssetItem, AssetKind, Page, Stats } from "@/lib/types";
+import type { AnalysisStatus, AssetItem, Page, Stats } from "@/lib/types";
 import { LibraryFilters } from "./library-filters";
 import {
   Button,
@@ -94,7 +94,9 @@ export function AnalysisBadge({ status }: { status: AnalysisStatus }) {
 const isAnalyzing = (a: AssetItem) => a.analysisStatus === "pending" || a.analysisStatus === "running";
 const stripHashtags = (text: string) => text.replace(/#[\p{L}\p{N}_]+/gu, "").trim();
 
-/** Ảnh thu nhỏ của asset; video có biểu tượng phát và thời lượng. */
+const KIND_LABEL = { image: "ảnh", video: "video", audio: "audio" } as const;
+
+/** Ảnh thu nhỏ của asset; video/audio có biểu tượng và thời lượng. */
 export function AssetThumb({ asset, className }: { asset: AssetItem; className?: string }) {
   return (
     <span className={cx("relative block overflow-hidden bg-zinc-100", className)}>
@@ -104,10 +106,10 @@ export function AssetThumb({ asset, className }: { asset: AssetItem; className?:
       ) : (
         <span className="grid size-full place-items-center text-xs text-zinc-400">Không có ảnh xem trước</span>
       )}
-      {asset.kind === "video" && (
+      {asset.kind !== "image" && (
         <span className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white">
           <svg viewBox="0 0 24 24" className="size-3" fill="currentColor" aria-hidden>
-            <path d="M8 5v14l11-7z" />
+            <path d={asset.kind === "audio" ? "M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" : "M8 5v14l11-7z"} />
           </svg>
           {formatDuration(asset.duration)}
         </span>
@@ -162,6 +164,14 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
         <div className="overflow-hidden rounded-lg bg-zinc-900">
           {asset.kind === "video" ? (
             <video src={asset.url} poster={asset.thumbUrl ?? undefined} controls preload="metadata" className="max-h-[60vh] w-full" />
+          ) : asset.kind === "audio" ? (
+            <div className="space-y-3 p-4">
+              {asset.thumbUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={asset.thumbUrl} alt="" className="w-full rounded" />
+              )}
+              <audio src={asset.url} controls preload="metadata" className="w-full" />
+            </div>
           ) : (
             <a href={asset.url} target="_blank" rel="noreferrer">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -172,8 +182,8 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-zinc-500">
           <dt>Loại</dt>
           <dd>
-            {asset.kind === "video" ? `Video · ${formatDuration(asset.duration)}` : "Ảnh"} · {asset.width}×{asset.height} ·{" "}
-            {formatBytes(asset.sizeBytes)}
+            {asset.kind === "image" ? `Ảnh · ${asset.width}×${asset.height}` : `${asset.kind === "video" ? `Video · ${asset.width}×${asset.height}` : "Audio"} · ${formatDuration(asset.duration)}`}{" "}
+            · {formatBytes(asset.sizeBytes)}
           </dd>
           <dt>Nguồn</dt>
           <dd className="truncate">
@@ -212,7 +222,10 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
           {asset.analysisStatus === "failed" && asset.analysisError && (
             <p className="whitespace-pre-wrap break-words text-xs text-red-600">{asset.analysisError}</p>
           )}
-          <Field label="Tóm tắt nội dung" hint="AI đọc tóm tắt này để tự chọn asset khi viết kịch bản. Bạn có thể sửa lại.">
+          <Field
+            label="Tóm tắt nội dung"
+            hint={asset.kind === "audio" ? "Viết mô tả (thể loại, tâm trạng) để AI tóm tắt chính xác hơn." : "AI đọc tóm tắt này để tự chọn asset khi viết kịch bản. Bạn có thể sửa lại."}
+          >
             <textarea
               className={inputClass}
               rows={3}
@@ -222,15 +235,15 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
               placeholder={analyzing ? "Đang phân tích..." : "Chưa có tóm tắt (thêm mô tả hoặc bấm Phân tích lại)"}
             />
           </Field>
-          {asset.ocrText ? (
+          {asset.kind === "audio" ? null : asset.ocrText ? (
             <div>
-              <p className="mb-1 text-sm font-medium text-zinc-700">Chữ đọc được trong {asset.kind === "video" ? "video" : "ảnh"}</p>
+              <p className="mb-1 text-sm font-medium text-zinc-700">Chữ đọc được trong {KIND_LABEL[asset.kind]}</p>
               <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 font-sans text-xs text-zinc-700 ring-1 ring-zinc-200">
                 {asset.ocrText}
               </pre>
             </div>
           ) : (
-            !analyzing && <p className="text-xs text-zinc-500">Không đọc được chữ nào trong {asset.kind === "video" ? "video" : "ảnh"}.</p>
+            !analyzing && <p className="text-xs text-zinc-500">Không đọc được chữ nào trong {KIND_LABEL[asset.kind]}.</p>
           )}
           <TagList tags={asset.aiTags} />
         </section>
@@ -330,16 +343,17 @@ export function AssetGrid({
 }
 
 const PAGE_SIZE = 60;
-const ACCEPT = "image/*,video/*,.mov,.mkv";
+const ACCEPT = "image/*,video/*,audio/*,.mov,.mkv,.m4a,.flac,.opus";
 const isMedia = (f: File) =>
-  f.type.startsWith("image/") || f.type.startsWith("video/") || /\.(jpe?g|png|webp|gif|bmp|mp4|mov|m4v|webm|mkv|avi)$/i.test(f.name);
+  /^(image|video|audio)\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp|mp4|mov|m4v|webm|mkv|avi|mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i.test(f.name);
 
 function KindSelect({ value, onChange }: { value: string; onChange: (kind: string) => void }) {
   return (
     <select className={`${inputClass} w-auto!`} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">Ảnh & video</option>
+      <option value="">Tất cả loại</option>
       <option value="image">Chỉ ảnh</option>
       <option value="video">Chỉ video</option>
+      <option value="audio">Chỉ audio</option>
     </select>
   );
 }
@@ -400,19 +414,19 @@ export function AssetsLibrary() {
     >
       <PageHeader
         title="Assets"
-        subtitle={`${data?.total ?? 0} asset · Ảnh và video để ghép vào video. AI đọc chữ trong asset và tóm tắt nội dung để tự chọn asset phù hợp cho từng bước.`}
+        subtitle={`${data?.total ?? 0} asset · Ảnh, video và audio để ghép vào video. AI đọc chữ trong asset và tóm tắt nội dung để tự chọn asset phù hợp cho từng bước; audio dùng làm nhạc nền.`}
         actions={
           <>
             <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
             <Button variant="primary" onClick={() => fileInput.current?.click()}>
-              Tải ảnh/video lên
+              Tải ảnh/video/audio lên
             </Button>
           </>
         }
       />
       {dragging && (
         <div className="mb-4 rounded-xl border-2 border-dashed border-brand-500 bg-brand-50 py-8 text-center text-sm font-medium text-brand-700">
-          Thả ảnh hoặc video vào đây để tải lên
+          Thả ảnh, video hoặc audio vào đây để tải lên
         </div>
       )}
       <UploadList uploads={uploads} onClear={clear} />
@@ -453,30 +467,28 @@ export function AssetsLibrary() {
         </>
       ) : (
         <EmptyState title={filter.q || filter.tag || kind ? "Không có asset phù hợp" : "Chưa có asset nào"}>
-          Kéo thả ảnh/video vào trang hoặc bấm “Tải ảnh/video lên”. AI sẽ tự đọc chữ và tóm tắt nội dung từng asset.
+          Kéo thả ảnh/video/audio vào trang hoặc bấm “Tải ảnh/video/audio lên”. AI sẽ tự đọc chữ và tóm tắt nội dung từng asset.
         </EmptyState>
       )}
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.kind === "video" ? "Chi tiết video" : "Chi tiết ảnh"} wide>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={`Chi tiết ${editing ? KIND_LABEL[editing.kind] : ""}`} wide>
         {editing && <AssetEditor key={editing.id} initial={editing} onClose={() => setEditing(null)} onChanged={refresh} />}
       </Modal>
     </div>
   );
 }
 
-/** Chọn asset từ thư viện (nhiều asset có thứ tự, hoặc một asset). `kind` giới hạn loại asset. */
+/** Chọn ảnh/video từ thư viện để làm hình cho các bước (nhiều asset có thứ tự, hoặc một asset). */
 export function AssetPicker({
   selected,
   onChange,
   single,
-  kind: fixedKind,
 }: {
   selected: string[];
   onChange: (ids: string[]) => void;
   single?: boolean;
-  kind?: AssetKind;
 }) {
   const [filter, setFilter] = useState({ q: "", tag: "" });
-  const [kind, setKind] = useState<string>(fixedKind ?? "");
+  const [kind, setKind] = useState("image,video");
   const query = new URLSearchParams({ limit: "120" });
   if (filter.q) query.set("q", filter.q);
   if (filter.tag) query.set("tag", filter.tag);
@@ -492,7 +504,11 @@ export function AssetPicker({
   return (
     <div>
       <LibraryFilters kind="assets" q={filter.q} tag={filter.tag} onChange={onFilter} placeholder="Tìm theo tên, mô tả, chữ trong ảnh...">
-        {!fixedKind && <KindSelect value={kind} onChange={setKind} />}
+        <select className={`${inputClass} w-auto!`} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="image,video">Ảnh & video</option>
+          <option value="image">Chỉ ảnh</option>
+          <option value="video">Chỉ video</option>
+        </select>
         {!single && selected.length > 0 && (
           <Button size="sm" variant="ghost" onClick={() => onChange([])}>
             Bỏ chọn ({selected.length})
@@ -507,6 +523,56 @@ export function AssetPicker({
       ) : (
         <EmptyState title="Không có asset">Tải ảnh/video lên ở trang Assets.</EmptyState>
       )}
+    </div>
+  );
+}
+
+/** Chọn nhạc nền (asset audio) + âm lượng, nghe thử ngay. */
+export function MusicPicker({
+  musicId,
+  volume,
+  onChange,
+}: {
+  musicId: string;
+  volume: number;
+  onChange: (next: { musicId: string; volume: number }) => void;
+}) {
+  const { data } = useApi<Page<AssetItem>>("/api/assets?kind=audio&limit=200");
+  const current = data?.items.find((a) => a.id === musicId);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <select className={`${inputClass} max-w-md`} value={musicId} onChange={(e) => onChange({ musicId: e.target.value, volume })}>
+          <option value="">Không có nhạc nền</option>
+          {data?.items.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.title} ({formatDuration(a.duration)})
+            </option>
+          ))}
+        </select>
+        {musicId && (
+          <label className="flex items-center gap-2 text-sm text-zinc-600">
+            Âm lượng
+            <input
+              type="range"
+              min={0.02}
+              max={0.5}
+              step={0.01}
+              value={volume}
+              onChange={(e) => onChange({ musicId, volume: Number(e.target.value) })}
+              className="accent-brand-500"
+            />
+            <span className="w-9 tabular-nums">{Math.round(volume * 100)}%</span>
+          </label>
+        )}
+      </div>
+      {current && (
+        <>
+          {current.aiSummary && <p className="text-xs text-zinc-500">{current.aiSummary}</p>}
+          <audio key={current.id} src={current.url} controls preload="none" className="h-9 w-full max-w-md" />
+        </>
+      )}
+      {data && !data.items.length && <p className="text-xs text-zinc-500">Chưa có audio nào. Tải nhạc lên ở trang Assets.</p>}
     </div>
   );
 }

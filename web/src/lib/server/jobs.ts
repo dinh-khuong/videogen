@@ -93,6 +93,9 @@ export function getJobDetail(id: string): JobDetail | null {
 }
 
 const ASPECTS = ["16:9", "9:16", "1:1"];
+/** Asset dùng làm hình trong từng bước (audio chỉ dùng làm nhạc nền) */
+const VISUAL_KINDS = "image,video";
+const DEFAULT_MUSIC_VOLUME = 0.12;
 /** Chủ đề là prompt cho AI nên cho phép rất dài; giới hạn này chỉ để tránh vô tình dán cả tài liệu khổng lồ. */
 export const MAX_TOPIC_CHARS = 30_000;
 
@@ -131,9 +134,12 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
   const assetIds = [...new Set((raw.assetIds ?? []).map(String))].slice(0, 30);
   if (libraryMode === "selected" && !script) {
     if (!assetIds.length) throw new HttpError(400, "Hãy chọn ít nhất một asset trong thư viện");
-    const found = assetsForEngine({ ids: assetIds, limit: assetIds.length });
-    if (found.length !== assetIds.length) throw new HttpError(400, "Một số asset đã chọn không còn trong thư viện");
+    const found = assetsForEngine({ ids: assetIds, kind: VISUAL_KINDS, limit: assetIds.length });
+    if (found.length !== assetIds.length) throw new HttpError(400, "Một số asset đã chọn không còn trong thư viện (hoặc là audio)");
   }
+  const musicId = raw.musicId || null;
+  if (musicId && !assetFilePath(musicId, "audio")) throw new HttpError(400, "Không tìm thấy nhạc nền trong Assets");
+  const musicVolume = Math.min(Math.max(Number(raw.musicVolume ?? DEFAULT_MUSIC_VOLUME) || 0, 0.01), 1);
   const bgVideoId = layout === "split" ? raw.bgVideoId || null : null;
   if (layout === "split" && (!bgVideoId || !assetFilePath(bgVideoId, "video"))) {
     throw new HttpError(400, "Bố cục chia đôi cần chọn một video nền trong Assets");
@@ -156,6 +162,8 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     libraryMode: script ? "off" : libraryMode,
     libraryTag: libraryMode === "auto" ? raw.libraryTag?.trim() || null : null,
     assetIds: libraryMode === "selected" && !script ? assetIds : [],
+    musicId,
+    musicVolume: musicId ? musicVolume : undefined,
     contactId,
     script,
     sourceVideoId: raw.sourceVideoId || null,
@@ -191,20 +199,26 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     if (!bg || !fs.existsSync(bg)) throw new Error("Video nền đã bị xóa khỏi Assets");
     spec.bg_video = bg;
   }
+  if (input.musicId) {
+    const music = assetFilePath(input.musicId, "audio");
+    if (!music || !fs.existsSync(music)) throw new Error("Nhạc nền đã bị xóa khỏi Assets");
+    spec.music = music;
+    spec.music_volume = input.musicVolume ?? DEFAULT_MUSIC_VOLUME;
+  }
   if (input.script) {
     // Render lại: asset từng bước lấy theo library_image (id asset thư viện)
     const ids = input.script.steps.map((s) => s.library_image).filter((x): x is string => !!x);
     spec.script = { ...input.script, steps: input.script.steps.map((s) => ({ ...s, image: null })) };
-    spec.library = assetsForEngine({ ids, limit: ids.length || 1 });
+    spec.library = assetsForEngine({ ids, kind: VISUAL_KINDS, limit: ids.length || 1 });
     spec.library_mode = "auto";
   } else if (input.libraryMode === "selected") {
     const ids = selectedAssetIds(input);
-    const assets = assetsForEngine({ ids, limit: 30 });
+    const assets = assetsForEngine({ ids, kind: VISUAL_KINDS, limit: 30 });
     const order = new Map(ids.map((id, i) => [id, i]));
     spec.library = assets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   } else if (input.libraryMode === "auto") {
     // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
-    spec.library = assetsForEngine({ tag: input.libraryTag ?? undefined, limit: 300 }).filter(
+    spec.library = assetsForEngine({ tag: input.libraryTag ?? undefined, kind: VISUAL_KINDS, limit: 300 }).filter(
       (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }

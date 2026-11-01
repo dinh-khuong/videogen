@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
 import type { AssetItem, Contact, JobInput, JobItem, Page, TagCount } from "@/lib/types";
-import { AssetPicker } from "./assets-library";
+import { AssetPicker, MusicPicker } from "./assets-library";
 import { Button, Card, ErrorBox, Field, PageHeader, cx, inputClass } from "./ui";
 
 const VOICES: Record<string, { value: string; label: string }[]> = {
@@ -59,6 +59,7 @@ export function CreateVideoForm() {
   const [webImages, setWebImages] = useState(true);
   const [imageStyle, setImageStyle] = useState<JobInput["imageStyle"]>("auto");
   const [contactId, setContactId] = useState(params.get("contact") ?? "");
+  const [music, setMusic] = useState({ musicId: "", volume: 0.12 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +88,8 @@ export function CreateVideoForm() {
         libraryTag: libraryMode === "auto" ? libraryTag || null : null,
         assetIds: libraryMode === "selected" ? assetIds : [],
         contactId: contactId || null,
+        musicId: music.musicId || null,
+        musicVolume: music.volume,
       };
       const job = await api<JobItem>("/api/jobs", { method: "POST", json: input });
       router.push(`/jobs/${job.id}`);
@@ -246,6 +249,12 @@ export function CreateVideoForm() {
             </span>
           </label>
         </div>
+      </Card>
+
+      <Card className="space-y-2 p-5">
+        <h2 className="font-semibold text-zinc-900">Nhạc nền</h2>
+        <p className="text-sm text-zinc-500">Nhạc lặp lại suốt video, nhỏ hơn giọng đọc và mờ dần ở cuối.</p>
+        <MusicPicker musicId={music.musicId} volume={music.volume} onChange={setMusic} />
       </Card>
 
       <Card className="p-5">

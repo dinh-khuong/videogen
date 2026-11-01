@@ -1,9 +1,9 @@
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
-export type AssetKind = "image" | "video";
+export type AssetKind = "image" | "video" | "audio";
 export type AnalysisStatus = "pending" | "running" | "done" | "failed";
 
-/** Asset: ảnh hoặc video của người dùng (hoặc ảnh tìm trên mạng) dùng để ghép vào video. */
+/** Asset: ảnh, video hoặc audio của người dùng (hoặc ảnh tìm trên mạng) dùng để ghép vào video. */
 export type AssetItem = {
   id: string;
   kind: AssetKind;
@@ -91,6 +91,10 @@ export type JobInput = {
   assetIds?: string[];
   /** tên cũ của assetIds (job tạo trước khi đổi sang asset) */
   imageIds?: string[];
+  /** id asset audio làm nhạc nền */
+  musicId?: string | null;
+  /** âm lượng nhạc nền 0-1 */
+  musicVolume?: number;
   contactId?: string | null;
   script?: Script | null;
   /** id video gốc khi render lại từ kịch bản đã sửa */

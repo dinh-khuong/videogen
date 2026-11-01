@@ -10,6 +10,7 @@ import { MEDIA_DIR, TMP_DIR, ensureDirs } from "./paths";
 
 export const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"];
 export const VIDEO_EXTS = [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"];
+export const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".flac", ".opus"];
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -24,6 +25,14 @@ const MIME: Record<string, string> = {
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
   ".avi": "video/x-msvideo",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".flac": "audio/flac",
+  ".opus": "audio/ogg",
 };
 
 export function extOf(name: string): string {

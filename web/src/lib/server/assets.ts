@@ -93,9 +93,13 @@ function where(query: AssetQuery): { sql: string; params: unknown[] } {
     clauses.push(tagFilterSql("asset", "a"));
     params.push(query.tag);
   }
-  if (query.kind === "image" || query.kind === "video") {
-    clauses.push("a.kind = ?");
-    params.push(query.kind);
+  if (query.kind) {
+    // một loại ("audio") hoặc nhiều loại cách nhau bằng dấu phẩy ("image,video")
+    const kinds = query.kind.split(",").filter((k) => k === "image" || k === "video" || k === "audio");
+    if (kinds.length) {
+      clauses.push("a.kind IN (SELECT value FROM json_each(?))");
+      params.push(JSON.stringify(kinds));
+    }
   }
   if (query.status) {
     clauses.push("a.analysis_status IN (SELECT value FROM json_each(?))");
@@ -324,6 +328,7 @@ export function requeueInterruptedAnalysis(): void {
 
 /** Số asset còn chờ/đang phân tích trong phạm vi (ids hoặc tag; không có gì = toàn thư viện). */
 export function countUnanalyzed(scope: { ids?: string[]; tag?: string | null }): number {
-  const { sql, params } = where({ ids: scope.ids, tag: scope.tag ?? undefined, status: "pending,running" });
+  // Chỉ ảnh/video: audio không được AI chọn cho từng bước nên job không cần chờ
+  const { sql, params } = where({ ids: scope.ids, tag: scope.tag ?? undefined, kind: "image,video", status: "pending,running" });
   return (db().prepare(`SELECT COUNT(*) AS n FROM assets a${sql}`).get(...params) as { n: number }).n;
 }

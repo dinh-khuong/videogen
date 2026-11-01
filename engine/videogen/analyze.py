@@ -29,18 +29,18 @@ from PIL import Image, ImageOps
 from .config import Settings, load_settings
 from .events import JsonReporter
 from .llm import extract_json, normalize_hashtags
-from .probe import IMAGE_EXTS, ffmpeg_exe, video_info
+from .probe import AUDIO_EXTS, IMAGE_EXTS, ffmpeg_exe, video_info
 
 OCR_MIN_CONF = 60       # độ tin cậy tối thiểu của một từ (0-100)
 OCR_MAX_CHARS = 2000    # giới hạn chữ lưu lại cho mỗi asset
 VIDEO_FRAMES = (0.15, 0.5, 0.85)
 
 SUMMARY_PROMPT = """Bạn giúp người dựng video phân loại tư liệu (ảnh hoặc video ngắn).
-Dữ liệu về một asset gồm: loại, tên file/tiêu đề, mô tả của người dùng, chữ đọc được bằng OCR
+Dữ liệu về một asset (ảnh, video hoặc audio) gồm: loại, tên file/tiêu đề, mô tả của người dùng, chữ đọc được bằng OCR
 (có thể lẫn lỗi nhận dạng hoặc ký tự rác) và mô tả hình ảnh của mô hình thị giác (nếu có).
 Chỉ trả lời bằng JSON:
 {
-  "summary": "1-3 câu bằng {language}: asset thể hiện gì, thông tin chính (tên sản phẩm, giá, số liệu, các bước...) và phù hợp để minh họa nội dung nào trong video.",
+  "summary": "1-3 câu bằng {language}: asset thể hiện gì, thông tin chính (tên sản phẩm, giá, số liệu, các bước...) và phù hợp để minh họa nội dung nào trong video. Với audio: thể loại, tâm trạng và loại video phù hợp làm nhạc nền.",
   "text": "Chữ trong asset sau khi sửa lỗi OCR rõ ràng, giữ nguyên thứ tự và ý; bỏ dòng rác. Chuỗi rỗng nếu không có chữ có nghĩa.",
   "tags": ["3-6 hashtag viết thường, không dấu, viết liền, không có ký tự #"]
 }
@@ -71,7 +71,8 @@ class AssetAnalysis:
 
 
 def kind_of(path: Path) -> str:
-    return "image" if path.suffix.lower() in IMAGE_EXTS else "video"
+    ext = path.suffix.lower()
+    return "image" if ext in IMAGE_EXTS else "audio" if ext in AUDIO_EXTS else "video"
 
 
 def _video_frames(path: Path, out_dir: Path) -> list[Path]:
@@ -193,7 +194,8 @@ def summarize(item: AssetInput, ocr_text: str, caption: str, settings: Settings,
     """Tóm tắt bằng DeepSeek. Trả về {"summary", "text", "tags"}."""
     from openai import OpenAI
 
-    facts = [f"Loại: {'video' if item.kind == 'video' else 'ảnh'}", f"Tên/tiêu đề: {item.title or Path(item.path).stem}"]
+    kind = {"video": "video", "audio": "audio (nhạc/âm thanh)"}.get(item.kind, "ảnh")
+    facts = [f"Loại: {kind}", f"Tên/tiêu đề: {item.title or Path(item.path).stem}"]
     if item.description.strip():
         facts.append(f"Mô tả của người dùng: {item.description.strip()}")
     facts.append(f"Chữ đọc được (OCR):\n{ocr_text}" if ocr_text else "Chữ đọc được (OCR): (không có)")
@@ -230,6 +232,12 @@ def analyze_one(item: AssetInput, settings: Settings, language: str, use_ocr: bo
     path = Path(item.path)
     if not path.exists():
         raise FileNotFoundError(f"Không tìm thấy file {path}")
+    if item.kind == "audio":
+        # Audio không có hình để đọc chữ: chỉ tóm tắt từ tên + mô tả (vd thể loại nhạc, tâm trạng)
+        if settings.deepseek_api_key and (item.description.strip() or _informative(item.title)):
+            data = summarize(item, "", "", settings, language)
+            result.summary, result.tags = data["summary"], data["tags"]
+        return result
     with tempfile.TemporaryDirectory(prefix="videogen_analyze_") as tmp:
         work = Path(tmp)
         frames = _video_frames(path, work) if item.kind == "video" else [path]

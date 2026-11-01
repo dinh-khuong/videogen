@@ -1,6 +1,6 @@
 # VideoGen Studio — Tạo video hướng dẫn bằng AI
 
-Ứng dụng web (Next.js) để tạo video hướng dẫn tự động và quản lý assets (ảnh, video nguồn), video đã tạo và khách hàng (CRM). Việc dựng video do một **engine Python** chạy ở tiến trình riêng đảm nhận. Engine này cũng dùng độc lập được như một CLI.
+Ứng dụng web (Next.js) để tạo video hướng dẫn tự động và quản lý assets (ảnh, video nguồn, audio), video đã tạo và khách hàng (CRM). Việc dựng video do một **engine Python** chạy ở tiến trình riêng đảm nhận. Engine này cũng dùng độc lập được như một CLI.
 
 Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản và tự chọn ảnh/video từ Assets (bước nào không có asset phù hợp thì tìm ảnh trên mạng) → edge-tts đọc lời bình → dựng video có phụ đề, nhãn bước, hiệu ứng Ken Burns, chuyển cảnh.
 
@@ -40,6 +40,7 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản v
   - Ảnh tìm được khi tạo video được lưu vào Assets, kèm mô tả, hashtag và nguồn.
   - File trùng nội dung chỉ lưu một lần.
   - Video nền cho bố cục Shorts chia đôi cũng là một asset (video).
+  - **Audio** (mp3, m4a, aac, wav, ogg, flac, opus) nằm chung trang Assets, có ảnh sóng âm và tóm tắt AI (từ tên + mô tả, vd thể loại, tâm trạng). Khi tạo video (hoặc tạo lại từ kịch bản đã sửa), chọn một audio làm **nhạc nền**: nhạc lặp suốt video, chỉnh được âm lượng, mờ dần ở cuối.
   - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép.
   - Bạn có thể **sửa kịch bản, đổi ảnh/video từng bước rồi tạo lại video**.
 - **CRM khách hàng**:

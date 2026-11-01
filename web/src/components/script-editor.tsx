@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useApi } from "@/lib/client";
 import type { AssetItem, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
-import { AssetPicker, AssetThumb } from "./assets-library";
+import { AssetPicker, AssetThumb, MusicPicker } from "./assets-library";
 import { Button, ErrorBox, Field, Modal, inputClass } from "./ui";
 
 /** Sửa kịch bản của video rồi tạo lại (không gọi LLM; ảnh/video từng bước lấy từ Assets). */
@@ -14,13 +14,14 @@ export function ScriptEditor({
   onCancel,
 }: {
   initial: Script;
-  defaults: Pick<JobInput, "aspect" | "contactId" | "sourceVideoId">;
+  defaults: Pick<JobInput, "aspect" | "contactId" | "sourceVideoId" | "musicId" | "musicVolume">;
   onCancel: () => void;
 }) {
   const router = useRouter();
   const [script, setScript] = useState<Script>(() => structuredClone(initial));
   const [aspect, setAspect] = useState(defaults.aspect);
   const [picking, setPicking] = useState<number | null>(null);
+  const [music, setMusic] = useState({ musicId: defaults.musicId ?? "", volume: defaults.musicVolume ?? 0.12 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +56,8 @@ export function ScriptEditor({
           libraryMode: "off",
           contactId: defaults.contactId ?? null,
           sourceVideoId: defaults.sourceVideoId ?? null,
+          musicId: music.musicId || null,
+          musicVolume: music.volume,
         } satisfies Partial<JobInput>,
       });
       router.push(`/jobs/${job.id}`);
@@ -141,6 +144,10 @@ export function ScriptEditor({
       <Field label="Lời kết">
         <textarea className={inputClass} rows={2} value={script.outro} onChange={(e) => setScript({ ...script, outro: e.target.value })} />
       </Field>
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-zinc-700">Nhạc nền</p>
+        <MusicPicker musicId={music.musicId} volume={music.volume} onChange={setMusic} />
+      </div>
       <ErrorBox message={error} />
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>

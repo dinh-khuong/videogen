@@ -8,6 +8,7 @@ from PIL import Image, ImageOps
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".flac", ".opus"}
 
 
 def ffmpeg_exe() -> str:
@@ -36,6 +37,29 @@ def video_info(path: Path) -> dict:
     return info
 
 
+def audio_info(path: Path) -> dict:
+    out = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True).stderr
+    m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", out)
+    if not m or not re.search(r"Stream #.*Audio:", out):
+        raise ValueError("Không đọc được audio (định dạng không hỗ trợ hoặc file hỏng).")
+    return {"kind": "audio", "duration": round(int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3]), 2)}
+
+
+def _audio_thumbnail(path: Path, out: Path) -> None:
+    """Ảnh dạng sóng âm làm thumbnail cho audio."""
+    wave = out.with_suffix(".wave.png")
+    subprocess.run(
+        [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(path), "-filter_complex",
+         "aformat=channel_layouts=mono,showwavespic=s=640x200:colors=0xF97316:scale=sqrt", "-frames:v", "1", str(wave)],
+        check=True, capture_output=True,
+    )
+    with Image.open(wave) as w:
+        canvas = Image.new("RGB", (640, 480), (24, 24, 27))
+        canvas.paste(w.convert("RGBA"), (0, 140), w.convert("RGBA"))
+        canvas.save(out, "JPEG", quality=85)
+    wave.unlink(missing_ok=True)
+
+
 def _video_thumbnail(path: Path, duration: float, out: Path) -> None:
     t = min(1.0, duration / 3)
     subprocess.run(
@@ -55,6 +79,15 @@ def probe(path: Path, thumbnail: Path | None = None) -> dict:
                 thumb.thumbnail((640, 640))
                 thumb.save(thumbnail, "JPEG", quality=85)
                 info["thumbnail"] = str(thumbnail)
+        return info
+    if path.suffix.lower() in AUDIO_EXTS:
+        info = audio_info(path)
+        if thumbnail:
+            try:
+                _audio_thumbnail(path, thumbnail)
+                info["thumbnail"] = str(thumbnail)
+            except (subprocess.CalledProcessError, OSError):
+                pass  # thumbnail chỉ để xem, không bắt buộc
         return info
     info = video_info(path)
     if thumbnail:

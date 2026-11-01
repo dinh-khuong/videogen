@@ -204,12 +204,14 @@ export function VideoDetailView({ id }: { id: string }) {
 
       {video.assets.length > 0 && (
         <section>
-          <h2 className="mb-3 font-semibold text-zinc-900">Ảnh & video dùng trong video</h2>
+          <h2 className="mb-3 font-semibold text-zinc-900">Assets dùng trong video</h2>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
             {video.assets.map((asset) => (
               <a key={asset.step} href={asset.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
                 <AssetThumb asset={asset} className="aspect-[4/3] w-full" />
-                <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">Bước {asset.step}</span>
+                <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {asset.step === 0 ? "Nhạc nền" : `Bước ${asset.step}`}
+                </span>
                 <p className="truncate px-2 py-1 text-xs text-zinc-600">{asset.title}</p>
               </a>
             ))}
@@ -227,7 +229,12 @@ export function VideoDetailView({ id }: { id: string }) {
             {editingScript ? (
               <ScriptEditor
                 initial={video.script}
-                defaults={{ aspect: aspectOf(video), contactId: video.contacts[0]?.id ?? null, sourceVideoId: video.id }}
+                defaults={{
+                  aspect: aspectOf(video),
+                  contactId: video.contacts[0]?.id ?? null,
+                  sourceVideoId: video.id,
+                  musicId: video.assets.find((a) => a.step === 0 && a.kind === "audio")?.id ?? null,
+                }}
                 onCancel={() => setEditingScript(false)}
               />
             ) : (

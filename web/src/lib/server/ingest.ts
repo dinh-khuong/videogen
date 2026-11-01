@@ -4,7 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { withHashtags } from "@/lib/hashtags";
-import type { Script } from "@/lib/types";
+import type { JobInput, Script } from "@/lib/types";
 import { analyzer } from "./analyzer";
 import { addAssets, findAssetBySha1, getAsset, type NewAsset } from "./assets";
 import { db } from "./db";
@@ -110,6 +110,9 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
       for (const [step, assetId] of stepAssets) {
         if (getAsset(assetId)) link.run(files.id, assetId, step);
       }
+      // Nhạc nền gắn với video ở "bước 0"
+      const musicId = (JSON.parse(job.input) as JobInput).musicId;
+      if (musicId && getAsset(musicId)) link.run(files.id, musicId, 0);
       if (job.contact_id && db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(job.contact_id)) {
         db().prepare("INSERT OR IGNORE INTO contact_videos (contact_id, video_id) VALUES (?, ?)").run(job.contact_id, files.id);
       }
