@@ -17,9 +17,10 @@ from moviepy.editor import (
 )
 from PIL import Image
 
-from graphics import prepare_background, render_subtitle, split_subtitles
+from .graphics import prepare_background, render_subtitle, split_subtitles
 
 ZOOM = 1.12        # biên độ zoom Ken Burns
+FRAME_ZOOM = 1.04  # zoom nhẹ hơn khi ảnh là nội dung chính (giữ trọn ảnh, chữ trong ảnh dễ đọc)
 HEAD = 0.25        # khoảng lặng trước lời bình mỗi scene (giây)
 TAIL = 0.6         # khoảng lặng sau lời bình (phải >= TRANSITION để giọng không chồng nhau)
 TRANSITION = 0.5   # thời lượng crossfade giữa các scene
@@ -35,6 +36,7 @@ class Scene:
     audio_path: Path | None
     narration: str = ""
     overlays: list[Image.Image] = field(default_factory=list)
+    image_style: str = "cover"  # cover: ảnh làm nền phủ kín | frame: ảnh trọn vẹn làm nội dung chính
 
 
 def _layer_region(layer: Image.Image) -> tuple[Image.Image, tuple[int, int]] | None:
@@ -49,8 +51,9 @@ def _make_scene_clip(
     scene: Scene, index: int, size: tuple[int, int], font_override: str | None
 ) -> VideoClip:
     w, h = size
-    big_size = (round(w * ZOOM), round(h * ZOOM))
-    background = prepare_background(scene.image_path, big_size)
+    zoom = FRAME_ZOOM if scene.image_style == "frame" else ZOOM
+    big_size = (round(w * zoom), round(h * zoom))
+    background = prepare_background(scene.image_path, big_size, scene.image_style)
 
     audio = AudioFileClip(str(scene.audio_path)) if scene.audio_path else None
     speech = audio.duration if audio else 0.0
@@ -70,12 +73,13 @@ def _make_scene_clip(
         t += speech * len(chunk) / total_chars
 
     zoom_in = index % 2 == 0
-    pan_x = 0.5 + (0.08 if index % 3 == 1 else -0.08 if index % 3 == 2 else 0.0)
+    pan = 0.0 if scene.image_style == "frame" else 0.08
+    pan_x = 0.5 + (pan if index % 3 == 1 else -pan if index % 3 == 2 else 0.0)
 
     def make_frame(t: float) -> np.ndarray:
         progress = min(max(t / duration, 0.0), 1.0)
         progress = progress * progress * (3 - 2 * progress)  # ease in-out
-        k = ZOOM - (ZOOM - 1) * progress if zoom_in else 1 + (ZOOM - 1) * progress
+        k = zoom - (zoom - 1) * progress if zoom_in else 1 + (zoom - 1) * progress
         crop_w = min(w * k, big_size[0])
         crop_h = min(h * k, big_size[1])
         cx = big_size[0] * (0.5 + (pan_x - 0.5) * progress)
@@ -142,7 +146,10 @@ def build_video(
     font_override: str | None = None,
     work_dir: Path | None = None,
     bg_video: Path | None = None,
-) -> Path:
+    logger="bar",
+    thumbnail_path: Path | None = None,
+) -> float:
+    """Render video ra out_path, trả về thời lượng (giây). `logger`: "bar", None hoặc proglog logger."""
     if bg_video:
         size, bg_size = split_sizes()
     else:
@@ -181,9 +188,17 @@ def build_video(
         preset="medium",
         threads=os.cpu_count() or 4,
         temp_audiofile=str(temp_audio),
-        logger="bar",
+        logger=logger,
     )
+    duration = final.duration
+    if thumbnail_path:
+        # Khung hình title card (đã hết fade-in) làm ảnh đại diện; lỗi ở đây không làm hỏng video
+        try:
+            frame = final.get_frame(min(1.2, duration / 2))
+            Image.fromarray(np.asarray(frame)[..., :3].astype("uint8")).save(thumbnail_path, "JPEG", quality=88)
+        except Exception as e:
+            print(f"      ⚠️  Không tạo được thumbnail: {e}", flush=True)
     final.close()
     for clip in clips:
         clip.close()
-    return out_path
+    return duration

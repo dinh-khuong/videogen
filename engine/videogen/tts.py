@@ -5,6 +5,7 @@ Dự phòng: gTTS (Google Translate TTS, miễn phí) khi edge-tts lỗi liên t
 máy chủ edge-tts đôi khi từ chối ngẫu nhiên (NoAudioReceived).
 """
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import edge_tts
@@ -34,21 +35,41 @@ def _gtts_synthesize(text: str, voice: str, out_path: Path) -> None:
     tmp_path.replace(out_path)
 
 
-async def _synthesize_all(jobs: list[tuple[str, Path]], voice: str, rate: str) -> None:
+async def _synthesize_all(
+    jobs: list[tuple[str, Path]], voice: str, rate: str, on_done: Callable[[], None]
+) -> None:
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
     async def run(text: str, path: Path) -> None:
         async with semaphore:
             if await _edge_synthesize(text, voice, rate, path):
+                on_done()
                 return
-        print(f"      ⚠️  edge-tts lỗi cho '{path.stem}', chuyển sang gTTS.")
+        print(f"      ⚠️  edge-tts lỗi cho '{path.stem}', chuyển sang gTTS.", flush=True)
         await asyncio.to_thread(_gtts_synthesize, text, voice, path)
+        on_done()
 
     await asyncio.gather(*(run(text, path) for text, path in jobs))
 
 
-def synthesize_many(jobs: list[tuple[str, Path]], voice: str, rate: str = "+0%") -> None:
-    """Tạo song song nhiều file mp3. Bỏ qua file đã tồn tại (cache)."""
+def synthesize_many(
+    jobs: list[tuple[str, Path]],
+    voice: str,
+    rate: str = "+0%",
+    on_progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Tạo song song nhiều file mp3. Bỏ qua file đã tồn tại (cache).
+
+    on_progress(done, total) được gọi mỗi khi xong một file.
+    """
     pending = [(text, path) for text, path in jobs if not path.exists()]
+    total, done = len(jobs), len(jobs) - len(pending)
+
+    def on_done() -> None:
+        nonlocal done
+        done += 1
+        if on_progress:
+            on_progress(done, total)
+
     if pending:
-        asyncio.run(_synthesize_all(pending, voice, rate))
+        asyncio.run(_synthesize_all(pending, voice, rate, on_done))

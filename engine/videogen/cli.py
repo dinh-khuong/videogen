@@ -1,0 +1,166 @@
+"""CLI của engine tạo video.
+
+Ví dụ (chạy trong thư mục engine/):
+    python -m videogen "cách làm bánh flan"
+    python -m videogen "cách pha cà phê phin" --aspect 9:16 --music nhac.mp3
+    python -m videogen "cách trồng rau mầm" --script-only        # chỉ viết kịch bản để sửa
+    python -m videogen --script output/cach_trong_rau_mam/script.json   # render lại từ kịch bản đã sửa
+    python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/   # Shorts chia đôi với gameplay
+    python -m videogen "giới thiệu menu quán" --library-dir anh_mon/       # ảnh của bạn làm nội dung chính
+
+Lệnh dành cho web app:
+    python -m videogen job spec.json      # chạy job, phát sự kiện JSON trên stdout
+    python -m videogen probe file... [--thumbnail-dir dir]
+    python -m videogen doctor             # kiểm tra cấu hình, in JSON
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+SUBCOMMANDS = {"make", "job", "probe", "doctor"}
+
+
+def _library_from_dir(folder: Path):
+    """Ảnh trong thư mục làm thư viện; mô tả lấy từ file <tên>.txt cạnh ảnh (nếu có) hoặc tên file."""
+    from .llm import LibraryImage
+    from .probe import IMAGE_EXTS
+
+    items = []
+    for i, path in enumerate(sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS)):
+        note = path.with_suffix(".txt")
+        description = note.read_text(encoding="utf-8").strip() if note.exists() else path.stem.replace("_", " ")
+        items.append(LibraryImage(id=f"img{i + 1}", path=str(path.resolve()), description=description))
+    return items
+
+
+def cmd_make(argv: list[str]) -> int:
+    from .config import ConfigError
+    from .pipeline import IMAGE_STYLES, Options, run
+    from .video_builder import ASPECTS
+
+    parser = argparse.ArgumentParser(prog="videogen", description="Tạo video hướng dẫn (how-to) từ một chủ đề.")
+    parser.add_argument("topic", nargs="?", help="Chủ đề, ví dụ: 'cách làm bánh flan'")
+    parser.add_argument("-o", "--output", help="File video đầu ra (.mp4). Mặc định: output/<tiêu-đề>/")
+    parser.add_argument("--script", help="Render từ file script.json có sẵn (bỏ qua bước gọi LLM)")
+    parser.add_argument("--script-only", action="store_true", help="Chỉ sinh kịch bản, không render video")
+    parser.add_argument("--steps", type=int, help="Số bước mong muốn (mặc định 5-8)")
+    parser.add_argument("--aspect", choices=list(ASPECTS), default="16:9",
+                        help="Tỉ lệ khung hình: 16:9 (YouTube), 9:16 (TikTok/Shorts), 1:1")
+    parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ lời bình (mặc định: tiếng Việt)")
+    parser.add_argument("--voice", help="Giọng edge-tts, vd vi-VN-NamMinhNeural (ghi đè TTS_VOICE)")
+    parser.add_argument("--rate", help="Tốc độ đọc, vd '+10%%' hoặc '-5%%' (ghi đè TTS_RATE)")
+    parser.add_argument("--music", type=Path, help="File nhạc nền (mp3/wav), tự lặp và giảm âm lượng")
+    parser.add_argument("--music-volume", type=float, default=0.12, help="Âm lượng nhạc nền 0-1 (mặc định 0.12)")
+    parser.add_argument("--bg-video", type=Path,
+                        help="File hoặc thư mục video nền (vd gameplay). Tạo video dọc 9:16 chia đôi: "
+                             "nội dung ở trên, video nền (tắt tiếng) ở dưới")
+    parser.add_argument("--image-style", choices=IMAGE_STYLES, default="auto",
+                        help="cover: ảnh phủ kín khung; frame: ảnh hiển thị trọn vẹn làm nội dung chính; "
+                             "auto: ảnh của bạn dùng frame, ảnh tìm trên mạng dùng cover")
+    parser.add_argument("--library-dir", type=Path,
+                        help="Thư mục ảnh của bạn (mô tả trong file .txt cùng tên). AI dùng chúng làm nội dung chính")
+    parser.add_argument("--library-mode", choices=("auto", "selected"), default="selected",
+                        help="selected: dùng hết ảnh trong thư mục; auto: AI chỉ dùng ảnh phù hợp")
+    parser.add_argument("--no-web-images", action="store_true", help="Không tìm ảnh trên mạng")
+    args = parser.parse_args(argv)
+
+    if not args.topic and not args.script:
+        parser.error("Cần nhập chủ đề hoặc --script <file>.")
+    if args.music and not args.music.exists():
+        parser.error(f"Không tìm thấy file nhạc: {args.music}")
+    if args.bg_video and not args.bg_video.exists():
+        parser.error(f"Không tìm thấy video nền: {args.bg_video}")
+    if args.library_dir and not args.library_dir.is_dir():
+        parser.error(f"Không tìm thấy thư mục ảnh: {args.library_dir}")
+
+    library = _library_from_dir(args.library_dir) if args.library_dir else []
+    opts = Options(
+        aspect=args.aspect,
+        num_steps=args.steps,
+        language=args.language,
+        voice=args.voice,
+        rate=args.rate,
+        music=args.music,
+        music_volume=args.music_volume,
+        script_only=args.script_only,
+        bg_video=args.bg_video,
+        image_style=args.image_style,
+        web_images=not args.no_web_images,
+        library=library,
+        library_mode=args.library_mode if library else "off",
+    )
+    try:
+        run(args.topic, args.output, args.script, opts)
+    except ConfigError as e:
+        print(f"❌ Lỗi cấu hình: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nĐã hủy.", file=sys.stderr)
+        return 130
+    except Exception as e:
+        print(f"❌ Lỗi: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_job(argv: list[str]) -> int:
+    from .job import run_job
+
+    parser = argparse.ArgumentParser(prog="videogen job", description="Chạy job từ file spec JSON (dùng cho web app).")
+    parser.add_argument("spec", type=Path)
+    args = parser.parse_args(argv)
+    return run_job(args.spec)
+
+
+def cmd_probe(argv: list[str]) -> int:
+    from .probe import probe_json
+
+    parser = argparse.ArgumentParser(prog="videogen probe", description="In thông tin ảnh/video dạng mảng JSON.")
+    parser.add_argument("files", type=Path, nargs="+")
+    parser.add_argument("--thumbnail-dir", type=Path, help="Lưu ảnh thu nhỏ <tên file>.jpg vào thư mục này")
+    args = parser.parse_args(argv)
+    return probe_json(args.files, args.thumbnail_dir)
+
+
+def cmd_doctor(argv: list[str]) -> int:
+    """Kiểm tra môi trường: thư viện, API key, nguồn ảnh, font, ffmpeg."""
+    report: dict = {"python": sys.version.split()[0], "problems": []}
+    try:
+        from .config import load_settings
+        from .graphics import find_font
+        from .image_search import PROVIDERS
+
+        settings = load_settings()
+        report["deepseek"] = bool(settings.deepseek_api_key)
+        if not settings.deepseek_api_key:
+            report["problems"].append("Chưa có DEEPSEEK_API_KEY trong engine/.env")
+        report["image_providers"] = [
+            name for name in settings.image_providers if name in PROVIDERS and PROVIDERS[name][1](settings)
+        ]
+        if not report["image_providers"]:
+            report["problems"].append("Không có nguồn ảnh nào dùng được (IMAGE_PROVIDERS)")
+        report["voice"] = settings.tts_voice
+        report["font"] = find_font("regular", settings.font_path)
+        if not report["font"]:
+            report["problems"].append("Không tìm thấy font hỗ trợ tiếng Việt (đặt FONT_PATH)")
+        import edge_tts  # noqa: F401
+        import imageio_ffmpeg
+        import moviepy
+
+        report["moviepy"] = moviepy.__version__
+        report["ffmpeg"] = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        report["problems"].append(f"{type(e).__name__}: {e} (chạy: pip install -r requirements.txt)")
+    report["ok"] = not report["problems"]
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    command = argv[0] if argv and argv[0] in SUBCOMMANDS else "make"
+    if argv and argv[0] == command:
+        argv = argv[1:]
+    handler = {"make": cmd_make, "job": cmd_job, "probe": cmd_probe, "doctor": cmd_doctor}[command]
+    sys.exit(handler(argv))

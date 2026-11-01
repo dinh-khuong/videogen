@@ -1,129 +1,152 @@
-# videogen — Tạo video hướng dẫn tự động
+# VideoGen Studio — Tạo video hướng dẫn bằng AI
 
-Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các bước, kết) → DuckDuckGo (hoặc Google / Serper / Pexels) tìm ảnh minh họa cho từng bước → edge-tts đọc lời bình → dựng video có phụ đề, title card, nhãn "Bước N", hiệu ứng Ken Burns, chuyển cảnh và nhạc nền.
+Ứng dụng web (Next.js) để tạo video hướng dẫn tự động và quản lý thư viện ảnh, video và khách hàng (CRM). Việc dựng video do một **engine Python** chạy ở tiến trình riêng đảm nhận. Engine này cũng dùng độc lập được như một CLI.
+
+Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản → lấy ảnh (từ thư viện của bạn hoặc tìm trên mạng) → edge-tts đọc lời bình → dựng video có phụ đề, nhãn bước, hiệu ứng Ken Burns, chuyển cảnh.
+
+```
+┌──────────── web/ (Next.js) ────────────┐        ┌──────── engine/ (Python) ────────┐
+│ Giao diện: tạo video, hàng đợi,        │ spawn  │ python -m videogen job spec.json │
+│ thư viện ảnh/video, CRM                │ ─────► │  kịch bản → ảnh → giọng → video  │
+│ API + SQLite + hàng đợi job            │ ◄───── │  sự kiện tiến độ JSON (stdout)   │
+│ Lưu file: data/media, data/app.db      │ result │  result.json                     │
+└────────────────────────────────────────┘        └──────────────────────────────────┘
+```
+
+- **web/**: toàn bộ phần CRM và quản lý, gồm giao diện, API, database SQLite và hàng đợi job. Web không tự dựng video.
+- **engine/**: toàn bộ phần tạo video. Engine không biết gì về database: nó nhận một file spec JSON và trả về `result.json`. Web app đưa kết quả đó vào thư viện.
+- **data/**: dữ liệu local, gồm `app.db` (SQLite), `media/` (ảnh, video, thumbnail) và `jobs/` (thư mục làm việc của từng job). Thư mục này không được commit.
 
 ## Tính năng
 
-- **Kịch bản thông minh**: DeepSeek (JSON mode) sinh tiêu đề, lời mở đầu, các bước (tên bước + lời bình + 2 từ khóa ảnh), lời kết.
-- **Nhiều nguồn ảnh, tự chuyển nguồn**: DuckDuckGo (không cần key) → Google Custom Search → Serper (Google Images) → Pexels; nguồn lỗi hoặc bị từ chối thì tự chuyển nguồn sau. Ưu tiên ảnh lớn, đúng tỉ lệ khung hình, bỏ ảnh từ kho ảnh trả phí (thường có watermark); kiểm tra ảnh hợp lệ, thử từ khóa dự phòng; nếu vẫn không có thì tạo ảnh nền thay thế. Nguồn từng ảnh ghi vào `credits.txt`.
-- **Giọng đọc**: edge-tts (Microsoft Neural, miễn phí) có retry; tự chuyển sang gTTS nếu edge-tts lỗi.
-- **Video đẹp**: phụ đề tiếng Việt chia đoạn theo thời gian đọc, title card, nhãn bước, zoom/pan Ken Burns, crossfade giữa các cảnh, fade in/out, nhạc nền tự lặp.
-- **Nhiều khung hình**: `16:9` (YouTube), `9:16` (TikTok/Shorts/Reels), `1:1`. Ảnh lệch tỉ lệ tự đặt trên nền mờ.
-- **Shorts chia đôi màn hình**: `--bg-video` đặt nội dung ở nửa trên, video nền (vd gameplay) chạy liên tục ở nửa dưới — định dạng giữ chân người xem phổ biến trên Shorts/TikTok.
-- **Nhanh & tiết kiệm**: tải ảnh và tạo giọng đọc song song; cache ảnh/audio, chạy lại không tốn thêm lượt gọi API.
-- **Sửa rồi render lại**: kịch bản lưu ở `output/<tên>/script.json`, sửa lời/ảnh rồi render lại không cần gọi LLM.
+- **Tạo video**: gồm khung 16:9, 9:16, 1:1 và **Shorts chia đôi** (nội dung ở trên, video nền như gameplay ở dưới). Có thể chọn giọng đọc, tốc độ đọc, ngôn ngữ và số bước.
+- **Ảnh là nội dung chính, không chỉ làm nền**:
+  - *AI chọn từ thư viện*: AI đọc mô tả và hashtag của ảnh trong thư viện, rồi gán ảnh phù hợp cho từng bước. Bước nào không có ảnh khớp thì tự tìm trên mạng.
+  - *Dùng ảnh tôi chọn*: các ảnh bạn chọn (sản phẩm, món ăn, ảnh chụp màn hình...) là nội dung chính. AI viết kịch bản xoay quanh từng ảnh, theo đúng thứ tự bạn chọn.
+  - Ảnh thư viện hiển thị **trọn vẹn trong khung** (không bị cắt) trên nền mờ. Ảnh tìm trên mạng phủ kín khung. Bạn có thể chọn cách hiển thị khác trong form tạo video.
+- **Hàng đợi job**:
+  - Mỗi video được dựng bởi một tiến trình Python riêng, xử lý lần lượt từng job.
+  - Có tiến độ theo từng giai đoạn, log của engine, nút hủy (dừng cả ffmpeg) và nút chạy lại.
+  - Nếu server tắt giữa chừng, job đang chạy được đánh dấu lỗi để chạy lại.
+- **Thư viện ảnh và video**:
+  - Mỗi ảnh/video có mô tả. Hashtag trong mô tả (`#caphe #huongdan`) tự thành tag để lọc.
+  - Ảnh tìm được khi tạo video được lưu vào thư viện, kèm mô tả, hashtag và nguồn.
+  - Ảnh trùng nội dung chỉ lưu một lần.
+  - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép.
+  - Bạn có thể **sửa kịch bản, đổi ảnh từng bước rồi tạo lại video**.
+- **CRM khách hàng**:
+  - Lưu trạng thái (tiềm năng → khách hàng), số điện thoại, email, nguồn, ghi chú có hashtag và ngày hẹn chăm sóc.
+  - Nhật ký chăm sóc (ghi chú, gọi điện, email, gặp mặt).
+  - Gắn video đã làm cho khách, hoặc tạo video cho khách ngay từ hồ sơ.
 
 ## Cài đặt
 
-Cần Python 3.10+.
+Cần **Python 3.10+** và **Node.js 20+**.
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env
+# 1. Engine Python
+pip install -r engine/requirements.txt
+cp engine/.env.example engine/.env      # điền DEEPSEEK_API_KEY (xem mục API key)
+
+# 2. Web app
+cd web
+npm install
 ```
 
-Mở `.env` và điền API key (xem bên dưới).
+Nếu bạn dùng virtualenv, đặt nó ở `engine/.venv`; web app sẽ tự dùng Python trong đó. Cách khác là đặt `PYTHON_BIN` trong `web/.env.local` (xem `web/.env.example`).
 
-## Cách dùng
+## Chạy
 
 ```bash
-# Cơ bản (video 16:9, lưu ở output/<tiêu-đề>/)
-python main.py "cách làm bánh flan"
-
-# Video dọc cho TikTok/Shorts, 6 bước, có nhạc nền, đọc nhanh hơn 10%
-python main.py "cách pha cà phê phin" --aspect 9:16 --steps 6 --music nhac.mp3 --rate +10%
-
-# Giọng nam
-python main.py "cách trồng rau mầm" --voice vi-VN-NamMinhNeural
-
-# Quy trình 2 bước: viết kịch bản -> tự sửa -> render
-python main.py "cách thay lốp xe đạp" --script-only
-python main.py --script output/cach_thay_lop_xe_dap/script.json
+cd web
+npm run dev                     # phát triển: http://localhost:3000
 ```
-
-Xem tất cả tùy chọn: `python main.py -h`
-
-### Shorts chia đôi với video nền (gameplay)
 
 ```bash
-# Đặt các video gameplay vào thư mục gameplay/ rồi:
-python main.py "3 mẹo học tiếng Anh nhanh" --steps 4 --bg-video gameplay/
+cd web
+npm run build && npm start      # chạy ổn định, nhanh hơn
 ```
 
-- `--bg-video` nhận một file hoặc một thư mục (chọn ngẫu nhiên một video mỗi lần chạy).
-- Video nền được tắt tiếng, cắt vừa nửa dưới khung 720x1280, bắt đầu ở vị trí ngẫu nhiên và tự lặp nếu ngắn hơn video chính. Tự động dùng khung 9:16.
-- Shorts tối đa 3 phút; nên dùng `--steps 3`–`5` để video ngắn gọn.
-- **Bản quyền**: gameplay của game (vd Subway Surfers) là tài sản của nhà phát hành; tải lại video của người khác trên YouTube vi phạm điều khoản YouTube và dễ bị đánh dấu "nội dung sử dụng lại" (không kiếm tiền được). Nên tự quay màn hình khi chơi.
+Trang **Tổng quan** có mục "Engine Python": nếu thiếu API key, thiếu thư viện Python hoặc thiếu font tiếng Việt, mục này sẽ báo rõ cần sửa gì.
 
-### Sửa kịch bản
+## Engine Python dùng như CLI
 
-`script.json` có dạng:
+Engine chạy độc lập, không cần web app (chạy trong thư mục `engine/`, video lưu ở `engine/output/<tên>/`):
 
-```json
-{
-  "title": "...",
-  "intro": "...",
-  "steps": [
-    {"heading": "Tên bước", "narration": "Lời bình", "image_queries": ["query 1", "query 2"], "image": null}
-  ],
-  "outro": "..."
-}
+```bash
+cd engine
+python -m videogen "cách làm bánh flan"
+python -m videogen "cách pha cà phê phin" --aspect 9:16 --steps 6 --music nhac.mp3 --rate +10%
+python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/          # Shorts chia đôi
+python -m videogen "giới thiệu menu quán" --library-dir anh_mon/                # ảnh của bạn làm nội dung chính
+python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
+python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa
+python main.py ...                                                               # cách gọi cũ vẫn dùng được
 ```
 
-- Sửa `narration` → giọng đọc và phụ đề được tạo lại cho bước đó.
-- Sửa `image_queries` → tìm lại ảnh cho bước đó.
-- Đặt `"image": "anh_cua_toi.jpg"` (đường dẫn tuyệt đối hoặc tương đối với thư mục chứa script.json) để dùng ảnh của bạn.
+- `--library-dir`: thư mục ảnh. Mô tả của ảnh `pho.jpg` đặt trong file `pho.txt` cạnh nó; nếu không có file mô tả thì dùng tên file. Thêm `--library-mode auto` để AI chỉ dùng những ảnh phù hợp thay vì dùng tất cả.
+- `--image-style cover|frame|auto`: ảnh phủ kín khung, ảnh hiển thị trọn vẹn, hoặc tự động.
+
+Xem tất cả tùy chọn: `python -m videogen -h`
+
+### Các lệnh dành cho web app
+
+| Lệnh | Việc làm |
+|---|---|
+| `python -m videogen job spec.json` | Chạy một job. Mỗi sự kiện tiến độ là một dòng `@@videogen {json}` trên stdout; kết quả ghi vào `<work_dir>/result.json` |
+| `python -m videogen probe file... --thumbnail-dir dir` | In mảng JSON gồm kích thước/thời lượng của từng file và tạo thumbnail |
+| `python -m videogen doctor` | Kiểm tra cấu hình (API key, nguồn ảnh, font, thư viện) và in JSON |
+
+Cấu trúc spec và kết quả được mô tả trong [engine/videogen/job.py](engine/videogen/job.py).
 
 ## API key cần thiết
 
-### 1. DeepSeek (viết kịch bản) — **bắt buộc** (trừ khi dùng `--script`)
+Tất cả đặt trong `engine/.env`.
+
+### 1. DeepSeek (viết kịch bản) — **bắt buộc**
 - Lấy tại: https://platform.deepseek.com/api_keys
-- `.env`: `DEEPSEEK_API_KEY=sk-...`
+- `DEEPSEEK_API_KEY=sk-...`
 
 ### 2. Nguồn ảnh — **mặc định không cần key** (DuckDuckGo)
-Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,google,serper,pexels`). Các nguồn sau chỉ dùng khi có key và nguồn trước lỗi.
+Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,google,serper,pexels`). Một nguồn chỉ được dùng khi có key và nguồn đứng trước bị lỗi.
 
-**DuckDuckGo** — không cần key
-- Tự lọc ảnh đúng hướng khung hình (ngang/dọc/vuông) và kích thước lớn.
-- `DDG_REGION`: vùng tìm kiếm (`wt-wt` toàn cầu, `vn-vi` Việt Nam...).
-- `DDG_LICENSE`: lọc giấy phép ảnh. Làm quảng cáo nên đặt `ShareCommercially` hoặc `ModifyCommercially` (ít kết quả hơn nhưng an toàn hơn về bản quyền).
-- DuckDuckGo không có API chính thức: chương trình gọi endpoint web của họ, có thể bị giới hạn tốc độ khi tìm nhiều; khi đó tự chờ/thử lại rồi chuyển nguồn sau.
+- **DuckDuckGo**: không cần key. Đặt vùng tìm kiếm bằng `DDG_REGION`, lọc giấy phép ảnh bằng `DDG_LICENSE`; làm quảng cáo nên đặt `ShareCommercially`. Nguồn này không có API chính thức nên đôi khi bị giới hạn tốc độ; khi đó chương trình tự chờ rồi chuyển sang nguồn sau.
+- **Google Custom Search**: cần `GOOGLE_API_KEY` (dạng `AIza...`) và `GOOGLE_CSE_ID`. File `client_secret_*.json` (OAuth) không dùng được. Google đã đóng API này với khách hàng mới và sẽ tắt vào 1/1/2027.
+- **Serper.dev**: cần `SERPER_API_KEY`; trả kết quả Google Images qua API.
+- **Pexels**: cần `PEXELS_API_KEY` (miễn phí). Ảnh được phép dùng thương mại, **nên dùng nguồn này khi làm video quảng cáo**.
 
-**a) Google Custom Search** — `GOOGLE_API_KEY` + `GOOGLE_CSE_ID`
-1. Bật [Custom Search API](https://console.cloud.google.com/apis/library/customsearch.googleapis.com) cho project.
-2. Tạo **API key** (dạng `AIza...`) tại https://console.cloud.google.com/apis/credentials → "Create credentials" → "API key". File `client_secret_*.json` (OAuth) **không** dùng được cho API này.
-3. Tạo search engine tại https://programmablesearchengine.google.com/, bật **"Search the entire web"** và **"Image search"**, copy "Search engine ID".
-- Miễn phí 100 lượt/ngày.
-- ⚠️ Google đã đóng API này với khách hàng mới và sẽ tắt vào 1/1/2027. Project mới có thể bị lỗi 403 — khi đó chương trình tự chuyển sang nguồn sau.
+> Ảnh từ DuckDuckGo, Google hoặc Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc. Chỉ nên dùng cho học tập hoặc thử nghiệm. Với quảng cáo, hãy dùng ảnh của chính bạn (tải lên thư viện) hoặc ảnh Pexels.
 
-**b) Serper.dev** — `SERPER_API_KEY`
-- Kết quả Google Images qua API, đăng ký tại https://serper.dev. Dùng khi project Google bị chặn.
-
-**c) Pexels** — `PEXELS_API_KEY`
-- Key miễn phí tại https://www.pexels.com/api/. 200 lượt/giờ, 20.000 lượt/tháng.
-- Ảnh được dùng thương mại miễn phí — **nên dùng nguồn này khi làm video quảng cáo**.
-
-> Ảnh từ DuckDuckGo/Google/Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc — chỉ nên dùng cho học tập/thử nghiệm, không dùng cho quảng cáo trả phí.
-
-### 3. Giọng đọc — **không cần API key**
-- edge-tts, giọng mặc định `vi-VN-HoaiMyNeural` (nữ). Giọng nam: `vi-VN-NamMinhNeural`.
-- Danh sách giọng: `edge-tts --list-voices`
+### 3. Giọng đọc — **không cần key**
+- edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS.
 
 ## Cấu trúc code
 
 ```
-main.py           # CLI
-pipeline.py       # điều phối, cache, thư mục output
-config.py         # đọc API key từ .env
-llm.py            # DeepSeek -> kịch bản (Script/Step), lưu/đọc script.json
-image_search.py   # DuckDuckGo / Google / Serper / Pexels -> tải & kiểm tra ảnh, tự chuyển nguồn
-tts.py            # edge-tts (+ gTTS dự phòng), chạy song song
-graphics.py       # Pillow: phụ đề, nhãn bước, title card, ảnh dự phòng, font tiếng Việt
-video_builder.py  # moviepy: Ken Burns, phụ đề theo thời gian, crossfade, nhạc nền
+engine/                      # Python: tạo video (process riêng, CLI)
+  videogen/
+    cli.py                   # lệnh make / job / probe / doctor
+    job.py                   # spec JSON -> pipeline -> result.json (giao tiếp với web)
+    events.py                # sự kiện tiến độ JSON cho web, thanh tiến độ cho CLI
+    pipeline.py              # điều phối: kịch bản -> ảnh -> giọng -> video
+    llm.py                   # DeepSeek: kịch bản, hashtag, chọn ảnh thư viện
+    image_search.py          # DuckDuckGo / Google / Serper / Pexels
+    tts.py                   # edge-tts (+ gTTS dự phòng)
+    graphics.py              # Pillow: phụ đề, nhãn bước, khung ảnh nội dung
+    video_builder.py         # moviepy: Ken Burns, crossfade, chia đôi màn hình
+    probe.py                 # đọc thông tin ảnh/video, tạo thumbnail
+web/                         # Next.js: giao diện + API + CRM
+  src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, ảnh, khách hàng) và api/
+  src/components/            # giao diện
+  src/lib/server/            # db (SQLite + migration), runner (hàng đợi, spawn Python), ingest, repo
+data/                        # dữ liệu local (tự tạo khi chạy)
 ```
 
 ## Lưu ý
 
-- Font phụ đề tự tìm Noto Sans / DejaVu Sans / Arial. Nếu chữ tiếng Việt hiển thị lỗi, đặt `FONT_PATH` trong `.env`.
-- Máy chủ edge-tts đôi khi từ chối ngẫu nhiên — chương trình tự thử lại nhiều lần và chuyển sang gTTS nếu cần, nên bước tạo giọng có thể mất vài chục giây.
-- Pexels không cho phép bán lại nguyên ảnh hoặc dùng ảnh có người theo cách gây hiểu lầm (vd ngụ ý người trong ảnh chứng thực sản phẩm). Với quảng cáo, nên ưu tiên ảnh sản phẩm thật của bạn qua trường `"image"`.
+- **Bản quyền gameplay**: gameplay của game (ví dụ Subway Surfers) là tài sản của nhà phát hành. Hãy tự quay màn hình khi chơi rồi tải lên mục Video để làm video nền.
+- **Định dạng file**:
+  - Ảnh hỗ trợ jpg, png, webp, gif và bmp. Ảnh HEIC của iPhone cần đổi sang JPG trước, hoặc chọn "Định dạng: Tương thích nhất" trong phần Camera của iPhone.
+  - Video .MOV quay bằng iPhone dùng làm video nền được. Một số trình duyệt có thể không xem trước được video HEVC.
+- **Hiệu năng**: dựng video tốn nhiều CPU, nên mặc định mỗi lần chỉ chạy một job (`JOB_CONCURRENCY`). Một video khoảng 1 phút mất 1–2 phút để dựng.
+- **Font**: chương trình tự tìm Noto Sans / DejaVu Sans / Arial. Nếu chữ tiếng Việt hiển thị lỗi, đặt `FONT_PATH` trong `engine/.env`.

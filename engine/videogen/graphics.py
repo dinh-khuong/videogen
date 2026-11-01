@@ -132,8 +132,44 @@ def blurred_backdrop(img: Image.Image, size: tuple[int, int]) -> Image.Image:
     return backdrop
 
 
-def prepare_background(image_path: Path, size: tuple[int, int]) -> Image.Image:
+def framed_content(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Ảnh là nội dung chính: hiển thị trọn vẹn (không cắt) trong khung bo góc có bóng, trên nền mờ.
+
+    Chừa khoảng phía trên cho nhãn bước và phía dưới cho phụ đề.
+    """
+    w, h = size
+    backdrop = cover_fit(img, size).filter(ImageFilter.GaussianBlur(radius=max(8, w // 25)))
+    backdrop = Image.blend(backdrop, Image.new("RGB", size, (12, 14, 20)), 0.55)
+
+    # Phụ đề 2 dòng chiếm ~25% chiều cao khung (gần vuông/dọc) -> chừa chỗ để không che ảnh
+    top, bottom = round(h * 0.14), round(h * (0.25 if h > w * 0.85 else 0.2))
+    side = round(w * 0.06)
+    box_w, box_h = w - side * 2, h - top - bottom
+    scale = min(box_w / img.width, box_h / img.height)
+    fg = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
+    x = (w - fg.width) // 2
+    y = top + (box_h - fg.height) // 2
+    radius = max(6, round(min(w, h) * 0.022))
+
+    shadow = Image.new("L", size, 0)
+    offset = max(4, min(w, h) // 90)
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (x + offset, y + offset * 2, x + fg.width + offset, y + fg.height + offset * 2), radius, fill=170
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=offset * 3))
+    backdrop.paste(Image.new("RGB", size, (0, 0, 0)), (0, 0), shadow)
+
+    mask = Image.new("L", fg.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, fg.width - 1, fg.height - 1), radius, fill=255)
+    backdrop.paste(fg, (x, y), mask)
+    return backdrop
+
+
+def prepare_background(image_path: Path, size: tuple[int, int], style: str = "cover") -> Image.Image:
+    """style='cover': ảnh phủ kín khung (làm nền); style='frame': ảnh hiển thị trọn vẹn làm nội dung chính."""
     img = Image.open(image_path).convert("RGB")
+    if style == "frame":
+        return framed_content(img, size)
     frame_ratio = size[0] / size[1]
     img_ratio = img.width / img.height
     # Nếu tỉ lệ ảnh lệch nhiều so với khung (vd ảnh ngang trong video dọc) thì dùng nền mờ

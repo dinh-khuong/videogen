@@ -1,8 +1,13 @@
 """Cấu hình chung: đọc API key và thiết lập từ biến môi trường (.env)."""
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
+ENGINE_DIR = Path(__file__).resolve().parent.parent
+
+# engine/.env là nơi chính; .env ở thư mục đang chạy (nếu có) bổ sung. Biến môi trường thật luôn được ưu tiên.
+load_dotenv(ENGINE_DIR / ".env")
 load_dotenv()
 
 

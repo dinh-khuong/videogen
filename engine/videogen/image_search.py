@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageOps
 
-from config import ConfigError, Settings
+from .config import ConfigError, Settings
 
 HEADERS = {
     "User-Agent": (
