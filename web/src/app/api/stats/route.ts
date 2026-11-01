@@ -6,7 +6,8 @@ export const GET = route(async () => {
   const count = (sql: string, ...params: unknown[]) => (db().prepare(sql).get(...params) as { n: number }).n;
   const stats: Stats = {
     videos: count("SELECT COUNT(*) AS n FROM videos"),
-    images: count("SELECT COUNT(*) AS n FROM images"),
+    assets: count("SELECT COUNT(*) AS n FROM assets"),
+    assetsAnalyzing: count("SELECT COUNT(*) AS n FROM assets WHERE analysis_status IN ('pending', 'running')"),
     contacts: count("SELECT COUNT(*) AS n FROM contacts"),
     jobsActive: count("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued', 'running')"),
     followUpsDue: count(

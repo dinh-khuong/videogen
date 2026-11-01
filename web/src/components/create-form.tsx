@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
-import type { Contact, JobInput, JobItem, Page, TagCount, VideoItem } from "@/lib/types";
-import { ImagePicker } from "./images-library";
+import type { AssetItem, Contact, JobInput, JobItem, Page, TagCount } from "@/lib/types";
+import { AssetPicker } from "./assets-library";
 import { Button, Card, ErrorBox, Field, PageHeader, cx, inputClass } from "./ui";
 
 const VOICES: Record<string, { value: string; label: string }[]> = {
@@ -53,9 +53,9 @@ export function CreateVideoForm() {
   const [rate, setRate] = useState("+0%");
   const [layoutIndex, setLayoutIndex] = useState(0);
   const [bgVideoId, setBgVideoId] = useState("");
-  const [libraryMode, setLibraryMode] = useState<JobInput["libraryMode"]>("off");
+  const [libraryMode, setLibraryMode] = useState<JobInput["libraryMode"]>("auto");
   const [libraryTag, setLibraryTag] = useState("");
-  const [imageIds, setImageIds] = useState<string[]>([]);
+  const [assetIds, setAssetIds] = useState<string[]>([]);
   const [webImages, setWebImages] = useState(true);
   const [imageStyle, setImageStyle] = useState<JobInput["imageStyle"]>("auto");
   const [contactId, setContactId] = useState(params.get("contact") ?? "");
@@ -63,7 +63,7 @@ export function CreateVideoForm() {
   const [error, setError] = useState<string | null>(null);
 
   const layout = LAYOUTS[layoutIndex];
-  const bgVideos = useApi<Page<VideoItem>>(layout.layout === "split" ? "/api/videos?kind=upload&limit=200" : null);
+  const bgVideos = useApi<Page<AssetItem>>(layout.layout === "split" ? "/api/assets?kind=video&limit=200" : null);
   const tags = useApi<TagCount[]>(libraryMode === "auto" ? "/api/tags" : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
 
@@ -85,7 +85,7 @@ export function CreateVideoForm() {
         webImages,
         libraryMode,
         libraryTag: libraryMode === "auto" ? libraryTag || null : null,
-        imageIds: libraryMode === "selected" ? imageIds : [],
+        assetIds: libraryMode === "selected" ? assetIds : [],
         contactId: contactId || null,
       };
       const job = await api<JobItem>("/api/jobs", { method: "POST", json: input });
@@ -98,7 +98,7 @@ export function CreateVideoForm() {
 
   return (
     <form onSubmit={submit} className="space-y-6">
-      <PageHeader title="Tạo video mới" subtitle="AI viết kịch bản, lấy ảnh (thư viện hoặc trên mạng), đọc lời bình và dựng video." />
+      <PageHeader title="Tạo video mới" subtitle="AI viết kịch bản, chọn ảnh/video từ Assets (hoặc tìm ảnh trên mạng), đọc lời bình và dựng video." />
 
       <Card className="space-y-4 p-5">
         <Field label="Chủ đề video" hint="Ví dụ: “cách pha cà phê phin”, “giới thiệu menu mùa hè của quán”, “3 mẹo chăm sóc da”.">
@@ -156,7 +156,7 @@ export function CreateVideoForm() {
           ))}
         </div>
         {layout.layout === "split" && (
-          <Field label="Video nền (nửa dưới, tắt tiếng)" hint={<>Tải video nền ở <Link href="/videos" className="text-brand-600 underline">Thư viện video</Link>. Nên tự quay màn hình khi chơi game để tránh vi phạm bản quyền.</>}>
+          <Field label="Video nền (nửa dưới, tắt tiếng)" hint={<>Tải video nền ở trang <Link href="/assets" className="text-brand-600 underline">Assets</Link>. Nên tự quay màn hình khi chơi game để tránh vi phạm bản quyền.</>}>
             <select className={inputClass} value={bgVideoId} onChange={(e) => setBgVideoId(e.target.value)} required>
               <option value="">Chọn video nền...</option>
               {bgVideos.data?.items.map((v) => (
@@ -171,30 +171,32 @@ export function CreateVideoForm() {
 
       <Card className="space-y-4 p-5">
         <div>
-          <h2 className="font-semibold text-zinc-900">Ảnh trong video</h2>
-          <p className="text-sm text-zinc-500">Ảnh có thể là nền minh họa hoặc là nội dung chính (vd ảnh sản phẩm, món ăn, ảnh chụp màn hình).</p>
+          <h2 className="font-semibold text-zinc-900">Ảnh & video trong video</h2>
+          <p className="text-sm text-zinc-500">
+            Asset có thể là nền minh họa hoặc là nội dung chính (ảnh sản phẩm, menu, ảnh chụp màn hình, clip quay sản phẩm...).
+          </p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
-          <Choice active={libraryMode === "off"} onClick={() => setLibraryMode("off")} title="Tìm ảnh trên mạng">
-            AI tự đặt từ khóa và tìm ảnh cho từng bước.
+          <Choice active={libraryMode === "auto"} onClick={() => setLibraryMode("auto")} title="AI tự chọn từ Assets">
+            AI đọc tóm tắt và chữ trong từng asset, tự chọn ảnh/video khớp với từng bước.
           </Choice>
-          <Choice active={libraryMode === "auto"} onClick={() => setLibraryMode("auto")} title="AI chọn từ thư viện">
-            AI đọc mô tả ảnh trong thư viện và dùng ảnh khớp với bước.
+          <Choice active={libraryMode === "selected"} onClick={() => setLibraryMode("selected")} title="Dùng asset tôi chọn">
+            Ảnh/video bạn chọn là nội dung chính, AI viết lời bình dựa trên nội dung và chữ trong chúng.
           </Choice>
-          <Choice active={libraryMode === "selected"} onClick={() => setLibraryMode("selected")} title="Dùng ảnh tôi chọn">
-            Các ảnh bạn chọn là nội dung chính, AI viết kịch bản xoay quanh chúng.
+          <Choice active={libraryMode === "off"} onClick={() => setLibraryMode("off")} title="Chỉ tìm ảnh trên mạng">
+            Không dùng Assets; AI tự đặt từ khóa và tìm ảnh cho từng bước.
           </Choice>
         </div>
 
         {libraryMode === "auto" && (
-          <Field label="Giới hạn trong tag (tùy chọn)" hint="AI chỉ xem các ảnh có tag này. Để trống: xem 150 ảnh mới nhất có mô tả.">
+          <Field label="Giới hạn trong tag (tùy chọn)" hint="AI chỉ xem các asset có tag này. Để trống: cả thư viện (AI lọc theo chủ đề).">
             <select className={`${inputClass} max-w-xs`} value={libraryTag} onChange={(e) => setLibraryTag(e.target.value)}>
               <option value="">Toàn bộ thư viện</option>
               {tags.data
-                ?.filter((t) => t.images > 0)
+                ?.filter((t) => t.assets > 0)
                 .map((t) => (
                   <option key={t.name} value={t.name}>
-                    #{t.name} ({t.images} ảnh)
+                    #{t.name} ({t.assets} asset)
                   </option>
                 ))}
             </select>
@@ -203,24 +205,25 @@ export function CreateVideoForm() {
         {libraryMode === "selected" && (
           <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
             <p className="mb-3 text-sm text-zinc-600">
-              Bấm vào ảnh để chọn theo thứ tự xuất hiện mong muốn. Đã chọn <b>{imageIds.length}</b> ảnh. Mô tả ảnh càng rõ, lời bình càng sát nội dung ảnh.
+              Bấm vào asset để chọn theo thứ tự xuất hiện mong muốn. Đã chọn <b>{assetIds.length}</b> asset. AI dùng mô tả, tóm tắt và
+              chữ đọc được trong từng asset để viết lời bình.
             </p>
-            <ImagePicker selected={imageIds} onChange={setImageIds} />
+            <AssetPicker selected={assetIds} onChange={setAssetIds} />
           </div>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Cách hiển thị ảnh">
+          <Field label="Cách hiển thị ảnh/video">
             <select className={inputClass} value={imageStyle} onChange={(e) => setImageStyle(e.target.value as JobInput["imageStyle"])}>
-              <option value="auto">Tự động: ảnh thư viện hiện trọn vẹn, ảnh trên mạng phủ kín</option>
-              <option value="frame">Luôn hiện trọn vẹn trong khung (ảnh là nội dung chính)</option>
-              <option value="cover">Luôn phủ kín khung hình (ảnh làm nền)</option>
+              <option value="auto">Tự động: asset của bạn hiện trọn vẹn, ảnh trên mạng phủ kín</option>
+              <option value="frame">Luôn hiện trọn vẹn trong khung (asset là nội dung chính)</option>
+              <option value="cover">Luôn phủ kín khung hình (làm nền)</option>
             </select>
           </Field>
           <label className="flex items-start gap-2.5 self-end rounded-lg p-2 text-sm text-zinc-700">
             <input type="checkbox" className="mt-0.5 size-4 accent-brand-500" checked={webImages} onChange={(e) => setWebImages(e.target.checked)} />
             <span>
-              Tìm ảnh trên mạng cho các bước chưa có ảnh
+              Tìm ảnh trên mạng cho các bước chưa có asset
               <span className="block text-xs text-zinc-500">Tắt: bước thiếu ảnh dùng nền chữ thay thế.</span>
             </span>
           </label>

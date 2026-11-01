@@ -1,9 +1,14 @@
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
-export type ImageItem = {
+export type AssetKind = "image" | "video";
+export type AnalysisStatus = "pending" | "running" | "done" | "failed";
+
+/** Asset: ảnh hoặc video của người dùng (hoặc ảnh tìm trên mạng) dùng để ghép vào video. */
+export type AssetItem = {
   id: string;
+  kind: AssetKind;
   url: string;
-  thumbUrl: string;
+  thumbUrl: string | null;
   title: string;
   description: string;
   tags: string[];
@@ -11,8 +16,17 @@ export type ImageItem = {
   sourceUrl: string | null;
   width: number | null;
   height: number | null;
+  duration: number | null;
   sizeBytes: number | null;
   usedIn: number;
+  /** Chữ đọc được trong asset (OCR, đã được AI sửa lỗi) */
+  ocrText: string;
+  /** Tóm tắt nội dung do AI viết, dùng để AI chọn asset khi tạo video */
+  aiSummary: string;
+  aiTags: string[];
+  analysisStatus: AnalysisStatus;
+  analysisError: string | null;
+  analyzedAt: string | null;
   createdAt: string;
 };
 
@@ -23,7 +37,7 @@ export type VideoItem = {
   title: string;
   description: string;
   tags: string[];
-  kind: "generated" | "upload";
+  kind: "generated";
   duration: number | null;
   width: number | null;
   height: number | null;
@@ -38,6 +52,7 @@ export type ScriptStep = {
   image_queries: string[];
   image?: string | null;
   hashtags?: string[];
+  /** id asset (ảnh/video) trong thư viện dùng cho bước này */
   library_image?: string | null;
 };
 
@@ -52,7 +67,7 @@ export type Script = {
 
 export type VideoDetail = VideoItem & {
   script: Script | null;
-  images: (ImageItem & { step: number })[];
+  assets: (AssetItem & { step: number })[];
   contacts: { id: string; name: string; company: string }[];
 };
 
@@ -66,11 +81,15 @@ export type JobInput = {
   rate?: string;
   aspect: "16:9" | "9:16" | "1:1";
   layout: "normal" | "split";
+  /** id asset video làm nền (bố cục chia đôi) */
   bgVideoId?: string | null;
   imageStyle: "auto" | "cover" | "frame";
   webImages: boolean;
   libraryMode: "off" | "auto" | "selected";
   libraryTag?: string | null;
+  /** asset chọn làm nội dung chính (chế độ "selected"), theo thứ tự */
+  assetIds?: string[];
+  /** tên cũ của assetIds (job tạo trước khi đổi sang asset) */
   imageIds?: string[];
   contactId?: string | null;
   script?: Script | null;
@@ -139,13 +158,16 @@ export type Activity = {
 
 export type ContactDetail = Contact & { activities: Activity[]; videos: VideoItem[] };
 
-export type TagCount = { name: string; images: number; videos: number; contacts: number };
+export type TagCount = { name: string; assets: number; videos: number; contacts: number };
 
 export type Page<T> = { items: T[]; total: number };
 
 export type EngineHealth = {
   ok: boolean;
   problems: string[];
+  warnings?: string[];
+  ocr?: string | null;
+  vision?: string | null;
   python?: string;
   deepseek?: boolean;
   image_providers?: string[];
@@ -156,7 +178,8 @@ export type EngineHealth = {
 
 export type Stats = {
   videos: number;
-  images: number;
+  assets: number;
+  assetsAnalyzing: number;
   contacts: number;
   jobsActive: number;
   followUpsDue: number;

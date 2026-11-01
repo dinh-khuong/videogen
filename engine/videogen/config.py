@@ -53,6 +53,18 @@ class Settings:
 
         self.font_path = _get("FONT_PATH")
 
+        # Phân tích asset: OCR bằng Tesseract (local) + tóm tắt bằng DeepSeek
+        self.tesseract_cmd = _get("TESSERACT_CMD", "tesseract")
+        self.ocr_langs = _get("OCR_LANGS", "vie+eng")
+        # Mô hình thị giác (tùy chọn, API kiểu OpenAI: Gemini, OpenAI, Ollama...) để mô tả nội dung hình ảnh
+        self.vision_api_key = _get("VISION_API_KEY")
+        self.vision_base_url = _get("VISION_BASE_URL")
+        self.vision_model = _get("VISION_MODEL")
+
+    @property
+    def vision_enabled(self) -> bool:
+        return bool(self.vision_model and (self.vision_api_key or self.vision_base_url))
+
 
 def load_settings() -> Settings:
     return Settings()

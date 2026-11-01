@@ -24,7 +24,7 @@ function defaultPython(): string {
 
 export const PYTHON_BIN = process.env.PYTHON_BIN || defaultPython();
 
-export const MEDIA_SUBDIRS = ["images", "videos", "thumbs"] as const;
+export const MEDIA_SUBDIRS = ["assets", "images", "videos", "thumbs"] as const;
 export type MediaSubdir = (typeof MEDIA_SUBDIRS)[number];
 
 export function ensureDirs(): void {

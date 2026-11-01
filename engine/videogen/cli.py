@@ -6,11 +6,13 @@ Ví dụ (chạy trong thư mục engine/):
     python -m videogen "cách trồng rau mầm" --script-only        # chỉ viết kịch bản để sửa
     python -m videogen --script output/cach_trong_rau_mam/script.json   # render lại từ kịch bản đã sửa
     python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/   # Shorts chia đôi với gameplay
-    python -m videogen "giới thiệu menu quán" --library-dir anh_mon/       # ảnh của bạn làm nội dung chính
+    python -m videogen "giới thiệu menu quán" --library-dir anh_mon/       # ảnh/video của bạn làm nội dung chính
+    python -m videogen analyze menu.jpg demo.mp4  # đọc chữ (OCR) + AI tóm tắt nội dung asset
 
 Lệnh dành cho web app:
     python -m videogen job spec.json      # chạy job, phát sự kiện JSON trên stdout
     python -m videogen probe file... [--thumbnail-dir dir]
+    python -m videogen analyze --spec spec.json   # phân tích asset, phát sự kiện JSON trên stdout
     python -m videogen doctor             # kiểm tra cấu hình, in JSON
 """
 import argparse
@@ -18,19 +20,58 @@ import json
 import sys
 from pathlib import Path
 
-SUBCOMMANDS = {"make", "job", "probe", "doctor"}
+SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor"}
 
 
-def _library_from_dir(folder: Path):
-    """Ảnh trong thư mục làm thư viện; mô tả lấy từ file <tên>.txt cạnh ảnh (nếu có) hoặc tên file."""
-    from .llm import LibraryImage
-    from .probe import IMAGE_EXTS
+ANALYSIS_CACHE = ".videogen-analysis.json"
+
+
+def _library_from_dir(folder: Path, analyze: bool = False):
+    """Ảnh/video trong thư mục làm thư viện; mô tả lấy từ file <tên>.txt cạnh file (nếu có) hoặc tên file.
+
+    analyze=True: đọc chữ + AI tóm tắt từng file, kết quả cache trong <thư mục>/.videogen-analysis.json.
+    """
+    from .llm import LibraryAsset
+    from .probe import IMAGE_EXTS, VIDEO_EXTS, video_info
+
+    paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS)
+    analysis: dict = {}
+    if analyze and paths:
+        from .analyze import analyze_files
+
+        cache_file = folder / ANALYSIS_CACHE
+        try:
+            cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cache = {}
+        key = lambda p: f"{p.name}|{p.stat().st_size}|{p.stat().st_mtime_ns}"  # noqa: E731
+        todo = [p for p in paths if key(p) not in cache]
+        if todo:
+            print(f"      Phân tích {len(todo)} file trong thư viện (đọc chữ + AI tóm tắt) ...", flush=True)
+            for path, result in zip(todo, analyze_files(todo)):
+                if result.status == "done":
+                    cache[key(path)] = {"summary": result.summary, "ocr_text": result.ocr_text, "tags": result.tags}
+            cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+        analysis = {p.name: cache.get(key(p), {}) for p in paths}
 
     items = []
-    for i, path in enumerate(sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS)):
+    for i, path in enumerate(paths):
         note = path.with_suffix(".txt")
         description = note.read_text(encoding="utf-8").strip() if note.exists() else path.stem.replace("_", " ")
-        items.append(LibraryImage(id=f"img{i + 1}", path=str(path.resolve()), description=description))
+        kind = "image" if path.suffix.lower() in IMAGE_EXTS else "video"
+        info = analysis.get(path.name, {})
+        items.append(
+            LibraryAsset(
+                id=f"a{i + 1}",
+                path=str(path.resolve()),
+                description=description,
+                tags=info.get("tags", []),
+                kind=kind,
+                summary=info.get("summary", ""),
+                ocr_text=info.get("ocr_text", ""),
+                duration=video_info(path).get("duration") if kind == "video" else None,
+            )
+        )
     return items
 
 
@@ -59,9 +100,11 @@ def cmd_make(argv: list[str]) -> int:
                         help="cover: ảnh phủ kín khung; frame: ảnh hiển thị trọn vẹn làm nội dung chính; "
                              "auto: ảnh của bạn dùng frame, ảnh tìm trên mạng dùng cover")
     parser.add_argument("--library-dir", type=Path,
-                        help="Thư mục ảnh của bạn (mô tả trong file .txt cùng tên). AI dùng chúng làm nội dung chính")
+                        help="Thư mục ảnh/video của bạn (mô tả trong file .txt cùng tên). AI dùng chúng làm nội dung chính")
     parser.add_argument("--library-mode", choices=("auto", "selected"), default="selected",
-                        help="selected: dùng hết ảnh trong thư mục; auto: AI chỉ dùng ảnh phù hợp")
+                        help="selected: dùng hết file trong thư mục; auto: AI tự chọn file phù hợp")
+    parser.add_argument("--analyze-library", action="store_true",
+                        help="Đọc chữ (OCR) + AI tóm tắt nội dung từng file trong --library-dir trước khi viết kịch bản")
     parser.add_argument("--no-web-images", action="store_true", help="Không tìm ảnh trên mạng")
     args = parser.parse_args(argv)
 
@@ -74,7 +117,7 @@ def cmd_make(argv: list[str]) -> int:
     if args.library_dir and not args.library_dir.is_dir():
         parser.error(f"Không tìm thấy thư mục ảnh: {args.library_dir}")
 
-    library = _library_from_dir(args.library_dir) if args.library_dir else []
+    library = _library_from_dir(args.library_dir, args.analyze_library) if args.library_dir else []
     opts = Options(
         aspect=args.aspect,
         num_steps=args.steps,
@@ -123,9 +166,36 @@ def cmd_probe(argv: list[str]) -> int:
     return probe_json(args.files, args.thumbnail_dir)
 
 
+def cmd_analyze(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="videogen analyze", description="Đọc chữ trong ảnh/video (OCR) và nhờ AI tóm tắt nội dung."
+    )
+    parser.add_argument("files", type=Path, nargs="*", help="Ảnh/video cần phân tích (mô tả trong file .txt cùng tên)")
+    parser.add_argument("--spec", type=Path, help="File spec JSON (dùng cho web app, xem videogen/analyze.py)")
+    parser.add_argument("--language", default="tiếng Việt")
+    args = parser.parse_args(argv)
+    if args.spec:
+        from .analyze import run_spec
+
+        return run_spec(args.spec)
+    if not args.files:
+        parser.error("Cần ít nhất một file hoặc --spec")
+    missing = [str(f) for f in args.files if not f.exists()]
+    if missing:
+        parser.error(f"Không tìm thấy: {', '.join(missing)}")
+
+    from dataclasses import asdict
+
+    from .analyze import analyze_files
+
+    results = analyze_files(args.files, args.language)
+    print(json.dumps([asdict(r) for r in results], ensure_ascii=False, indent=2))
+    return 0 if all(r.status == "done" for r in results) else 1
+
+
 def cmd_doctor(argv: list[str]) -> int:
     """Kiểm tra môi trường: thư viện, API key, nguồn ảnh, font, ffmpeg."""
-    report: dict = {"python": sys.version.split()[0], "problems": []}
+    report: dict = {"python": sys.version.split()[0], "problems": [], "warnings": []}
     try:
         from .config import load_settings
         from .graphics import find_font
@@ -141,6 +211,16 @@ def cmd_doctor(argv: list[str]) -> int:
         if not report["image_providers"]:
             report["problems"].append("Không có nguồn ảnh nào dùng được (IMAGE_PROVIDERS)")
         report["voice"] = settings.tts_voice
+        from .analyze import ocr_available
+
+        report["ocr"] = ocr_available(settings)
+        if not report["ocr"]:
+            report["warnings"].append(
+                f"Chưa dùng được Tesseract với ngôn ngữ {settings.ocr_langs}: asset sẽ không được đọc chữ. "
+                "Cài: sudo dnf install tesseract tesseract-langpack-vie (Fedora) / "
+                "sudo apt install tesseract-ocr tesseract-ocr-vie (Ubuntu)"
+            )
+        report["vision"] = settings.vision_model if settings.vision_enabled else None
         report["font"] = find_font("regular", settings.font_path)
         if not report["font"]:
             report["problems"].append("Không tìm thấy font hỗ trợ tiếng Việt (đặt FONT_PATH)")
@@ -162,5 +242,5 @@ def main(argv: list[str] | None = None) -> None:
     command = argv[0] if argv and argv[0] in SUBCOMMANDS else "make"
     if argv and argv[0] == command:
         argv = argv[1:]
-    handler = {"make": cmd_make, "job": cmd_job, "probe": cmd_probe, "doctor": cmd_doctor}[command]
+    handler = {"make": cmd_make, "job": cmd_job, "probe": cmd_probe, "analyze": cmd_analyze, "doctor": cmd_doctor}[command]
     sys.exit(handler(argv))

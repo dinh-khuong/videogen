@@ -11,12 +11,14 @@ export function LibraryFilters({
   q,
   tag,
   onChange,
+  placeholder = "Tìm theo tên, mô tả...",
   children,
 }: {
-  kind: "images" | "videos" | "contacts";
+  kind: "assets" | "videos" | "contacts";
   q: string;
   tag: string;
   onChange: (next: { q: string; tag: string }) => void;
+  placeholder?: string;
   children?: React.ReactNode;
 }) {
   const tags = useApi<TagCount[]>("/api/tags");
@@ -33,7 +35,7 @@ export function LibraryFilters({
       <input
         type="search"
         className={`${inputClass} max-w-xs`}
-        placeholder="Tìm theo tên, mô tả..."
+        placeholder={placeholder}
         value={text}
         onChange={(e) => setText(e.target.value)}
       />

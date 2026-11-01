@@ -12,7 +12,9 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "image_style": "auto",                    # auto | cover | frame
   "web_images": true,
   "library_mode": "off",                    # off | auto | selected
-  "library": [{"id": "...", "path": "/abs/anh.jpg", "description": "...", "tags": ["..."]}]
+  "library": [{"id": "...", "path": "/abs/anh.jpg", "kind": "image",   # asset ảnh/video của người dùng
+               "description": "...", "tags": ["..."],
+               "summary": "tóm tắt AI", "ocr_text": "chữ trong asset", "duration": null}]
 }
 
 Kết quả: <work_dir>/result.json (xem RunResult.to_dict) và sự kiện {"type": "result"} trên stdout.
@@ -23,7 +25,7 @@ from pathlib import Path
 
 from .config import ConfigError
 from .events import JsonReporter
-from .llm import LibraryImage
+from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, Options, run
 from .video_builder import ASPECTS
 
@@ -60,11 +62,15 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         image_style=image_style,
         web_images=bool(spec.get("web_images", True)),
         library=[
-            LibraryImage(
+            LibraryAsset(
                 id=str(item["id"]),
                 path=str(item["path"]),
                 description=item.get("description") or "",
                 tags=list(item.get("tags") or []),
+                kind="video" if item.get("kind") == "video" else "image",
+                summary=item.get("summary") or "",
+                ocr_text=item.get("ocr_text") or "",
+                duration=float(item["duration"]) if item.get("duration") else None,
             )
             for item in spec.get("library") or []
         ],

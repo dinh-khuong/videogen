@@ -4,7 +4,7 @@ import type { TagCount } from "@/lib/types";
 import { db } from "./db";
 
 const LINKS = {
-  image: { table: "image_tags", column: "image_id" },
+  asset: { table: "asset_tags", column: "asset_id" },
   video: { table: "video_tags", column: "video_id" },
   contact: { table: "contact_tags", column: "contact_id" },
 } as const;
@@ -48,14 +48,14 @@ export function listTags(): TagCount[] {
   return db()
     .prepare(
       `SELECT t.name,
-         (SELECT COUNT(*) FROM image_tags WHERE tag_id = t.id) AS images,
+         (SELECT COUNT(*) FROM asset_tags WHERE tag_id = t.id) AS assets,
          (SELECT COUNT(*) FROM video_tags WHERE tag_id = t.id) AS videos,
          (SELECT COUNT(*) FROM contact_tags WHERE tag_id = t.id) AS contacts
        FROM tags t
-       WHERE EXISTS (SELECT 1 FROM image_tags WHERE tag_id = t.id)
+       WHERE EXISTS (SELECT 1 FROM asset_tags WHERE tag_id = t.id)
           OR EXISTS (SELECT 1 FROM video_tags WHERE tag_id = t.id)
           OR EXISTS (SELECT 1 FROM contact_tags WHERE tag_id = t.id)
-       ORDER BY (images + videos + contacts) DESC, t.name`,
+       ORDER BY (assets + videos + contacts) DESC, t.name`,
     )
     .all() as TagCount[];
 }

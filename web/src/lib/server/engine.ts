@@ -1,7 +1,20 @@
 import "server-only";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { EngineHealth } from "@/lib/types";
 import { ENGINE_DIR, PYTHON_BIN } from "./paths";
+
+/** Dòng stdout bắt đầu bằng tiền tố này là một sự kiện JSON của engine (xem engine/videogen/events.py). */
+export const EVENT_PREFIX = "@@videogen ";
+
+/** Dừng tiến trình engine cùng các tiến trình con của nó (ffmpeg, tesseract) — tiến trình được spawn với detached. */
+export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (child.pid && process.platform !== "win32") process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch {
+    // tiến trình đã thoát
+  }
+}
 
 /** Môi trường cho tiến trình Python: ép UTF-8 và không đệm stdout để nhận sự kiện ngay. */
 export function engineEnv(): NodeJS.ProcessEnv {

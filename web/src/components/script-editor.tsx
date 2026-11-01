@@ -3,11 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useApi } from "@/lib/client";
-import type { ImageItem, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
-import { ImagePicker } from "./images-library";
+import type { AssetItem, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
+import { AssetPicker, AssetThumb } from "./assets-library";
 import { Button, ErrorBox, Field, Modal, inputClass } from "./ui";
 
-/** Sửa kịch bản của video rồi tạo lại (không gọi LLM; ảnh theo từng bước lấy từ thư viện). */
+/** Sửa kịch bản của video rồi tạo lại (không gọi LLM; ảnh/video từng bước lấy từ Assets). */
 export function ScriptEditor({
   initial,
   defaults,
@@ -25,8 +25,8 @@ export function ScriptEditor({
   const [error, setError] = useState<string | null>(null);
 
   const ids = [...new Set(script.steps.map((s) => s.library_image).filter(Boolean))] as string[];
-  const thumbs = useApi<Page<ImageItem>>(ids.length ? `/api/images?ids=${ids.join(",")}&limit=${ids.length}` : null);
-  const thumbOf = (id?: string | null) => thumbs.data?.items.find((i) => i.id === id)?.thumbUrl;
+  const assets = useApi<Page<AssetItem>>(ids.length ? `/api/assets?ids=${ids.join(",")}&limit=${ids.length}` : null);
+  const assetOf = (id?: string | null) => assets.data?.items.find((a) => a.id === id);
 
   const setStep = (i: number, patch: Partial<ScriptStep>) =>
     setScript((s) => ({ ...s, steps: s.steps.map((st, k) => (k === i ? { ...st, ...patch } : st)) }));
@@ -109,13 +109,12 @@ export function ScriptEditor({
                 onClick={() => setPicking(i)}
                 className="relative aspect-[4/3] overflow-hidden rounded-lg bg-zinc-200 text-xs text-zinc-500 ring-1 ring-zinc-300 hover:ring-brand-500"
               >
-                {thumbOf(step.library_image) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={thumbOf(step.library_image)} alt="" className="size-full object-cover" />
+                {assetOf(step.library_image) ? (
+                  <AssetThumb asset={assetOf(step.library_image)!} className="size-full" />
                 ) : (
                   <span className="px-2">Tự tìm ảnh trên mạng</span>
                 )}
-                <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-[11px] text-white">Đổi ảnh</span>
+                <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-[11px] text-white">Đổi asset</span>
               </button>
               <div className="space-y-2">
                 <input className={inputClass} placeholder="Tên bước" value={step.heading} onChange={(e) => setStep(i, { heading: e.target.value })} />
@@ -152,7 +151,7 @@ export function ScriptEditor({
         </Button>
       </div>
 
-      <Modal open={picking !== null} onClose={() => setPicking(null)} title={`Chọn ảnh cho bước ${(picking ?? 0) + 1}`} wide>
+      <Modal open={picking !== null} onClose={() => setPicking(null)} title={`Chọn ảnh/video cho bước ${(picking ?? 0) + 1}`} wide>
         <div className="mb-3 flex justify-end">
           <Button
             size="sm"
@@ -161,10 +160,10 @@ export function ScriptEditor({
               setPicking(null);
             }}
           >
-            Không dùng ảnh thư viện (tự tìm trên mạng)
+            Không dùng asset (tự tìm ảnh trên mạng)
           </Button>
         </div>
-        <ImagePicker
+        <AssetPicker
           single
           selected={picking !== null && script.steps[picking]?.library_image ? [script.steps[picking].library_image!] : []}
           onChange={([id]) => {

@@ -7,17 +7,18 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 
 
-def _ffmpeg() -> str:
+def ffmpeg_exe() -> str:
     import imageio_ffmpeg
 
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def _video_info(path: Path) -> dict:
+def video_info(path: Path) -> dict:
     # ffmpeg -i in thông tin ra stderr và thoát mã 1 vì không có output — đó là bình thường
-    out = subprocess.run([_ffmpeg(), "-hide_banner", "-i", str(path)], capture_output=True, text=True).stderr
+    out = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True).stderr
     info: dict = {"kind": "video"}
     m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", out)
     if m:
@@ -26,7 +27,9 @@ def _video_info(path: Path) -> dict:
     if m:
         info["width"], info["height"] = int(m[1]), int(m[2])
     rotate = re.search(r"rotate\s*:\s*(-?\d+)|rotation of (-?[\d.]+)", out)
-    if rotate and info.get("width") and abs(round(float(rotate[1] or rotate[2]))) % 180 == 90:
+    if rotate:
+        info["rotation"] = round(float(rotate[1] or rotate[2])) % 360
+    if info.get("rotation") and info.get("width") and info["rotation"] % 180 == 90:
         info["width"], info["height"] = info["height"], info["width"]
     if "duration" not in info:
         raise ValueError("Không đọc được video (định dạng không hỗ trợ hoặc file hỏng).")
@@ -36,7 +39,7 @@ def _video_info(path: Path) -> dict:
 def _video_thumbnail(path: Path, duration: float, out: Path) -> None:
     t = min(1.0, duration / 3)
     subprocess.run(
-        [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+        [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", str(path),
          "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", str(out)],
         check=True, capture_output=True,
     )
@@ -53,7 +56,7 @@ def probe(path: Path, thumbnail: Path | None = None) -> dict:
                 thumb.save(thumbnail, "JPEG", quality=85)
                 info["thumbnail"] = str(thumbnail)
         return info
-    info = _video_info(path)
+    info = video_info(path)
     if thumbnail:
         _video_thumbnail(path, info["duration"], thumbnail)
         info["thumbnail"] = str(thumbnail)

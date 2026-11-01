@@ -3,16 +3,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { analyzer } from "./analyzer";
 import { db, nowIso } from "./db";
-import { engineArgs, engineEnv } from "./engine";
+import { EVENT_PREFIX, engineArgs, engineEnv, killTree } from "./engine";
 import { ingestResult, type EngineResult } from "./ingest";
-import { buildSpec, getJobRow, jobDir, updateJob } from "./jobs";
+import { buildSpec, getJobRow, jobDir, updateJob, waitsForAnalysis, type JobRow } from "./jobs";
 import { ENGINE_DIR, PYTHON_BIN, TMP_DIR, ensureDirs } from "./paths";
 
-const EVENT_PREFIX = "@@videogen ";
 const CONCURRENCY = Math.max(1, Number(process.env.JOB_CONCURRENCY) || 1);
 const PROGRESS_WRITE_MS = 600;
 const KILL_GRACE_MS = 5000;
+const WAIT_RECHECK_MS = 5000;
+const WAIT_MESSAGE = "Đang chờ phân tích asset (đọc chữ + AI tóm tắt)";
 
 type Running = {
   child: ChildProcess;
@@ -35,6 +37,7 @@ type Running = {
 class JobRunner {
   private running = new Map<string, Running>();
   private started = false;
+  private waitTimer: NodeJS.Timeout | null = null;
 
   start(): void {
     if (this.started) return;
@@ -53,6 +56,8 @@ class JobRunner {
     }
     process.once("exit", () => this.killAll("SIGKILL"));
     cleanTmp();
+    // Phân tích asset xong có thể mở khóa job đang chờ
+    analyzer().onBatchDone(() => this.tick());
     this.tick();
   }
 
@@ -70,9 +75,9 @@ class JobRunner {
     const r = this.running.get(id);
     if (r) {
       r.canceled = true;
-      this.kill(r.child, "SIGTERM");
+      killTree(r.child, "SIGTERM");
       setTimeout(() => {
-        if (!r.done) this.kill(r.child, "SIGKILL");
+        if (!r.done) killTree(r.child, "SIGKILL");
       }, KILL_GRACE_MS).unref();
       return true;
     }
@@ -83,13 +88,24 @@ class JobRunner {
   }
 
   private tick(): void {
-    while (this.running.size < CONCURRENCY) {
-      const next = db().prepare("SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1").get() as
-        | { id: string }
-        | undefined;
-      if (!next) return;
-      this.launch(next.id);
+    if (this.waitTimer) {
+      clearTimeout(this.waitTimer);
+      this.waitTimer = null;
     }
+    if (this.running.size >= CONCURRENCY) return;
+    const queued = db().prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at").all() as JobRow[];
+    let waiting = false;
+    for (const row of queued) {
+      if (this.running.size >= CONCURRENCY) break;
+      // AI cần tóm tắt + chữ trong asset để chọn/viết về asset: chờ phân tích xong (có giới hạn thời gian)
+      if (waitsForAnalysis(row)) {
+        waiting = true;
+        if (row.message !== WAIT_MESSAGE) updateJob(row.id, { message: WAIT_MESSAGE });
+        continue;
+      }
+      this.launch(row.id);
+    }
+    if (waiting) this.waitTimer = setTimeout(() => this.tick(), WAIT_RECHECK_MS).unref();
   }
 
   private launch(id: string): void {
@@ -219,17 +235,8 @@ class JobRunner {
     }
   }
 
-  private kill(child: ChildProcess, signal: NodeJS.Signals): void {
-    try {
-      if (child.pid && process.platform !== "win32") process.kill(-child.pid, signal);
-      else child.kill(signal);
-    } catch {
-      // tiến trình đã thoát
-    }
-  }
-
   private killAll(signal: NodeJS.Signals): void {
-    for (const r of this.running.values()) this.kill(r.child, signal);
+    for (const r of this.running.values()) killTree(r.child, signal);
   }
 }
 

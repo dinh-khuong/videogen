@@ -4,11 +4,11 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
+import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
-import { imagesForEngine } from "./images";
 import { JOBS_DIR } from "./paths";
-import { getVideo, videoFilePath } from "./videos";
+import { getVideo } from "./videos";
 
 export type JobRow = {
   id: string;
@@ -123,15 +123,15 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
   const voice = raw.voice?.trim() || undefined;
   if (voice && !/^[a-z]{2,3}-[A-Z]{2,3}-\w+$/.test(voice)) throw new HttpError(400, "Tên giọng đọc không hợp lệ");
 
-  const imageIds = [...new Set((raw.imageIds ?? []).map(String))].slice(0, 30);
-  if (libraryMode === "selected") {
-    if (!imageIds.length) throw new HttpError(400, "Hãy chọn ít nhất một ảnh trong thư viện");
-    const found = imagesForEngine({ ids: imageIds, limit: imageIds.length });
-    if (found.length !== imageIds.length) throw new HttpError(400, "Một số ảnh đã chọn không còn trong thư viện");
+  const assetIds = [...new Set((raw.assetIds ?? []).map(String))].slice(0, 30);
+  if (libraryMode === "selected" && !script) {
+    if (!assetIds.length) throw new HttpError(400, "Hãy chọn ít nhất một asset trong thư viện");
+    const found = assetsForEngine({ ids: assetIds, limit: assetIds.length });
+    if (found.length !== assetIds.length) throw new HttpError(400, "Một số asset đã chọn không còn trong thư viện");
   }
   const bgVideoId = layout === "split" ? raw.bgVideoId || null : null;
-  if (layout === "split" && (!bgVideoId || !videoFilePath(bgVideoId))) {
-    throw new HttpError(400, "Bố cục chia đôi cần chọn một video nền");
+  if (layout === "split" && (!bgVideoId || !assetFilePath(bgVideoId, "video"))) {
+    throw new HttpError(400, "Bố cục chia đôi cần chọn một video nền trong Assets");
   }
   const contactId = raw.contactId || null;
   if (contactId && !db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(contactId)) {
@@ -150,7 +150,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     webImages: raw.webImages !== false,
     libraryMode: script ? "off" : libraryMode,
     libraryTag: libraryMode === "auto" ? raw.libraryTag?.trim() || null : null,
-    imageIds: libraryMode === "selected" && !script ? imageIds : [],
+    assetIds: libraryMode === "selected" && !script ? assetIds : [],
     contactId,
     script,
     sourceVideoId: raw.sourceVideoId || null,
@@ -182,26 +182,45 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     library: [],
   };
   if (input.layout === "split" && input.bgVideoId) {
-    const bg = videoFilePath(input.bgVideoId);
-    if (!bg || !fs.existsSync(bg)) throw new Error("Video nền đã bị xóa khỏi thư viện");
+    const bg = assetFilePath(input.bgVideoId, "video");
+    if (!bg || !fs.existsSync(bg)) throw new Error("Video nền đã bị xóa khỏi Assets");
     spec.bg_video = bg;
   }
   if (input.script) {
-    // Render lại: ảnh từng bước lấy theo library_image (id ảnh thư viện)
+    // Render lại: asset từng bước lấy theo library_image (id asset thư viện)
     const ids = input.script.steps.map((s) => s.library_image).filter((x): x is string => !!x);
     spec.script = { ...input.script, steps: input.script.steps.map((s) => ({ ...s, image: null })) };
-    spec.library = imagesForEngine({ ids, limit: ids.length || 1 });
+    spec.library = assetsForEngine({ ids, limit: ids.length || 1 });
     spec.library_mode = "auto";
   } else if (input.libraryMode === "selected") {
-    const images = imagesForEngine({ ids: input.imageIds ?? [], limit: 30 });
-    const order = new Map((input.imageIds ?? []).map((id, i) => [id, i]));
-    spec.library = images.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    const ids = selectedAssetIds(input);
+    const assets = assetsForEngine({ ids, limit: 30 });
+    const order = new Map(ids.map((id, i) => [id, i]));
+    spec.library = assets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   } else if (input.libraryMode === "auto") {
-    spec.library = imagesForEngine({ tag: input.libraryTag ?? undefined, limit: 150 }).filter(
-      (img) => img.description.trim() || img.tags.length,
+    // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
+    spec.library = assetsForEngine({ tag: input.libraryTag ?? undefined, limit: 300 }).filter(
+      (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
   return spec;
+}
+
+function selectedAssetIds(input: JobInput): string[] {
+  return input.assetIds?.length ? input.assetIds : (input.imageIds ?? []);
+}
+
+/** Job chờ tối đa chừng này để asset liên quan được phân tích xong (đọc chữ + tóm tắt) trước khi viết kịch bản. */
+const ANALYSIS_WAIT_MS = 3 * 60_000;
+
+/** Job có nên chờ phân tích asset không (chỉ khi AI cần đọc thông tin asset để viết kịch bản). */
+export function waitsForAnalysis(row: JobRow): boolean {
+  if (Date.now() - Date.parse(row.created_at) > ANALYSIS_WAIT_MS) return false;
+  const input = JSON.parse(row.input) as JobInput;
+  if (input.script) return false;
+  if (input.libraryMode === "selected") return countUnanalyzed({ ids: selectedAssetIds(input) }) > 0;
+  if (input.libraryMode === "auto") return countUnanalyzed({ tag: input.libraryTag }) > 0;
+  return false;
 }
 
 export async function deleteJob(id: string): Promise<boolean> {

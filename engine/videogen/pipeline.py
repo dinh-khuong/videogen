@@ -13,7 +13,8 @@ from .config import Settings, load_settings
 from .events import Reporter
 from .graphics import make_placeholder, render_step_badge, render_title_card
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
-from .llm import LibraryImage, Script, generate_script, parse_script
+from .llm import LibraryAsset, Script, generate_script, parse_script
+from .probe import VIDEO_EXTS
 from .tts import synthesize_many
 from .video_builder import ASPECTS, Scene, build_video, split_sizes
 
@@ -36,8 +37,8 @@ class Options:
     # auto: ảnh thư viện/ảnh tự chọn hiển thị trọn vẹn (frame), ảnh tìm trên mạng phủ kín khung (cover)
     image_style: str = "auto"
     web_images: bool = True  # cho phép tìm ảnh trên mạng khi bước không có ảnh thư viện
-    library: list[LibraryImage] = field(default_factory=list)
-    library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (ảnh là nội dung chính)
+    library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
+    library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
     reporter: Reporter = field(default_factory=Reporter)
 
@@ -50,6 +51,7 @@ class StepImage:
     library_id: str | None = None
     credit: Credit | None = None
     query: str | None = None
+    media: str = "image"  # image | video
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -87,9 +89,6 @@ class RunResult:
             else None,
             "images": [img.to_dict() for img in self.images],
         }
-
-
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 
 
 def pick_background(path: Path) -> Path:
@@ -158,15 +157,17 @@ def _prepare_images(
             if not custom.is_absolute():
                 custom = work_dir / custom
             if custom.exists():
-                return StepImage(n, custom, "custom")
+                media = "video" if custom.suffix.lower() in VIDEO_EXTS else "image"
+                return StepImage(n, custom, "custom", media=media)
             print(f"      ⚠️  Không thấy ảnh tự chọn {custom}, chuyển sang nguồn khác.", flush=True)
 
         lib = library.get(step.library_image or "")
         if lib:
             if Path(lib.path).exists():
-                print(f"      ✓ Ảnh bước {n}: thư viện ({lib.id})", flush=True)
-                return StepImage(n, Path(lib.path), "library", library_id=lib.id)
-            print(f"      ⚠️  Ảnh thư viện {lib.id} không còn trên đĩa, chuyển sang tìm kiếm.", flush=True)
+                label = "video" if lib.kind == "video" else "ảnh"
+                print(f"      ✓ Bước {n}: {label} thư viện ({lib.id})", flush=True)
+                return StepImage(n, Path(lib.path), "library", library_id=lib.id, media=lib.kind)
+            print(f"      ⚠️  Asset thư viện {lib.id} không còn trên đĩa, chuyển sang tìm kiếm.", flush=True)
 
         query = step.image_queries[0] if step.image_queries else None
         if opts.web_images and step.image_queries:
@@ -291,6 +292,7 @@ def run(
             audio_path=audio.get("intro"),
             narration=script.intro,
             overlays=[render_title_card(script.title, "Hướng dẫn từng bước", size, font)],
+            media=images[0].media,
         )
     ]
     for i, step in enumerate(script.steps):
@@ -301,6 +303,7 @@ def run(
                 narration=step.narration,
                 overlays=[render_step_badge(f"Bước {i + 1}", step.heading, size, font)],
                 image_style=_style_for(images[i], opts),
+                media=images[i].media,
             )
         )
     if script.outro:
@@ -311,6 +314,7 @@ def run(
                 narration=script.outro,
                 overlays=[render_step_badge("Hoàn thành", "", size, font)],
                 image_style=_style_for(images[-1], opts),
+                media=images[-1].media,
             )
         )
 

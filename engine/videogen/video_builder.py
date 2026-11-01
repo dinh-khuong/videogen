@@ -1,6 +1,8 @@
-"""Dựng video từ các scene: nền ảnh (Ken Burns) + lớp đồ họa + phụ đề + giọng đọc."""
+"""Dựng video từ các scene: nền ảnh (Ken Burns) hoặc clip video + lớp đồ họa + phụ đề + giọng đọc."""
+import hashlib
 import os
 import random
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,7 +19,8 @@ from moviepy.editor import (
 )
 from PIL import Image
 
-from .graphics import prepare_background, render_subtitle, split_subtitles
+from .graphics import framed_backdrop, prepare_background, render_subtitle, split_subtitles
+from .probe import ffmpeg_exe, video_info
 
 ZOOM = 1.12        # biên độ zoom Ken Burns
 FRAME_ZOOM = 1.04  # zoom nhẹ hơn khi ảnh là nội dung chính (giữ trọn ảnh, chữ trong ảnh dễ đọc)
@@ -28,15 +31,44 @@ SILENT_SCENE = 3.0 # thời lượng scene không có giọng đọc
 
 ASPECTS = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (1080, 1080)}
 SPLIT_RATIO = 0.5  # tỉ lệ chiều cao phần nội dung (nửa trên) khi có video nền
+CLIP_MAX_SIDE = 1280  # clip lớn hơn được thu nhỏ trước khi dựng (giải mã 4K mỗi khung hình rất chậm)
 
 
 @dataclass
 class Scene:
-    image_path: Path
+    image_path: Path  # ảnh, hoặc file video nếu media == "video"
     audio_path: Path | None
     narration: str = ""
     overlays: list[Image.Image] = field(default_factory=list)
-    image_style: str = "cover"  # cover: ảnh làm nền phủ kín | frame: ảnh trọn vẹn làm nội dung chính
+    image_style: str = "cover"  # cover: phủ kín khung (làm nền) | frame: hiện trọn vẹn làm nội dung chính
+    media: str = "image"  # image | video
+
+
+def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
+    """Video có metadata xoay (vd quay dọc bằng điện thoại) hoặc quá lớn: tạo bản đứng thẳng, nhỏ hơn để moviepy đọc đúng.
+
+    moviepy 1.x đọc khung hình theo kích thước gốc nên video xoay 90° bị vỡ hình. Kết quả được cache theo nội dung file.
+    """
+    info = video_info(path)
+    w, h = info.get("width") or 0, info.get("height") or 0
+    if not info.get("rotation") and max(w, h) <= CLIP_MAX_SIDE:
+        return path
+    stat = path.stat()
+    key = hashlib.sha1(f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()[:12]
+    cache_dir = cache_dir or path.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out = cache_dir / f"{path.stem}_{key}.mp4"
+    if out.exists() and out.stat().st_size:
+        return out
+    tmp = out.with_suffix(".tmp.mp4")
+    scale = f"scale='if(gt(iw,ih),min({CLIP_MAX_SIDE},iw),-2)':'if(gt(iw,ih),-2,min({CLIP_MAX_SIDE},ih))'"
+    subprocess.run(
+        [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(path), "-an", "-vf", scale,
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", str(tmp)],
+        check=True, capture_output=True,
+    )
+    tmp.replace(out)
+    return out
 
 
 def _layer_region(layer: Image.Image) -> tuple[Image.Image, tuple[int, int]] | None:
@@ -47,36 +79,17 @@ def _layer_region(layer: Image.Image) -> tuple[Image.Image, tuple[int, int]] | N
     return layer.crop(bbox), (bbox[0], bbox[1])
 
 
-def _make_scene_clip(
-    scene: Scene, index: int, size: tuple[int, int], font_override: str | None
-) -> VideoClip:
+def _image_frames(scene: Scene, index: int, size: tuple[int, int], duration: float):
+    """Ảnh tĩnh với hiệu ứng Ken Burns: trả về hàm t -> khung hình PIL."""
     w, h = size
     zoom = FRAME_ZOOM if scene.image_style == "frame" else ZOOM
     big_size = (round(w * zoom), round(h * zoom))
     background = prepare_background(scene.image_path, big_size, scene.image_style)
-
-    audio = AudioFileClip(str(scene.audio_path)) if scene.audio_path else None
-    speech = audio.duration if audio else 0.0
-    duration = HEAD + speech + TAIL if audio else SILENT_SCENE
-
-    static_layers = [r for r in (_layer_region(o) for o in scene.overlays) if r]
-
-    # Phụ đề: chia lời bình thành đoạn, thời gian mỗi đoạn tỉ lệ với số ký tự
-    max_chars = 70 if w >= h else 45
-    chunks = split_subtitles(scene.narration, max_chars) if scene.narration else []
-    total_chars = sum(len(c) for c in chunks) or 1
-    subtitle_timeline: list[tuple[float, tuple[Image.Image, tuple[int, int]] | None]] = []
-    t = HEAD
-    for chunk in chunks:
-        region = _layer_region(render_subtitle(chunk, size, font_override))
-        subtitle_timeline.append((t, region))
-        t += speech * len(chunk) / total_chars
-
     zoom_in = index % 2 == 0
     pan = 0.0 if scene.image_style == "frame" else 0.08
     pan_x = 0.5 + (pan if index % 3 == 1 else -pan if index % 3 == 2 else 0.0)
 
-    def make_frame(t: float) -> np.ndarray:
+    def frame_at(t: float) -> Image.Image:
         progress = min(max(t / duration, 0.0), 1.0)
         progress = progress * progress * (3 - 2 * progress)  # ease in-out
         k = zoom - (zoom - 1) * progress if zoom_in else 1 + (zoom - 1) * progress
@@ -91,8 +104,74 @@ def _make_scene_clip(
             min(big_size[0], cx + crop_w / 2),
             min(big_size[1], cy + crop_h / 2),
         )
-        frame = background.resize(size, Image.BILINEAR, box=box)
+        return background.resize(size, Image.BILINEAR, box=box)
 
+    return frame_at
+
+
+def _video_frames(scene: Scene, size: tuple[int, int], cache_dir: Path | None):
+    """Clip video làm nội dung: tắt tiếng, tự lặp nếu ngắn hơn lời bình. Trả về (hàm t -> khung hình PIL, clip nguồn)."""
+    source = VideoFileClip(str(prepare_clip(scene.image_path, cache_dir)), audio=False)
+    last = max(0.0, source.duration - 1.0 / (source.fps or 30))
+
+    def source_frame(t: float) -> Image.Image:
+        t = t % source.duration if source.duration > 0 else 0.0
+        return Image.fromarray(source.get_frame(min(t, last))[..., :3])
+
+    w, h = size
+    clip_ratio, frame_ratio = source.w / source.h, w / h
+    # Tỉ lệ lệch nhiều (vd video ngang trong khung dọc) thì hiện trọn vẹn thay vì cắt mất phần lớn hình
+    if scene.image_style == "frame" or abs(clip_ratio - frame_ratio) / frame_ratio > 0.45:
+        backdrop, (x, y, fw, fh), mask = framed_backdrop(source_frame(source.duration / 2), size, (source.w, source.h))
+
+        def framed(t: float) -> Image.Image:
+            frame = backdrop.copy()
+            frame.paste(source_frame(t).resize((fw, fh), Image.BILINEAR), (x, y), mask)
+            return frame
+
+        return framed, source
+
+    scale = max(w / source.w, h / source.h)
+    x0, y0 = (source.w - w / scale) / 2, (source.h - h / scale) / 2
+    box = (x0, y0, source.w - x0, source.h - y0)
+
+    def cover(t: float) -> Image.Image:
+        return source_frame(t).resize(size, Image.BILINEAR, box=box)
+
+    return cover, source
+
+
+def _make_scene_clip(
+    scene: Scene, index: int, size: tuple[int, int], font_override: str | None, cache_dir: Path | None = None
+) -> tuple[VideoClip, list]:
+    """Trả về (clip của scene, các clip nguồn cần đóng sau khi render)."""
+    w, h = size
+    audio = AudioFileClip(str(scene.audio_path)) if scene.audio_path else None
+    speech = audio.duration if audio else 0.0
+    duration = HEAD + speech + TAIL if audio else SILENT_SCENE
+
+    sources = []
+    if scene.media == "video":
+        base, source = _video_frames(scene, size, cache_dir)
+        sources.append(source)
+    else:
+        base = _image_frames(scene, index, size, duration)
+
+    static_layers = [r for r in (_layer_region(o) for o in scene.overlays) if r]
+
+    # Phụ đề: chia lời bình thành đoạn, thời gian mỗi đoạn tỉ lệ với số ký tự
+    max_chars = 70 if w >= h else 45
+    chunks = split_subtitles(scene.narration, max_chars) if scene.narration else []
+    total_chars = sum(len(c) for c in chunks) or 1
+    subtitle_timeline: list[tuple[float, tuple[Image.Image, tuple[int, int]] | None]] = []
+    t = HEAD
+    for chunk in chunks:
+        region = _layer_region(render_subtitle(chunk, size, font_override))
+        subtitle_timeline.append((t, region))
+        t += speech * len(chunk) / total_chars
+
+    def make_frame(t: float) -> np.ndarray:
+        frame = base(t)
         for layer, pos in static_layers:
             frame.paste(layer, pos, layer)
         current = None
@@ -106,7 +185,7 @@ def _make_scene_clip(
     clip = VideoClip(make_frame, duration=duration)
     if audio:
         clip = clip.set_audio(CompositeAudioClip([audio.set_start(HEAD)]).set_duration(duration))
-    return clip
+    return clip, sources
 
 
 def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
@@ -116,10 +195,10 @@ def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
     return (w, top_h), (w, h - top_h)
 
 
-def _background_clip(path: Path, size: tuple[int, int], duration: float) -> VideoClip:
+def _background_clip(path: Path, size: tuple[int, int], duration: float, cache_dir: Path | None) -> VideoClip:
     """Video nền (gameplay): tắt tiếng, phủ kín khung, bắt đầu ở vị trí ngẫu nhiên, tự lặp nếu ngắn."""
     w, h = size
-    clip = VideoFileClip(str(path), audio=False)
+    clip = VideoFileClip(str(prepare_clip(path, cache_dir)), audio=False)
     # Cắt vùng giữa của khung gốc rồi thu nhỏ bằng Pillow (resize của moviepy 1.x lỗi với Pillow >= 10)
     scale = max(w / clip.w, h / clip.h)
     crop_w, crop_h = w / scale, h / scale
@@ -154,14 +233,17 @@ def build_video(
         size, bg_size = split_sizes()
     else:
         size = ASPECTS[aspect]
-    clips = [_make_scene_clip(s, i, size, font_override) for i, s in enumerate(scenes)]
+    cache_dir = (work_dir or out_path.parent) / "clips"
+    built = [_make_scene_clip(s, i, size, font_override, cache_dir) for i, s in enumerate(scenes)]
+    clips = [clip for clip, _ in built]
+    sources = [src for _, srcs in built for src in srcs]
 
     transition = min([TRANSITION] + [c.duration / 3 for c in clips])
     clips = [clips[0]] + [c.crossfadein(transition) for c in clips[1:]]
     final = concatenate_videoclips(clips, method="compose", padding=-transition)
 
     if bg_video:
-        background = _background_clip(bg_video, bg_size, final.duration)
+        background = _background_clip(bg_video, bg_size, final.duration, cache_dir)
         final = CompositeVideoClip(
             [background.set_position((0, size[1])), final.set_position((0, 0))],
             size=ASPECTS["9:16"],
@@ -199,6 +281,6 @@ def build_video(
         except Exception as e:
             print(f"      ⚠️  Không tạo được thumbnail: {e}", flush=True)
     final.close()
-    for clip in clips:
+    for clip in clips + sources:
         clip.close()
     return duration

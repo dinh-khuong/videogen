@@ -115,6 +115,34 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (contact_id, video_id)
   );
   `,
+  // Thư viện ảnh -> thư viện asset (ảnh hoặc video dùng để ghép vào video), có kết quả phân tích OCR + AI.
+  // Video tải lên trước đây (vd gameplay làm nền) chuyển sang asset, giữ nguyên id và file.
+  `
+  ALTER TABLE images RENAME TO assets;
+  ALTER TABLE assets ADD COLUMN kind TEXT NOT NULL DEFAULT 'image';
+  ALTER TABLE assets ADD COLUMN duration REAL;
+  ALTER TABLE assets ADD COLUMN ocr_text TEXT NOT NULL DEFAULT '';
+  ALTER TABLE assets ADD COLUMN ai_summary TEXT NOT NULL DEFAULT '';
+  ALTER TABLE assets ADD COLUMN ai_tags TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE assets ADD COLUMN analysis_status TEXT NOT NULL DEFAULT 'pending';
+  ALTER TABLE assets ADD COLUMN analysis_error TEXT;
+  ALTER TABLE assets ADD COLUMN analyzed_at TEXT;
+  CREATE INDEX assets_analysis ON assets(analysis_status, created_at);
+
+  ALTER TABLE image_tags RENAME TO asset_tags;
+  ALTER TABLE asset_tags RENAME COLUMN image_id TO asset_id;
+  ALTER TABLE video_images RENAME TO video_assets;
+  ALTER TABLE video_assets RENAME COLUMN image_id TO asset_id;
+  DROP INDEX video_images_image;
+  CREATE INDEX video_assets_asset ON video_assets(asset_id);
+
+  INSERT INTO assets (id, file, thumbnail, title, description, source, kind, duration, width, height, size_bytes, created_at, updated_at)
+    SELECT id, file, thumbnail, title, description, 'upload', 'video', duration, width, height, size_bytes, created_at, updated_at
+    FROM videos WHERE kind = 'upload';
+  INSERT OR IGNORE INTO asset_tags (asset_id, tag_id)
+    SELECT vt.video_id, vt.tag_id FROM video_tags vt JOIN videos v ON v.id = vt.video_id WHERE v.kind = 'upload';
+  DELETE FROM videos WHERE kind = 'upload';
+  `,
 ];
 
 function open(): Database.Database {
@@ -123,6 +151,10 @@ function open(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
+  return db;
+}
+
+function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {
@@ -130,14 +162,17 @@ function open(): Database.Database {
       db.pragma(`user_version = ${v + 1}`);
     })();
   }
-  return db;
 }
 
-const globalForDb = globalThis as unknown as { __videogenDb?: Database.Database };
+const globalForDb = globalThis as unknown as { __videogenDb?: Database.Database; __videogenDbVersion?: number };
 
-/** Kết nối SQLite dùng chung cho cả server (giữ qua hot-reload khi dev). */
+/** Kết nối SQLite dùng chung cho cả server (giữ qua hot-reload khi dev; migration mới vẫn được chạy). */
 export function db(): Database.Database {
   if (!globalForDb.__videogenDb) globalForDb.__videogenDb = open();
+  if (globalForDb.__videogenDbVersion !== MIGRATIONS.length) {
+    migrate(globalForDb.__videogenDb);
+    globalForDb.__videogenDbVersion = MIGRATIONS.length;
+  }
   return globalForDb.__videogenDb;
 }
 

@@ -29,6 +29,13 @@ function EngineStatus() {
         <p>Python {data.python} · moviepy {data.moviepy}</p>
         <p>Nguồn ảnh: {data.image_providers?.join(", ")}</p>
         <p>Giọng đọc mặc định: {data.voice}</p>
+        <p>Đọc chữ trong asset: {data.ocr ?? "chưa có Tesseract"}</p>
+        {data.vision && <p>Mô hình thị giác: {data.vision}</p>}
+        {data.warnings?.map((w) => (
+          <p key={w} className="text-amber-700">
+            ⚠ {w}
+          </p>
+        ))}
       </div>
     );
   }
@@ -50,7 +57,7 @@ function EngineStatus() {
 export function Dashboard() {
   const stats = useApi<Stats>("/api/stats", { refreshMs: 5000 });
   const jobs = useApi<JobItem[]>("/api/jobs?limit=6", { refreshMs: 2000 });
-  const videos = useApi<Page<VideoItem>>("/api/videos?limit=6&kind=generated");
+  const videos = useApi<Page<VideoItem>>("/api/videos?limit=6");
   const due = useApi<Page<Contact>>("/api/contacts?due=1&limit=5");
 
   return (
@@ -66,7 +73,7 @@ export function Dashboard() {
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard label="Video" value={stats.data?.videos} href="/videos" />
-        <StatCard label="Ảnh" value={stats.data?.images} href="/images" />
+        <StatCard label="Assets" value={stats.data?.assets} href="/assets" />
         <StatCard label="Khách hàng" value={stats.data?.contacts} href="/crm" />
         <StatCard label="Job đang chạy" value={stats.data?.jobsActive} href="/jobs" accent={!!stats.data?.jobsActive} />
         <StatCard label="Cần chăm sóc" value={stats.data?.followUpsDue} href="/crm?due=1" accent={!!stats.data?.followUpsDue} />

@@ -5,9 +5,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { withHashtags } from "@/lib/hashtags";
 import type { Script } from "@/lib/types";
+import { analyzer } from "./analyzer";
+import { addAssets, findAssetBySha1, getAsset, type NewAsset } from "./assets";
 import { db } from "./db";
 import { extOf, removeMedia, sha1File } from "./files";
-import { addImages, findImageBySha1, getImage, type NewImage } from "./images";
 import type { JobRow } from "./jobs";
 import { TMP_DIR } from "./paths";
 import { insertVideo, moveVideoFiles } from "./videos";
@@ -32,30 +33,31 @@ export type EngineResult = {
     library_id: string | null;
     credit: { source: string; url: string } | null;
     query: string | null;
+    media?: "image" | "video";
   }[];
 };
 
 /**
- * Đưa kết quả của job vào thư viện: ảnh mới (tìm trên mạng) thành ảnh thư viện có mô tả + hashtag,
- * video chuyển vào thư mục media, liên kết ảnh theo từng bước và với khách hàng (nếu có). Trả về id video.
+ * Đưa kết quả của job vào thư viện: ảnh mới (tìm trên mạng) thành asset có mô tả + hashtag (rồi được phân tích như
+ * asset khác), video chuyển vào thư mục media, liên kết asset theo từng bước và với khách hàng (nếu có). Trả về id video.
  */
 export async function ingestResult(job: JobRow, result: EngineResult): Promise<string> {
   if (!result.video || !fs.existsSync(result.video.path)) throw new Error("Engine không tạo ra file video");
   const script = result.script;
-  const stepImages = new Map<number, string>();
-  const pending: { step: number; image: NewImage }[] = [];
+  const stepAssets = new Map<number, string>();
+  const pending: { step: number; asset: NewAsset }[] = [];
 
   for (const img of result.images) {
     if (img.kind === "placeholder") continue;
-    if (img.kind === "library" && img.library_id && getImage(img.library_id)) {
-      stepImages.set(img.step, img.library_id);
+    if (img.kind === "library" && img.library_id && getAsset(img.library_id)) {
+      stepAssets.set(img.step, img.library_id);
       continue;
     }
     if (!fs.existsSync(img.path)) continue;
     const sha1 = await sha1File(img.path);
-    const existing = findImageBySha1(sha1);
+    const existing = findAssetBySha1(sha1);
     if (existing) {
-      stepImages.set(img.step, existing);
+      stepAssets.set(img.step, existing);
       continue;
     }
     const ext = extOf(img.path) || ".jpg";
@@ -65,7 +67,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     const queryNote = img.query ? `\nTừ khóa tìm ảnh: ${img.query}` : "";
     pending.push({
       step: img.step,
-      image: {
+      asset: {
         tmpPath: tmp,
         ext,
         sha1,
@@ -77,13 +79,14 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
       },
     });
   }
-  const added = await addImages(pending.map((p) => p.image));
-  pending.forEach((p, i) => stepImages.set(p.step, added[i].id));
+  const added = await addAssets(pending.map((p) => p.asset));
+  pending.forEach((p, i) => stepAssets.set(p.step, added[i].id));
+  if (added.some((a) => !a.existed)) analyzer().kick();
 
-  // Lưu kịch bản kèm id ảnh thư viện từng bước để có thể sửa và render lại
+  // Lưu kịch bản kèm id asset thư viện từng bước để có thể sửa và render lại
   const storedScript: Script = {
     ...script,
-    steps: script.steps.map((s, i) => ({ ...s, image: null, library_image: stepImages.get(i + 1) ?? null })),
+    steps: script.steps.map((s, i) => ({ ...s, image: null, library_image: stepAssets.get(i + 1) ?? null })),
   };
   const video = {
     srcPath: result.video.path,
@@ -103,9 +106,9 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
   try {
     db().transaction(() => {
       insertVideo(video, files);
-      const link = db().prepare("INSERT OR IGNORE INTO video_images (video_id, image_id, step) VALUES (?, ?, ?)");
-      for (const [step, imageId] of stepImages) {
-        if (getImage(imageId)) link.run(files.id, imageId, step);
+      const link = db().prepare("INSERT OR IGNORE INTO video_assets (video_id, asset_id, step) VALUES (?, ?, ?)");
+      for (const [step, assetId] of stepAssets) {
+        if (getAsset(assetId)) link.run(files.id, assetId, step);
       }
       if (job.contact_id && db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(job.contact_id)) {
         db().prepare("INSERT OR IGNORE INTO contact_videos (contact_id, video_id) VALUES (?, ?)").run(job.contact_id, files.id);

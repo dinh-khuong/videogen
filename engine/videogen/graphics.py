@@ -132,36 +132,45 @@ def blurred_backdrop(img: Image.Image, size: tuple[int, int]) -> Image.Image:
     return backdrop
 
 
-def framed_content(img: Image.Image, size: tuple[int, int]) -> Image.Image:
-    """Ảnh là nội dung chính: hiển thị trọn vẹn (không cắt) trong khung bo góc có bóng, trên nền mờ.
+def frame_layout(content_size: tuple[int, int], size: tuple[int, int]) -> tuple[int, int, int, int, int]:
+    """Vị trí (x, y, rộng, cao, bo góc) của nội dung hiển thị trọn vẹn trong khung.
 
     Chừa khoảng phía trên cho nhãn bước và phía dưới cho phụ đề.
     """
     w, h = size
-    backdrop = cover_fit(img, size).filter(ImageFilter.GaussianBlur(radius=max(8, w // 25)))
-    backdrop = Image.blend(backdrop, Image.new("RGB", size, (12, 14, 20)), 0.55)
-
-    # Phụ đề 2 dòng chiếm ~25% chiều cao khung (gần vuông/dọc) -> chừa chỗ để không che ảnh
+    # Phụ đề 2 dòng chiếm ~25% chiều cao khung (gần vuông/dọc) -> chừa chỗ để không che nội dung
     top, bottom = round(h * 0.14), round(h * (0.25 if h > w * 0.85 else 0.2))
     side = round(w * 0.06)
     box_w, box_h = w - side * 2, h - top - bottom
-    scale = min(box_w / img.width, box_h / img.height)
-    fg = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
-    x = (w - fg.width) // 2
-    y = top + (box_h - fg.height) // 2
-    radius = max(6, round(min(w, h) * 0.022))
+    scale = min(box_w / content_size[0], box_h / content_size[1])
+    fw, fh = max(2, round(content_size[0] * scale / 2) * 2), max(2, round(content_size[1] * scale / 2) * 2)
+    x = (w - fw) // 2
+    y = top + (box_h - fh) // 2
+    return x, y, fw, fh, max(6, round(min(w, h) * 0.022))
+
+
+def framed_backdrop(img: Image.Image, size: tuple[int, int], content_size: tuple[int, int] | None = None):
+    """Nền mờ tối từ img + bóng đổ của khung nội dung. Trả về (nền, (x, y, rộng, cao), mặt nạ bo góc)."""
+    w, h = size
+    backdrop = cover_fit(img, size).filter(ImageFilter.GaussianBlur(radius=max(8, w // 25)))
+    backdrop = Image.blend(backdrop, Image.new("RGB", size, (12, 14, 20)), 0.55)
+    x, y, fw, fh, radius = frame_layout(content_size or img.size, size)
 
     shadow = Image.new("L", size, 0)
     offset = max(4, min(w, h) // 90)
-    ImageDraw.Draw(shadow).rounded_rectangle(
-        (x + offset, y + offset * 2, x + fg.width + offset, y + fg.height + offset * 2), radius, fill=170
-    )
+    ImageDraw.Draw(shadow).rounded_rectangle((x + offset, y + offset * 2, x + fw + offset, y + fh + offset * 2), radius, fill=170)
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=offset * 3))
     backdrop.paste(Image.new("RGB", size, (0, 0, 0)), (0, 0), shadow)
 
-    mask = Image.new("L", fg.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, fg.width - 1, fg.height - 1), radius, fill=255)
-    backdrop.paste(fg, (x, y), mask)
+    mask = Image.new("L", (fw, fh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, fw - 1, fh - 1), radius, fill=255)
+    return backdrop, (x, y, fw, fh), mask
+
+
+def framed_content(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Ảnh là nội dung chính: hiển thị trọn vẹn (không cắt) trong khung bo góc có bóng, trên nền mờ."""
+    backdrop, (x, y, fw, fh), mask = framed_backdrop(img, size)
+    backdrop.paste(img.resize((fw, fh), Image.LANCZOS), (x, y), mask)
     return backdrop
 
 

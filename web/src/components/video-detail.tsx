@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, formatBytes, formatDate, formatDuration, useApi, useDocumentTitle } from "@/lib/client";
 import type { Contact, JobInput, Page, VideoDetail } from "@/lib/types";
+import { AssetThumb } from "./assets-library";
 import { ScriptEditor } from "./script-editor";
 import { Button, Card, ConfirmButton, DescriptionInput, ErrorBox, Field, Loading, TagList, inputClass } from "./ui";
 
@@ -201,16 +202,15 @@ export function VideoDetailView({ id }: { id: string }) {
         </div>
       </div>
 
-      {video.images.length > 0 && (
+      {video.assets.length > 0 && (
         <section>
-          <h2 className="mb-3 font-semibold text-zinc-900">Ảnh dùng trong video</h2>
+          <h2 className="mb-3 font-semibold text-zinc-900">Ảnh & video dùng trong video</h2>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-            {video.images.map((img) => (
-              <a key={img.step} href={img.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.thumbUrl} alt={img.title} loading="lazy" className="aspect-[4/3] w-full object-cover" />
-                <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">Bước {img.step}</span>
-                <p className="truncate px-2 py-1 text-xs text-zinc-600">{img.title}</p>
+            {video.assets.map((asset) => (
+              <a key={asset.step} href={asset.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
+                <AssetThumb asset={asset} className="aspect-[4/3] w-full" />
+                <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">Bước {asset.step}</span>
+                <p className="truncate px-2 py-1 text-xs text-zinc-600">{asset.title}</p>
               </a>
             ))}
           </div>

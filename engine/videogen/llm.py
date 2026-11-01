@@ -1,6 +1,7 @@
 """Sinh kịch bản video hướng dẫn bằng DeepSeek LLM."""
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -35,22 +36,28 @@ Yêu cầu:
 - Mỗi bước là một hành động rõ ràng, không lặp ý.
 """
 
-LIBRARY_FIELD = ',\n      "library_image": "id ảnh trong thư viện dùng cho bước này, hoặc null"'
+LIBRARY_FIELD = ',\n      "library_image": "id asset (ảnh/video) trong thư viện dùng cho bước này, hoặc null"'
 
 LIBRARY_AUTO = """
-Thư viện ảnh có sẵn của người dùng (id: mô tả):
+Thư viện asset (ảnh/video) của người dùng. Mỗi dòng: id [loại]: mô tả | tóm tắt của AI | chữ đọc được trong asset.
 {catalog}
-- Nếu một ảnh trong thư viện minh họa ĐÚNG nội dung của bước, đặt "library_image" là id của ảnh đó; nếu không, đặt null (hệ thống sẽ tự tìm ảnh trên mạng).
-- Mỗi ảnh thư viện dùng tối đa một lần. Không đoán: chỉ chọn khi mô tả ảnh khớp rõ ràng.
+- Bạn tự do chọn asset cho từng bước: nếu một asset minh họa ĐÚNG nội dung của bước, đặt "library_image" là id của nó;
+  nếu không, đặt null (hệ thống sẽ tự tìm ảnh trên mạng).
+- Ưu tiên asset có chữ/thông tin khớp với bước (tên món, giá, thông số...). Có thể dùng thông tin đó trong lời bình, không bịa thêm.
+- Video hợp với bước có hành động, chuyển động. Mỗi asset dùng tối đa một lần. Không đoán: chỉ chọn khi thông tin asset khớp rõ ràng.
 """
 
 LIBRARY_SELECTED = """
-Người dùng đã chọn các ảnh sau làm NỘI DUNG CHÍNH của video (id: mô tả):
+Người dùng đã chọn các asset (ảnh/video) sau làm NỘI DUNG CHÍNH của video.
+Mỗi dòng: id [loại]: mô tả | tóm tắt của AI | chữ đọc được trong asset.
 {catalog}
-- Xây dựng các bước xoay quanh những ảnh này: lời bình của bước phải nói về đúng nội dung ảnh được gán.
-- Mỗi ảnh phải được dùng đúng một lần qua trường "library_image", theo thứ tự hợp lý nhất.
-- Nếu số bước nhiều hơn số ảnh, các bước còn lại đặt "library_image": null.
+- Xây dựng các bước xoay quanh những asset này: lời bình của bước phải nói về đúng nội dung asset được gán,
+  tận dụng chữ/thông tin đọc được trong asset (tên, giá, số liệu...) và không bịa thêm chi tiết.
+- Mỗi asset phải được dùng đúng một lần qua trường "library_image", theo đúng thứ tự được liệt kê.
+- Nếu số bước nhiều hơn số asset, các bước còn lại đặt "library_image": null.
 """
+
+AUTO_LIBRARY_LIMIT = 80  # số asset tối đa đưa vào prompt ở chế độ AI tự chọn
 
 
 @dataclass
@@ -60,7 +67,7 @@ class Step:
     image_queries: list[str] = field(default_factory=list)
     image: str | None = None  # đường dẫn ảnh local tự chọn (ưu tiên hơn tìm kiếm)
     hashtags: list[str] = field(default_factory=list)
-    library_image: str | None = None  # id ảnh thư viện do LLM chọn
+    library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
 
 
 @dataclass
@@ -83,24 +90,69 @@ class Script:
         return parse_script(json.loads(path.read_text(encoding="utf-8")), default_title=path.stem)
 
 
+def _oneline(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 @dataclass
-class LibraryImage:
-    """Ảnh trong thư viện mà LLM có thể chọn làm nội dung cho một bước."""
+class LibraryAsset:
+    """Asset (ảnh hoặc video) trong thư viện mà LLM có thể chọn làm nội dung cho một bước."""
     id: str
     path: str
     description: str = ""
     tags: list[str] = field(default_factory=list)
+    kind: str = "image"  # image | video
+    summary: str = ""    # tóm tắt do AI viết khi phân tích asset
+    ocr_text: str = ""   # chữ đọc được trong asset
+    duration: float | None = None
 
-    def catalog_line(self) -> str:
-        text = re.sub(r"\s+", " ", self.description).strip()[:200] or "(không có mô tả)"
+    def catalog_line(self, detailed: bool = False) -> str:
+        if self.kind == "video":
+            kind = f"video {self.duration:.0f}s" if self.duration else "video"
+        else:
+            kind = "ảnh"
+        parts = []
+        if self.description.strip():
+            parts.append(_oneline(self.description, 200))
+        if self.summary.strip():
+            parts.append("AI: " + _oneline(self.summary, 300))
+        if self.ocr_text.strip():
+            parts.append(f'Chữ: "{_oneline(self.ocr_text, 600 if detailed else 200)}"')
+        text = " | ".join(parts) or "(không có thông tin)"
         tags = " ".join(f"#{t}" for t in self.tags if f"#{t}" not in text)
-        return f"- {self.id}: {text} {tags}".rstrip()
+        return f"- {self.id} [{kind}]: {text} {tags}".rstrip()
+
+    def search_text(self) -> str:
+        return " ".join([self.description, self.summary, self.ocr_text, *self.tags])
+
+
+# Tên cũ, giữ để không làm hỏng code bên ngoài
+LibraryImage = LibraryAsset
+
+
+def _tokens(text: str) -> set[str]:
+    text = unicodedata.normalize("NFKD", text.lower().replace("đ", "d"))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return {w for w in re.findall(r"[a-z0-9]{2,}", text)}
+
+
+def shortlist(topic: str, library: list[LibraryAsset], limit: int = AUTO_LIBRARY_LIMIT) -> list[LibraryAsset]:
+    """Thư viện lớn: giữ các asset có nhiều từ trùng với chủ đề nhất (giữ thứ tự gốc khi bằng điểm)."""
+    if len(library) <= limit:
+        return library
+    words = _tokens(topic)
+    scored = sorted(enumerate(library), key=lambda p: (-len(words & _tokens(p[1].search_text())), p[0]))
+    keep = {i for i, _ in scored[:limit]}
+    return [a for i, a in enumerate(library) if i in keep]
 
 
 def normalize_hashtags(values) -> list[str]:
     tags: list[str] = []
     for v in values or []:
-        tag = re.sub(r"[^\w]", "", str(v).lower().lstrip("#"))
+        # Hashtag viết thường, không dấu (LLM đôi khi vẫn trả về có dấu)
+        tag = unicodedata.normalize("NFKD", str(v).lower().lstrip("#").replace("đ", "d"))
+        tag = re.sub(r"[^\w]", "", "".join(ch for ch in tag if not unicodedata.combining(ch)))
         if tag and tag not in tags:
             tags.append(tag)
     return tags
@@ -132,15 +184,15 @@ def parse_script(data: dict, default_title: str) -> Script:
     )
 
 
-def _extract_json(text: str) -> dict:
+def extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError(f"Không tìm thấy JSON trong phản hồi của LLM: {text[:200]!r}")
     return json.loads(match.group(0))
 
 
-def _assign_library(script: Script, library: list[LibraryImage], mode: str) -> None:
-    """Bỏ id ảnh không tồn tại / dùng lặp; ở chế độ 'selected' gán nốt ảnh chưa dùng."""
+def _assign_library(script: Script, library: list[LibraryAsset], mode: str) -> None:
+    """Bỏ id asset không tồn tại / dùng lặp; ở chế độ 'selected' gán nốt asset chưa dùng."""
     known = {img.id for img in library}
     used: set[str] = set()
     for step in script.steps:
@@ -162,7 +214,7 @@ def generate_script(
     settings: Settings,
     num_steps: int | None = None,
     language: str = "tiếng Việt",
-    library: list[LibraryImage] | None = None,
+    library: list[LibraryAsset] | None = None,
     library_mode: str = "off",
 ) -> Script:
     client = OpenAI(
@@ -176,7 +228,10 @@ def generate_script(
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
     if library:
         template = LIBRARY_SELECTED if library_mode == "selected" else LIBRARY_AUTO
-        system += template.replace("{catalog}", "\n".join(img.catalog_line() for img in library))
+        if library_mode == "auto":
+            library = shortlist(topic, library)
+        detailed = library_mode == "selected"
+        system += template.replace("{catalog}", "\n".join(a.catalog_line(detailed) for a in library))
 
     if num_steps:
         steps_hint = f"đúng {num_steps} bước"
@@ -199,7 +254,7 @@ def generate_script(
         )
         content = response.choices[0].message.content or ""
         try:
-            script = parse_script(_extract_json(content), default_title=topic)
+            script = parse_script(extract_json(content), default_title=topic)
         except (ValueError, KeyError, TypeError) as e:
             last_error = e
             continue

@@ -9,7 +9,7 @@ const ITEMS = [
   { href: "/create", label: "Tạo video", icon: "M12 5v14M5 12h14" },
   { href: "/jobs", label: "Hàng đợi", icon: "M4 6h16M4 12h16M4 18h10" },
   { href: "/videos", label: "Video", icon: "M15 10l5-3v10l-5-3M3 6h12v12H3z" },
-  { href: "/images", label: "Ảnh", icon: "M4 5h16v14H4zM4 15l4-4 5 5 3-3 4 4M15 9.5a1 1 0 1 0 0-.01" },
+  { href: "/assets", label: "Assets", icon: "M4 5h16v14H4zM4 15l4-4 5 5 3-3 4 4M15 9.5a1 1 0 1 0 0-.01" },
   { href: "/crm", label: "Khách hàng", icon: "M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M22 19v-1a4 4 0 0 0-3-3.9M16 4.1a3 3 0 0 1 0 5.8" },
 ];
 

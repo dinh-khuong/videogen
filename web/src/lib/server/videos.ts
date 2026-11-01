@@ -1,14 +1,12 @@
 import "server-only";
 import crypto from "node:crypto";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { parseHashtags } from "@/lib/hashtags";
 import type { Page, Script, VideoDetail, VideoItem } from "@/lib/types";
+import { getAsset } from "./assets";
 import { db, nowIso } from "./db";
-import { probe } from "./engine";
-import { HttpError, moveFile, removeMedia } from "./files";
-import { getImage } from "./images";
-import { MEDIA_DIR, TMP_DIR, mediaPath, mediaUrl } from "./paths";
+import { moveFile, removeMedia } from "./files";
+import { MEDIA_DIR, mediaUrl } from "./paths";
 import { setTags, tagFilterSql, tagsFor } from "./tags";
 
 type VideoRow = {
@@ -17,7 +15,7 @@ type VideoRow = {
   thumbnail: string | null;
   title: string;
   description: string;
-  kind: "generated" | "upload";
+  kind: "generated";
   duration: number | null;
   width: number | null;
   height: number | null;
@@ -46,7 +44,7 @@ export function toVideoItems(rows: VideoRow[]): VideoItem[] {
   }));
 }
 
-export type VideoQuery = { q?: string; tag?: string; kind?: string; limit?: number; offset?: number };
+export type VideoQuery = { q?: string; tag?: string; limit?: number; offset?: number };
 
 export function listVideos(query: VideoQuery = {}): Page<VideoItem> {
   const clauses: string[] = [];
@@ -58,10 +56,6 @@ export function listVideos(query: VideoQuery = {}): Page<VideoItem> {
   if (query.tag) {
     clauses.push(tagFilterSql("video", "v"));
     params.push(query.tag);
-  }
-  if (query.kind === "generated" || query.kind === "upload") {
-    clauses.push("v.kind = ?");
-    params.push(query.kind);
   }
   const sql = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = Math.min(Math.max(query.limit ?? 48, 1), 500);
@@ -81,23 +75,18 @@ export function getVideo(id: string): VideoItem | null {
   return row ? toVideoItems([row])[0] : null;
 }
 
-export function videoFilePath(id: string): string | null {
-  const row = getRow(id);
-  return row ? mediaPath(row.file) : null;
-}
-
 export function getVideoDetail(id: string): VideoDetail | null {
   const row = getRow(id);
   if (!row) return null;
-  const images = (
-    db().prepare("SELECT image_id, step FROM video_images WHERE video_id = ? ORDER BY step").all(id) as {
-      image_id: string;
+  const assets = (
+    db().prepare("SELECT asset_id, step FROM video_assets WHERE video_id = ? ORDER BY step").all(id) as {
+      asset_id: string;
       step: number;
     }[]
   )
     .map((r) => {
-      const img = getImage(r.image_id);
-      return img ? { ...img, step: r.step } : null;
+      const asset = getAsset(r.asset_id);
+      return asset ? { ...asset, step: r.step } : null;
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
   const contacts = db()
@@ -112,7 +101,7 @@ export function getVideoDetail(id: string): VideoDetail | null {
   } catch {
     script = null;
   }
-  return { ...toVideoItems([row])[0], script, images, contacts };
+  return { ...toVideoItems([row])[0], script, assets, contacts };
 }
 
 export type NewVideo = {
@@ -123,7 +112,7 @@ export type NewVideo = {
   size: number;
   title: string;
   description: string;
-  kind: "generated" | "upload";
+  kind: "generated";
   duration?: number | null;
   width?: number | null;
   height?: number | null;
@@ -151,45 +140,6 @@ export function insertVideo(video: NewVideo, files: { id: string; file: string; 
       video.width ?? null, video.height ?? null, video.size, video.script ? JSON.stringify(video.script) : null,
       video.jobId ?? null);
   setTags("video", files.id, parseHashtags(video.description));
-}
-
-/** Video người dùng tải lên (vd gameplay làm nền). */
-export async function addUploadedVideo(tmpPath: string, ext: string, size: number, title: string, description: string) {
-  const id = crypto.randomUUID();
-  const probeDir = path.join(TMP_DIR, id);
-  await fsp.mkdir(probeDir, { recursive: true });
-  try {
-    const named = path.join(probeDir, `${id}${ext}`);
-    await moveFile(tmpPath, named);
-    const [info] = await probe([named], probeDir);
-    if (!info || info.error || info.kind !== "video") {
-      throw new HttpError(415, `Không đọc được video (${info?.error ?? "định dạng không hỗ trợ"})`);
-    }
-    const video: NewVideo = {
-      id,
-      srcPath: named,
-      thumbPath: info.thumbnail ?? null,
-      ext,
-      size,
-      title,
-      description,
-      kind: "upload",
-      duration: info.duration,
-      width: info.width,
-      height: info.height,
-    };
-    const files = await moveVideoFiles(video);
-    try {
-      db().transaction(() => insertVideo(video, files))();
-    } catch (e) {
-      await removeMedia(files.file, files.thumb);
-      throw e;
-    }
-    return getVideo(id)!;
-  } finally {
-    await fsp.rm(probeDir, { recursive: true, force: true });
-    await fsp.rm(tmpPath, { force: true });
-  }
 }
 
 export function updateVideo(id: string, patch: { title?: string; description?: string }): VideoItem | null {

@@ -21,9 +21,6 @@ export function VideoCard({ video, action }: { video: VideoItem; action?: React.
             {formatDuration(video.duration)}
           </span>
         )}
-        {video.kind === "upload" && (
-          <span className="absolute left-1.5 top-1.5 rounded bg-white/90 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700">Tải lên</span>
-        )}
       </Link>
       <div className="flex items-start justify-between gap-2 p-3">
         <div className="min-w-0">
