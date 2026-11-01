@@ -1,14 +1,15 @@
-"""Điều phối: prompt -> kịch bản (DeepSeek) -> ảnh (Google) -> giọng đọc (edge-tts) -> video."""
+"""Điều phối: prompt -> kịch bản (DeepSeek) -> ảnh (Pexels) -> giọng đọc (edge-tts) -> video."""
 import hashlib
+import json
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from config import Settings, load_settings
 from graphics import make_placeholder, render_step_badge, render_title_card
-from image_search import UrlRegistry, fetch_image
+from image_search import Credit, UrlRegistry, fetch_image
 from llm import Script, generate_script
 from tts import synthesize_many
 from video_builder import ASPECTS, Scene, build_video
@@ -38,10 +39,25 @@ def _hash(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:10]
 
 
-def _prepare_images(script: Script, work_dir: Path, settings: Settings, size) -> list[Path]:
+ORIENTATIONS = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
+
+
+def _write_credits(credits: list[tuple[int, Credit]], work_dir: Path) -> None:
+    if not credits:
+        return
+    lines = ["Ảnh từ Pexels (https://www.pexels.com):"]
+    for step_no, c in sorted(credits, key=lambda x: x[0]):
+        lines.append(f"- Bước {step_no}: {c.photographer} — {c.photo_url}")
+    (work_dir / "credits.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _prepare_images(script: Script, work_dir: Path, settings: Settings, aspect: str) -> list[Path]:
+    size = ASPECTS[aspect]
+    orientation = ORIENTATIONS[aspect]
     images_dir = work_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     registry = UrlRegistry()
+    credits: list[tuple[int, Credit]] = []
 
     def job(i: int) -> Path:
         step = script.steps[i]
@@ -53,11 +69,17 @@ def _prepare_images(script: Script, work_dir: Path, settings: Settings, size) ->
                 return custom
             print(f"      ⚠️  Không thấy ảnh tự chọn {custom}, chuyển sang tìm kiếm.")
 
-        path = images_dir / f"step_{i + 1:02d}_{_hash(*step.image_queries)}.jpg"
+        path = images_dir / f"step_{i + 1:02d}_{_hash(orientation, *step.image_queries)}.jpg"
+        credit_path = path.with_suffix(".json")
         if path.exists():
+            if credit_path.exists():
+                credits.append((i + 1, Credit(**json.loads(credit_path.read_text(encoding="utf-8")))))
             return path
-        if step.image_queries and fetch_image(step.image_queries, path, settings, registry):
-            print(f"      ✓ Ảnh bước {i + 1}: {step.image_queries[0]}")
+        credit = fetch_image(step.image_queries, path, orientation, settings, registry) if step.image_queries else None
+        if credit:
+            credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
+            credits.append((i + 1, credit))
+            print(f"      ✓ Ảnh bước {i + 1}: {step.image_queries[0]} (© {credit.photographer})")
             return path
         print(f"      ⚠️  Không tìm được ảnh cho bước {i + 1}, dùng ảnh nền thay thế.")
         # Lưu tên khác để lần chạy sau vẫn thử tìm ảnh thật
@@ -65,7 +87,9 @@ def _prepare_images(script: Script, work_dir: Path, settings: Settings, size) ->
         return make_placeholder(step.heading or step.narration[:60], placeholder, size, settings.font_path)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        return list(pool.map(job, range(len(script.steps))))
+        images = list(pool.map(job, range(len(script.steps))))
+    _write_credits(credits, work_dir)
+    return images
 
 
 def _prepare_audio(script: Script, work_dir: Path, voice: str, rate: str) -> dict[str, Path]:
@@ -107,8 +131,8 @@ def run(topic: str | None, out_path: str | None, script_path: str | None, opts: 
         print("✅ Đã lưu kịch bản. Sửa file rồi chạy lại với --script để render video.")
         return script_file
 
-    print("[2/4] Tìm & tải ảnh minh họa (song song) ...")
-    images = _prepare_images(script, work_dir, settings, size)
+    print("[2/4] Tìm & tải ảnh minh họa từ Pexels (song song) ...")
+    images = _prepare_images(script, work_dir, settings, opts.aspect)
 
     print(f"[3/4] Tạo giọng đọc ({voice}, tốc độ {rate}) ...")
     audio = _prepare_audio(script, work_dir, voice, rate)

@@ -5,3 +5,4 @@ __pycache__/
 venv/
 output/
 *.mp4
+client_secret*.apps.googleusercontent.com.json

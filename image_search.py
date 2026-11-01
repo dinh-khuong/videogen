@@ -1,7 +1,8 @@
-"""Tìm, tải và kiểm tra ảnh minh họa qua Google Custom Search JSON API."""
+"""Tìm, tải và kiểm tra ảnh minh họa qua Pexels API (ảnh miễn phí, được dùng thương mại)."""
 import io
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -9,15 +10,16 @@ from PIL import Image, ImageOps
 
 from config import Settings, require
 
-SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0 Safari/537.36"
-    )
-}
+SEARCH_URL = "https://api.pexels.com/v1/search"
 MIN_WIDTH, MIN_HEIGHT = 480, 320
 MAX_SIDE = 2400
+
+
+@dataclass
+class Credit:
+    photographer: str
+    photographer_url: str
+    photo_url: str
 
 
 class UrlRegistry:
@@ -35,49 +37,29 @@ class UrlRegistry:
             return True
 
 
-def _get_with_retry(url: str, retries: int = 3, **kwargs) -> requests.Response:
-    for attempt in range(retries):
+def search_photos(query: str, orientation: str, settings: Settings) -> list[dict]:
+    headers = {"Authorization": require("PEXELS_API_KEY", settings.pexels_api_key)}
+    params = {"query": query, "orientation": orientation, "per_page": 15}
+    for attempt in range(3):
         try:
-            resp = requests.get(url, timeout=20, **kwargs)
-            if resp.status_code in (429, 500, 502, 503) and attempt < retries - 1:
-                time.sleep(2**attempt)
-                continue
-            resp.raise_for_status()
-            return resp
+            resp = requests.get(SEARCH_URL, headers=headers, params=params, timeout=20)
         except (requests.ConnectionError, requests.Timeout):
-            if attempt == retries - 1:
+            if attempt == 2:
                 raise
             time.sleep(2**attempt)
-    raise RuntimeError("unreachable")
-
-
-def search_images(query: str, settings: Settings) -> list[dict]:
-    params = {
-        "key": require("GOOGLE_API_KEY", settings.google_api_key),
-        "cx": require("GOOGLE_CSE_ID", settings.google_cse_id),
-        "q": query,
-        "searchType": "image",
-        "num": 10,
-        "safe": "active",
-        "imgSize": "large",
-        "imgType": "photo",
-    }
-    resp = _get_with_retry(SEARCH_URL, params=params)
-    items = resp.json().get("items", [])
-    # Ưu tiên ảnh ngang, độ phân giải lớn
-    def score(item: dict) -> float:
-        img = item.get("image", {})
-        w, h = img.get("width", 0), img.get("height", 0)
-        landscape_bonus = 1.2 if w >= h else 1.0
-        return w * h * landscape_bonus
-
-    return sorted(items, key=score, reverse=True)
+            continue
+        if resp.status_code in (429, 500, 502, 503) and attempt < 2:
+            time.sleep(2**attempt)
+            continue
+        resp.raise_for_status()
+        return resp.json().get("photos", [])
+    return []
 
 
 def download_valid_image(url: str, dest_path: Path) -> bool:
     """Tải ảnh, kiểm tra đúng là ảnh hợp lệ & đủ lớn, chuẩn hóa về JPEG RGB."""
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=20)
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         img = Image.open(io.BytesIO(resp.content))
         img.load()
@@ -87,11 +69,6 @@ def download_valid_image(url: str, dest_path: Path) -> bool:
     img = ImageOps.exif_transpose(img)
     if img.width < MIN_WIDTH or img.height < MIN_HEIGHT:
         return False
-    if img.mode in ("RGBA", "LA", "P"):
-        img = img.convert("RGBA")
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        background.paste(img, mask=img.split()[-1])
-        img = background
     img = img.convert("RGB")
     img.thumbnail((MAX_SIDE, MAX_SIDE))
     img.save(dest_path, "JPEG", quality=92)
@@ -99,19 +76,24 @@ def download_valid_image(url: str, dest_path: Path) -> bool:
 
 
 def fetch_image(
-    queries: list[str], dest_path: Path, settings: Settings, registry: UrlRegistry
-) -> bool:
-    """Thử lần lượt các query, trả về True nếu tải được ảnh hợp lệ vào dest_path."""
+    queries: list[str], dest_path: Path, orientation: str, settings: Settings, registry: UrlRegistry
+) -> Credit | None:
+    """Thử lần lượt các query, tải ảnh hợp lệ đầu tiên vào dest_path và trả về thông tin tác giả."""
     for query in queries:
         try:
-            items = search_images(query, settings)
+            photos = search_photos(query, orientation, settings)
         except requests.HTTPError as e:
-            print(f"      ⚠️  Google Search lỗi cho '{query}': {e}")
+            print(f"      ⚠️  Pexels lỗi cho '{query}': {e}")
             continue
-        for item in items:
-            link = item.get("link")
+        for photo in photos:
+            src = photo.get("src", {})
+            link = src.get("large2x") or src.get("original")
             if not link or not registry.claim(link):
                 continue
             if download_valid_image(link, dest_path):
-                return True
-    return False
+                return Credit(
+                    photographer=photo.get("photographer", ""),
+                    photographer_url=photo.get("photographer_url", ""),
+                    photo_url=photo.get("url", ""),
+                )
+    return None

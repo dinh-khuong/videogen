@@ -31,8 +31,7 @@ class Settings:
         self.deepseek_base_url = _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         self.deepseek_model = _get("DEEPSEEK_MODEL", "deepseek-chat")
 
-        self.google_api_key = _get("GOOGLE_API_KEY")
-        self.google_cse_id = _get("GOOGLE_CSE_ID")
+        self.pexels_api_key = _get("PEXELS_API_KEY")
 
         self.tts_voice = _get("TTS_VOICE", "vi-VN-HoaiMyNeural")
         self.tts_rate = _get("TTS_RATE", "+0%")

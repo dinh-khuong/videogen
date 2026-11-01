@@ -1,11 +1,11 @@
 # videogen — Tạo video hướng dẫn tự động
 
-Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các bước, kết) → Google tìm ảnh minh họa cho từng bước → edge-tts đọc lời bình → dựng video có phụ đề, title card, nhãn "Bước N", hiệu ứng Ken Burns, chuyển cảnh và nhạc nền.
+Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các bước, kết) → Pexels tìm ảnh minh họa cho từng bước → edge-tts đọc lời bình → dựng video có phụ đề, title card, nhãn "Bước N", hiệu ứng Ken Burns, chuyển cảnh và nhạc nền.
 
 ## Tính năng
 
 - **Kịch bản thông minh**: DeepSeek (JSON mode) sinh tiêu đề, lời mở đầu, các bước (tên bước + lời bình + 2 từ khóa ảnh), lời kết.
-- **Ảnh chất lượng**: ưu tiên ảnh lớn, ảnh ngang; kiểm tra ảnh hợp lệ (bỏ ảnh lỗi/quá nhỏ), chuẩn hóa JPEG; thử từ khóa dự phòng; nếu vẫn không có thì tạo ảnh nền thay thế thay vì dừng chương trình.
+- **Ảnh dùng thương mại được**: lấy từ Pexels, đúng hướng khung hình video (ngang/dọc/vuông); kiểm tra ảnh hợp lệ, thử từ khóa dự phòng; nếu vẫn không có thì tạo ảnh nền thay thế. Tên tác giả ảnh được ghi vào `credits.txt`.
 - **Giọng đọc**: edge-tts (Microsoft Neural, miễn phí) có retry; tự chuyển sang gTTS nếu edge-tts lỗi.
 - **Video đẹp**: phụ đề tiếng Việt chia đoạn theo thời gian đọc, title card, nhãn bước, zoom/pan Ken Burns, crossfade giữa các cảnh, fade in/out, nhạc nền tự lặp.
 - **Nhiều khung hình**: `16:9` (YouTube), `9:16` (TikTok/Shorts/Reels), `1:1`. Ảnh lệch tỉ lệ tự đặt trên nền mờ.
@@ -67,11 +67,13 @@ Xem tất cả tùy chọn: `python main.py -h`
 - Lấy tại: https://platform.deepseek.com/api_keys
 - `.env`: `DEEPSEEK_API_KEY=sk-...`
 
-### 2. Google Custom Search API (tìm ảnh) — **bắt buộc**
-- **API key**: https://console.cloud.google.com/apis/credentials → "Create credentials" → "API key". Bật **Custom Search API** trong [API Library](https://console.cloud.google.com/apis/library/customsearch.googleapis.com).
-- **CSE ID**: https://programmablesearchengine.google.com/ → tạo search engine → bật **"Search the entire web"** và **"Image search"** → copy "Search engine ID".
-- `.env`: `GOOGLE_API_KEY=AIza...`, `GOOGLE_CSE_ID=...`
-- Miễn phí 100 lượt/ngày. Mỗi bước tốn 1–2 lượt; ảnh đã tải được cache.
+### 2. Pexels (tìm ảnh) — **bắt buộc**
+- Lấy key miễn phí tại https://www.pexels.com/api/ (đăng nhập → "Your API Key").
+- `.env`: `PEXELS_API_KEY=...`
+- Miễn phí 200 lượt/giờ, 20.000 lượt/tháng. Mỗi bước tốn 1–2 lượt; ảnh đã tải được cache.
+- Ảnh Pexels được dùng miễn phí cho cả mục đích thương mại (kể cả quảng cáo). Không bắt buộc ghi nguồn, nhưng nên ghi — xem `credits.txt` trong thư mục output.
+
+> Google Custom Search API không còn dùng được: Google đã đóng API này với khách hàng mới và sẽ tắt hẳn vào 1/1/2027.
 
 ### 3. Giọng đọc — **không cần API key**
 - edge-tts, giọng mặc định `vi-VN-HoaiMyNeural` (nữ). Giọng nam: `vi-VN-NamMinhNeural`.
@@ -84,7 +86,7 @@ main.py           # CLI
 pipeline.py       # điều phối, cache, thư mục output
 config.py         # đọc API key từ .env
 llm.py            # DeepSeek -> kịch bản (Script/Step), lưu/đọc script.json
-image_search.py   # Google Custom Search -> tải & kiểm tra ảnh
+image_search.py   # Pexels API -> tải & kiểm tra ảnh, thông tin tác giả
 tts.py            # edge-tts (+ gTTS dự phòng), chạy song song
 graphics.py       # Pillow: phụ đề, nhãn bước, title card, ảnh dự phòng, font tiếng Việt
 video_builder.py  # moviepy: Ken Burns, phụ đề theo thời gian, crossfade, nhạc nền
@@ -94,4 +96,4 @@ video_builder.py  # moviepy: Ken Burns, phụ đề theo thời gian, crossfade,
 
 - Font phụ đề tự tìm Noto Sans / DejaVu Sans / Arial. Nếu chữ tiếng Việt hiển thị lỗi, đặt `FONT_PATH` trong `.env`.
 - Máy chủ edge-tts đôi khi từ chối ngẫu nhiên — chương trình tự thử lại nhiều lần và chuyển sang gTTS nếu cần, nên bước tạo giọng có thể mất vài chục giây.
-- Ảnh từ Google Image Search thuộc bản quyền bên thứ ba — chỉ nên dùng cho học tập/thử nghiệm; cân nhắc bản quyền trước khi đăng công khai.
+- Pexels không cho phép bán lại nguyên ảnh hoặc dùng ảnh có người theo cách gây hiểu lầm (vd ngụ ý người trong ảnh chứng thực sản phẩm). Với quảng cáo, nên ưu tiên ảnh sản phẩm thật của bạn qua trường `"image"`.
