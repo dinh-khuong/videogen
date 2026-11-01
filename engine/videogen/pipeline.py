@@ -13,7 +13,7 @@ from .config import Settings, load_settings
 from .events import Reporter
 from .graphics import make_placeholder, render_step_badge, render_title_card
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
-from .llm import LibraryAsset, Script, generate_script, parse_script
+from .llm import LibraryAsset, Script, generate_script, parse_script, short_title
 from .probe import VIDEO_EXTS
 from .tts import synthesize_many
 from .video_builder import ASPECTS, Scene, build_video, split_sizes
@@ -256,10 +256,10 @@ def run(
         print(f"[1/4] Dùng kịch bản có sẵn: {script_file}", flush=True)
     else:
         if script_data is not None:
-            script = parse_script(script_data, default_title=topic or "video")
+            script = parse_script(script_data, default_title=short_title(topic or "video"))
             print("[1/4] Dùng kịch bản được cung cấp", flush=True)
         else:
-            print(f"[1/4] DeepSeek đang viết kịch bản cho: {topic!r} ...", flush=True)
+            print(f"[1/4] DeepSeek đang viết kịch bản cho: {short_title(topic, 80)!r} ({len(topic)} ký tự) ...", flush=True)
             reporter.stage("script", "DeepSeek đang viết kịch bản")
             library = opts.library if opts.library_mode != "off" else []
             script = generate_script(topic, settings, opts.num_steps, opts.language, library, opts.library_mode)

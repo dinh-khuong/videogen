@@ -10,7 +10,9 @@ from openai import OpenAI
 from .config import Settings, require
 
 SYSTEM_PROMPT = """Bạn là biên tập viên viết kịch bản video hướng dẫn (how-to) ngắn, cuốn hút, chính xác.
-Với chủ đề người dùng đưa ra, hãy viết kịch bản gồm lời mở đầu, các bước thực hiện theo thứ tự, và lời kết.
+Người dùng đưa ra chủ đề hoặc một yêu cầu chi tiết (có thể dài: nội dung cần nói, đối tượng người xem, giọng văn,
+thông tin sản phẩm/dịch vụ...). Hãy viết kịch bản gồm lời mở đầu, các bước thực hiện theo thứ tự, và lời kết.
+Làm đúng mọi yêu cầu của người dùng; giữ nguyên thông tin cụ thể họ cung cấp (tên, giá, số liệu, địa chỉ).
 Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu trúc:
 {
   "title": "Tiêu đề video ngắn gọn (tối đa 60 ký tự)",
@@ -158,6 +160,12 @@ def normalize_hashtags(values) -> list[str]:
     return tags
 
 
+def short_title(text: str, limit: int = 60) -> str:
+    """Dòng đầu của chủ đề/prompt, cắt gọn để làm tiêu đề dự phòng hoặc in log."""
+    line = next((l.strip() for l in text.splitlines() if l.strip()), "video")
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
 def parse_script(data: dict, default_title: str) -> Script:
     steps = []
     for s in data["steps"]:
@@ -239,7 +247,7 @@ def generate_script(
         steps_hint = f"{max(3, len(library))} bước"
     else:
         steps_hint = "từ 5 đến 8 bước"
-    user_msg = f"Chủ đề: {topic}\nSố bước: {steps_hint}."
+    user_msg = f"Yêu cầu của người dùng:\n{topic}\n\nSố bước: {steps_hint}."
 
     last_error: Exception | None = None
     for _ in range(3):
@@ -254,7 +262,7 @@ def generate_script(
         )
         content = response.choices[0].message.content or ""
         try:
-            script = parse_script(extract_json(content), default_title=topic)
+            script = parse_script(extract_json(content), default_title=short_title(topic))
         except (ValueError, KeyError, TypeError) as e:
             last_error = e
             continue

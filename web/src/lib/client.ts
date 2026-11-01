@@ -76,7 +76,10 @@ export function useApi<T>(url: string | null, options: { refreshMs?: number; sho
 /** Đặt tiêu đề tab cho trang chi tiết (dữ liệu tải ở client nên không dùng metadata được). */
 export function useDocumentTitle(title: string | null | undefined) {
   useEffect(() => {
-    if (title) document.title = `${title} · VideoGen Studio`;
+    if (!title) return;
+    // Chủ đề có thể là prompt dài: chỉ lấy dòng đầu, cắt gọn
+    const line = title.trim().split("\n")[0];
+    document.title = `${line.length > 60 ? `${line.slice(0, 59)}…` : line} · VideoGen Studio`;
   }, [title]);
 }
 

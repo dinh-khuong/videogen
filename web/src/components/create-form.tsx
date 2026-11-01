@@ -101,8 +101,26 @@ export function CreateVideoForm() {
       <PageHeader title="Tạo video mới" subtitle="AI viết kịch bản, chọn ảnh/video từ Assets (hoặc tìm ảnh trên mạng), đọc lời bình và dựng video." />
 
       <Card className="space-y-4 p-5">
-        <Field label="Chủ đề video" hint="Ví dụ: “cách pha cà phê phin”, “giới thiệu menu mùa hè của quán”, “3 mẹo chăm sóc da”.">
-          <textarea className={inputClass} rows={2} required maxLength={500} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Bạn muốn làm video hướng dẫn về gì?" />
+        <Field
+          label="Chủ đề / yêu cầu cho AI"
+          hint={
+            <span className="flex justify-between gap-3">
+              <span>
+                Viết ngắn (“cách pha cà phê phin”) hoặc chi tiết như một prompt: nội dung cần nói, đối tượng xem, giọng văn, thông tin
+                sản phẩm, giá...
+              </span>
+              {topic.length > 0 && <span className="shrink-0 tabular-nums">{topic.length.toLocaleString("vi-VN")} ký tự</span>}
+            </span>
+          }
+        >
+          <textarea
+            className={`${inputClass} min-h-28 resize-y`}
+            rows={5}
+            required
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder={"Bạn muốn làm video hướng dẫn về gì?\nVí dụ: Video giới thiệu quán cà phê Mộc cho dân văn phòng, giọng trẻ trung, nhấn mạnh combo sáng 35.000đ và chỗ ngồi làm việc yên tĩnh."}
+          />
         </Field>
         <div className="grid gap-4 sm:grid-cols-4">
           <Field label="Số bước">

@@ -93,6 +93,8 @@ export function getJobDetail(id: string): JobDetail | null {
 }
 
 const ASPECTS = ["16:9", "9:16", "1:1"];
+/** Chủ đề là prompt cho AI nên cho phép rất dài; giới hạn này chỉ để tránh vô tình dán cả tài liệu khổng lồ. */
+export const MAX_TOPIC_CHARS = 30_000;
 
 function validScript(script: unknown): script is Script {
   const s = script as Script;
@@ -110,8 +112,11 @@ function validScript(script: unknown): script is Script {
 export function validateInput(raw: Partial<JobInput>): JobInput {
   const script = raw.script ?? null;
   if (script && !validScript(script)) throw new HttpError(400, "Kịch bản không hợp lệ: mỗi bước cần có lời bình");
-  const topic = String(raw.topic ?? script?.title ?? "").trim().slice(0, 500);
+  const topic = String(raw.topic ?? script?.title ?? "").trim();
   if (!topic) throw new HttpError(400, "Hãy nhập chủ đề video");
+  if (topic.length > MAX_TOPIC_CHARS) {
+    throw new HttpError(400, `Chủ đề dài ${topic.length.toLocaleString("vi-VN")} ký tự, tối đa ${MAX_TOPIC_CHARS.toLocaleString("vi-VN")}`);
+  }
   const aspect = raw.aspect && ASPECTS.includes(raw.aspect) ? raw.aspect : "16:9";
   const layout = raw.layout === "split" ? "split" : "normal";
   const imageStyle = raw.imageStyle === "cover" || raw.imageStyle === "frame" ? raw.imageStyle : "auto";

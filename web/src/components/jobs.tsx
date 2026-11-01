@@ -121,6 +121,21 @@ function isActive(job: JobItem): boolean {
   return job.status === "queued" || job.status === "running";
 }
 
+/** Chủ đề/prompt đầy đủ của job; prompt dài được thu gọn, bấm để xem hết. */
+function TopicView({ topic }: { topic: string }) {
+  const long = topic.length > 160 || topic.includes("\n");
+  if (!long) return <p className="text-sm text-zinc-700"><span className="text-zinc-500">Chủ đề:</span> {topic}</p>;
+  return (
+    <details className="group rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
+      <summary className="cursor-pointer text-sm text-zinc-700">
+        <span className="text-zinc-500">Yêu cầu ({topic.length.toLocaleString("vi-VN")} ký tự):</span>{" "}
+        <span className="group-open:hidden">{topic.slice(0, 120).replace(/\s+/g, " ")}…</span>
+      </summary>
+      <p className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm text-zinc-700">{topic}</p>
+    </details>
+  );
+}
+
 export function JobDetailView({ id }: { id: string }) {
   const router = useRouter();
   const { data: job, error, loading, reload } = useApi<JobDetail>(`/api/jobs/${id}`, {
@@ -150,7 +165,9 @@ export function JobDetailView({ id }: { id: string }) {
           ← Hàng đợi
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="min-w-0 text-2xl font-semibold tracking-tight text-zinc-900">{job.topic}</h1>
+          <h1 className="line-clamp-2 min-w-0 break-words text-2xl font-semibold tracking-tight text-zinc-900" title={job.topic}>
+            {job.video?.title || job.topic}
+          </h1>
           <div className="flex flex-wrap gap-2">
             {active && (
               <Button variant="danger" onClick={() => act(async () => (await api(`/api/jobs/${id}/cancel`, { method: "POST" }), void reload()))}>
@@ -208,6 +225,7 @@ export function JobDetailView({ id }: { id: string }) {
           </div>
         )}
         {job.status === "failed" && job.error && <ErrorBox message={job.error} />}
+        {!job.input.script && <TopicView topic={job.topic} />}
         <ul className="grid gap-1 text-sm text-zinc-600 sm:grid-cols-2">
           {describeInput(job).map((line) => (
             <li key={line}>{line}</li>
