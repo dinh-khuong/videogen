@@ -39,8 +39,9 @@ Yêu cầu:
 """
 
 MEDIA_FIELD = ',\n      "media": "video" hoặc "image"'
-MEDIA_RULE = """- "media": "video" nếu bước có hành động/chuyển động nên minh họa bằng clip video (rót, khuấy, chạy, lắp ráp...),
-  "image" nếu ảnh tĩnh là đủ (chân dung, sơ đồ, món ăn hoàn thành, địa danh). "image_queries" dùng để tìm cả ảnh lẫn clip.
+MEDIA_RULE = """- "media": mặc định "video" (clip làm video sinh động hơn) cho phần lớn các bước;
+  chỉ đặt "image" khi nội dung chỉ minh họa được bằng ảnh tĩnh (chân dung người cụ thể, sơ đồ, bảng giá, tài liệu lịch sử).
+  "image_queries" dùng để tìm cả ảnh lẫn clip: mô tả cảnh có chuyển động quay được (vd "pouring milk into coffee").
 """
 
 LIBRARY_FIELD = ',\n      "library_image": "id asset (ảnh/video) trong thư viện dùng cho bước này, hoặc null"'
@@ -51,7 +52,8 @@ Thư viện asset (ảnh/video) của người dùng. Mỗi dòng: id [loại]: 
 - Bạn tự do chọn asset cho từng bước: nếu một asset minh họa ĐÚNG nội dung của bước, đặt "library_image" là id của nó;
   nếu không, đặt null (hệ thống sẽ tự tìm ảnh trên mạng).
 - Ưu tiên asset có chữ/thông tin khớp với bước (tên món, giá, thông số...). Có thể dùng thông tin đó trong lời bình, không bịa thêm.
-- Video hợp với bước có hành động, chuyển động. Mỗi asset dùng tối đa một lần. Không đoán: chỉ chọn khi thông tin asset khớp rõ ràng.
+- Ưu tiên asset video khi khớp nội dung (video sinh động hơn ảnh). Mỗi asset dùng tối đa một lần.
+  Không đoán: chỉ chọn khi thông tin asset khớp rõ ràng.
 """
 
 LIBRARY_SELECTED = """
@@ -76,6 +78,7 @@ class Step:
     hashtags: list[str] = field(default_factory=list)
     library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
     media: str | None = None  # "video" | "image": loại nội dung nên tìm trên mạng cho bước này
+    extra_assets: list[str] = field(default_factory=list)  # id asset thư viện ghép nối tiếp sau library_image
 
 
 @dataclass
@@ -184,6 +187,7 @@ def parse_script(data: dict, default_title: str) -> Script:
                 image=s.get("image") or None,
                 hashtags=normalize_hashtags(s.get("hashtags")),
                 media=s.get("media") if s.get("media") in ("video", "image") else None,
+                extra_assets=[str(x) for x in s.get("extra_assets") or [] if x],
                 library_image=(str(s["library_image"]).strip() or None) if s.get("library_image") else None,
             )
         )

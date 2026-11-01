@@ -13,11 +13,11 @@ from .config import Settings, load_settings
 from .events import Reporter
 from .graphics import make_placeholder, render_step_badge, render_title_card
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
-from .video_search import VideoProviderPool, fetch_video
+from .video_search import VideoProviderPool, fetch_videos
 from .llm import LibraryAsset, Script, generate_script, parse_script, short_title
 from .probe import VIDEO_EXTS
 from .tts import synthesize_many
-from .video_builder import ASPECTS, Scene, build_video, split_sizes
+from .video_builder import ASPECTS, Scene, Segment, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
 IMAGE_STYLES = ("auto", "cover", "frame")
@@ -41,6 +41,7 @@ class Options:
     web_images: bool = True  # cho phép tìm ảnh/clip trên mạng khi bước không có asset thư viện
     # Loại nội dung tìm trên mạng: image | video (clip, thiếu thì dùng ảnh) | auto (LLM chọn cho từng bước)
     web_media: str = "image"
+    clips_per_step: int = 3  # số clip mạng ghép nối tiếp trong một bước dùng video
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
@@ -56,6 +57,7 @@ class StepImage:
     credit: Credit | None = None
     query: str | None = None
     media: str = "image"  # image | video
+    position: int = 0  # thứ tự đoạn hình trong bước (một bước có thể ghép nhiều clip)
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -138,7 +140,8 @@ def _load_credit(path: Path) -> Credit | None:
 
 def _prepare_images(
     script: Script, work_dir: Path, settings: Settings, size: tuple[int, int], orientation: str, opts: Options
-) -> list[StepImage]:
+) -> list[list[StepImage]]:
+    """Đoạn hình cho từng bước: thường một ảnh/asset, hoặc nhiều clip nối tiếp với bước dùng video."""
     images_dir = work_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     registry = UrlRegistry()
@@ -168,24 +171,42 @@ def _prepare_images(
     def wants_video(step) -> bool:
         return opts.web_media == "video" or (opts.web_media == "auto" and step.media == "video")
 
-    def find_video(n: int, step) -> StepImage | None:
+    def find_videos(n: int, step) -> list[StepImage]:
         query = step.image_queries[0]
-        path = images_dir / f"step_{n:02d}_{_hash('video', orientation, *step.image_queries)}.mp4"
-        credit_path = path.with_suffix(".json")
-        if path.exists():
-            return StepImage(n, path, "web", credit=_load_credit(credit_path), query=query, media="video")
+        key = _hash("video", orientation, *step.image_queries)
+        count = max(1, opts.clips_per_step)
+        paths = [images_dir / f"step_{n:02d}_{key}_{k}.mp4" for k in range(count)]
+        if all(p.exists() for p in paths[:1]):
+            cached = [p for p in paths if p.exists()]
+            return [StepImage(n, p, "web", credit=_load_credit(p.with_suffix(".json")), query=query, media="video", position=k)
+                    for k, p in enumerate(cached)]
         pool = video_pool()
         if not pool.names:
-            return None
-        credit = fetch_video(step.image_queries, path, orientation, pool, video_registry)
-        if not credit:
+            return []
+        found = fetch_videos(step.image_queries, paths, orientation, pool, video_registry)
+        if not found:
             print(f"      ⚠️  Không tìm được clip cho bước {n}, chuyển sang tìm ảnh.", flush=True)
-            return None
-        credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
-        print(f"      ✓ Clip bước {n}: {query} ({credit.source})", flush=True)
-        return StepImage(n, path, "web", credit=credit, query=query, media="video")
+            return []
+        clips = []
+        for k, (path, credit) in enumerate(found):
+            path.with_suffix(".json").write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
+            clips.append(StepImage(n, path, "web", credit=credit, query=query, media="video", position=k))
+        print(f"      ✓ Bước {n}: {len(clips)} clip — {query} ({', '.join(sorted({c.credit.source for c in clips}))})", flush=True)
+        return clips
 
-    def find(i: int) -> StepImage:
+    def find(i: int) -> list[StepImage]:
+        step = script.steps[i]
+        n = i + 1
+        lib = library.get(step.library_image or "")
+        if lib and step.extra_assets and Path(lib.path).exists():
+            # Render lại: bước đã có nhiều asset nối tiếp
+            ids = [lib.id] + [x for x in step.extra_assets if x in library and Path(library[x].path).exists()]
+            return [StepImage(n, Path(library[x].path), "library", library_id=x, media=library[x].kind, position=k)
+                    for k, x in enumerate(ids)]
+        found = find_one(i)
+        return found if isinstance(found, list) else [found]
+
+    def find_one(i: int) -> StepImage | list[StepImage]:
         step = script.steps[i]
         n = i + 1
         if step.image:
@@ -207,9 +228,9 @@ def _prepare_images(
 
         query = step.image_queries[0] if step.image_queries else None
         if opts.web_images and step.image_queries and wants_video(step):
-            clip = find_video(n, step)
-            if clip:
-                return clip
+            clips = find_videos(n, step)
+            if clips:
+                return clips
         if opts.web_images and step.image_queries:
             path = images_dir / f"step_{n:02d}_{_hash(orientation, *step.image_queries)}.jpg"
             credit_path = path.with_suffix(".json")
@@ -226,7 +247,7 @@ def _prepare_images(
         make_placeholder(step.heading or step.narration[:60], placeholder, size, settings.font_path)
         return StepImage(n, placeholder, "placeholder", query=query)
 
-    def job(i: int) -> StepImage:
+    def job(i: int) -> list[StepImage]:
         nonlocal done
         result = find(i)
         with lock:
@@ -235,9 +256,9 @@ def _prepare_images(
         return result
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        images = list(pool.map(job, range(total)))
-    _write_credits(images, work_dir)
-    return images
+        steps = list(pool.map(job, range(total)))
+    _write_credits([img for seg in steps for img in seg], work_dir)
+    return steps
 
 
 def _prepare_audio(script: Script, work_dir: Path, voice: str, rate: str, reporter: Reporter) -> dict[str, Path]:
@@ -318,47 +339,53 @@ def run(
         print("✅ Đã lưu kịch bản. Sửa file rồi chạy lại với --script để render video.", flush=True)
         return result
 
-    print("[2/4] Lấy ảnh minh họa (song song) ...", flush=True)
-    reporter.stage("images", "Đang lấy ảnh minh họa")
-    images = _prepare_images(script, work_dir, settings, size, orientation, opts)
-    result.images = images
+    print("[2/4] Lấy ảnh/clip minh họa (song song) ...", flush=True)
+    reporter.stage("images", "Đang lấy ảnh/clip minh họa")
+    steps = _prepare_images(script, work_dir, settings, size, orientation, opts)
+    result.images = [img for seg in steps for img in seg]
 
     print(f"[3/4] Tạo giọng đọc ({voice}, tốc độ {rate}) ...", flush=True)
     reporter.stage("audio", "Đang tạo giọng đọc")
     audio = _prepare_audio(script, work_dir, voice, rate, reporter)
 
     font = settings.font_path
+
+    def segments(images: list[StepImage]) -> list[Segment]:
+        return [Segment(img.path, img.media, _style_for(img, opts)) for img in images]
+
+    # Có clip video: mở đầu/kết thúc là montage cắt nhanh từ clip của các bước thay vì một ảnh tĩnh
+    has_clips = any(img.media == "video" for img in result.images)
+    intro_imgs = [seg[0] for seg in steps[:4]] if has_clips else steps[0][:1]
+    outro_imgs = [seg[-1] for seg in steps[-3:]] if has_clips else steps[-1][-1:]
     scenes = [
         Scene(
-            image_path=images[0].path,
+            segments=segments(intro_imgs),
             audio_path=audio.get("intro"),
             narration=script.intro,
             overlays=[render_title_card(script.title, "Hướng dẫn từng bước", size, font)],
-            media=images[0].media,
         )
     ]
     for i, step in enumerate(script.steps):
         scenes.append(
             Scene(
-                image_path=images[i].path,
+                segments=segments(steps[i]),
                 audio_path=audio[f"step_{i + 1:02d}"],
                 narration=step.narration,
                 overlays=[render_step_badge(f"Bước {i + 1}", step.heading, size, font)],
-                image_style=_style_for(images[i], opts),
-                media=images[i].media,
             )
         )
     if script.outro:
         scenes.append(
             Scene(
-                image_path=images[-1].path,
+                segments=segments(outro_imgs),
                 audio_path=audio["outro"],
                 narration=script.outro,
                 overlays=[render_step_badge("Hoàn thành", "", size, font)],
-                image_style=_style_for(images[-1], opts),
-                media=images[-1].media,
             )
         )
+    clip_count = sum(1 for img in result.images if img.media == "video")
+    if clip_count:
+        print(f"      Ghép {clip_count} clip video từ {sum(1 for s in steps if any(i.media == 'video' for i in s))} bước", flush=True)
 
     print(f"[4/4] Dựng video {layout} ({len(scenes)} cảnh) ...", flush=True)
     reporter.stage("render", f"Đang dựng video {layout}")

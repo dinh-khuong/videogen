@@ -111,7 +111,7 @@ function describeInput(job: JobDetail): string[] {
     `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
     `Assets: ${{ off: "không dùng", auto: `AI tự chọn${i.libraryTag ? ` trong #${i.libraryTag}` : ""}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
-    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}`,
+    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}`,
   ];
   if (i.voice || i.rate) lines.push(`Giọng: ${i.voice ?? "mặc định"} ${i.rate ?? ""}`.trim());
   return lines;

@@ -79,14 +79,15 @@ export function getVideoDetail(id: string): VideoDetail | null {
   const row = getRow(id);
   if (!row) return null;
   const assets = (
-    db().prepare("SELECT asset_id, step FROM video_assets WHERE video_id = ? ORDER BY step").all(id) as {
+    db().prepare("SELECT asset_id, step, position FROM video_assets WHERE video_id = ? ORDER BY step, position").all(id) as {
       asset_id: string;
       step: number;
+      position: number;
     }[]
   )
     .map((r) => {
       const asset = getAsset(r.asset_id);
-      return asset ? { ...asset, step: r.step } : null;
+      return asset ? { ...asset, step: r.step, position: r.position } : null;
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
   const contacts = db()

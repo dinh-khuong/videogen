@@ -31,14 +31,24 @@ FADE_IN, FADE_OUT = 0.4, 0.6  # mờ dần đầu/cuối video (hình và tiến
 MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
 
 
+MIN_SEGMENT = 2.2   # thời lượng tối thiểu của một đoạn hình trong scene (giây)
+SEGMENT_BLEND = 0.3 # chuyển mềm giữa các đoạn hình trong cùng scene
+
+
+@dataclass
+class Segment:
+    """Một đoạn hình trong scene: ảnh (Ken Burns) hoặc clip video."""
+    path: Path
+    media: str = "image"  # image | video
+    style: str = "cover"  # cover: phủ kín khung (làm nền) | frame: hiện trọn vẹn làm nội dung chính
+
+
 @dataclass
 class Scene:
-    image_path: Path  # ảnh, hoặc file video nếu media == "video"
+    segments: list[Segment]  # nối tiếp nhau, chia đều thời lượng scene (vd nhiều clip cho một bước)
     audio_path: Path | None
     narration: str = ""
     overlays: list[Image.Image] = field(default_factory=list)
-    image_style: str = "cover"  # cover: phủ kín khung (làm nền) | frame: hiện trọn vẹn làm nội dung chính
-    media: str = "image"  # image | video
 
 
 def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
@@ -76,14 +86,14 @@ def _layer_region(layer: Image.Image) -> tuple[Image.Image, tuple[int, int]] | N
     return layer.crop(bbox), (bbox[0], bbox[1])
 
 
-def _image_frames(scene: Scene, index: int, size: tuple[int, int], duration: float):
+def _image_frames(seg: Segment, index: int, size: tuple[int, int], duration: float):
     """Ảnh tĩnh với hiệu ứng Ken Burns: trả về hàm t -> khung hình PIL."""
     w, h = size
-    zoom = FRAME_ZOOM if scene.image_style == "frame" else ZOOM
+    zoom = FRAME_ZOOM if seg.style == "frame" else ZOOM
     big_size = (round(w * zoom), round(h * zoom))
-    background = prepare_background(scene.image_path, big_size, scene.image_style)
+    background = prepare_background(seg.path, big_size, seg.style).convert("RGB")
     zoom_in = index % 2 == 0
-    pan = 0.0 if scene.image_style == "frame" else 0.08
+    pan = 0.0 if seg.style == "frame" else 0.08
     pan_x = 0.5 + (pan if index % 3 == 1 else -pan if index % 3 == 2 else 0.0)
 
     def frame_at(t: float) -> Image.Image:
@@ -106,9 +116,9 @@ def _image_frames(scene: Scene, index: int, size: tuple[int, int], duration: flo
     return frame_at
 
 
-def _video_frames(scene: Scene, size: tuple[int, int], cache_dir: Path | None):
-    """Clip video làm nội dung: tắt tiếng, tự lặp nếu ngắn hơn lời bình. Trả về (hàm t -> khung hình PIL, clip nguồn)."""
-    source = VideoFileClip(str(prepare_clip(scene.image_path, cache_dir)), audio=False)
+def _video_frames(seg: Segment, size: tuple[int, int], cache_dir: Path | None):
+    """Clip video làm nội dung: tắt tiếng, tự lặp nếu ngắn hơn đoạn. Trả về (hàm t -> khung hình PIL, clip nguồn)."""
+    source = VideoFileClip(str(prepare_clip(seg.path, cache_dir)), audio=False)
     last = max(0.0, source.duration - 1.0 / (source.fps or 30))
 
     def source_frame(t: float) -> Image.Image:
@@ -118,7 +128,7 @@ def _video_frames(scene: Scene, size: tuple[int, int], cache_dir: Path | None):
     w, h = size
     clip_ratio, frame_ratio = source.w / source.h, w / h
     # Tỉ lệ lệch nhiều (vd video ngang trong khung dọc) thì hiện trọn vẹn thay vì cắt mất phần lớn hình
-    if scene.image_style == "frame" or abs(clip_ratio - frame_ratio) / frame_ratio > 0.45:
+    if seg.style == "frame" or abs(clip_ratio - frame_ratio) / frame_ratio > 0.45:
         backdrop, (x, y, fw, fh), mask = framed_backdrop(source_frame(source.duration / 2), size, (source.w, source.h))
 
         def framed(t: float) -> Image.Image:
@@ -211,12 +221,28 @@ def _make_scene_clip(
     speech = len(speech_samples) / AUDIO_RATE if speech_samples is not None else 0.0
     duration = HEAD + speech + TAIL if speech_samples is not None else SILENT_SCENE
 
+    # Chia scene thành các đoạn hình đều nhau (bỏ bớt đoạn nếu scene quá ngắn)
+    segments = scene.segments[: max(1, int(duration // MIN_SEGMENT))]
+    seg_len = duration / len(segments)
     sources = []
-    if scene.media == "video":
-        base, source = _video_frames(scene, size, cache_dir)
-        sources.append(source)
-    else:
-        base = _image_frames(scene, index, size, duration)
+    bases = []
+    for k, seg in enumerate(segments):
+        if seg.media == "video":
+            fn, source = _video_frames(seg, size, cache_dir)
+            sources.append(source)
+        else:
+            fn = _image_frames(seg, index + k, size, seg_len + SEGMENT_BLEND)
+        bases.append(fn)
+
+    def base(t: float) -> Image.Image:
+        k = min(int(t // seg_len), len(bases) - 1)
+        local = t - k * seg_len
+        frame = bases[k](local).convert("RGB")
+        if k > 0 and local < SEGMENT_BLEND:
+            # Đoạn trước tiếp tục chạy thêm một chút, hòa dần sang đoạn mới
+            prev = bases[k - 1](seg_len + local).convert("RGB")
+            frame = Image.blend(prev, frame, local / SEGMENT_BLEND)
+        return frame
 
     static_layers = [r for r in (_layer_region(o) for o in scene.overlays) if r]
 

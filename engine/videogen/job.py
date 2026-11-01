@@ -12,6 +12,7 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "image_style": "auto",                    # auto | cover | frame
   "web_images": true,                      # tìm nội dung trên mạng cho bước chưa có asset
   "web_media": "image",                     # image | video (clip CC/stock) | auto (LLM chọn từng bước)
+  "clips_per_step": 3,                      # số clip ghép nối tiếp trong một bước dùng video
   "library_mode": "off",                    # off | auto | selected
   "library": [{"id": "...", "path": "/abs/anh.jpg", "kind": "image",   # asset ảnh/video của người dùng
                "description": "...", "tags": ["..."],
@@ -66,6 +67,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         image_style=image_style,
         web_images=bool(spec.get("web_images", True)),
         web_media=web_media,
+        clips_per_step=min(max(int(spec.get("clips_per_step") or 3), 1), 6),
         library=[
             LibraryAsset(
                 id=str(item["id"]),

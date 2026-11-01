@@ -33,7 +33,7 @@ type AssetRow = {
   used_in: number;
 };
 
-const SELECT = `SELECT a.*, (SELECT COUNT(*) FROM video_assets va WHERE va.asset_id = a.id) AS used_in FROM assets a`;
+const SELECT = `SELECT a.*, (SELECT COUNT(DISTINCT va.video_id) FROM video_assets va WHERE va.asset_id = a.id) AS used_in FROM assets a`;
 
 function parseTags(json: string): string[] {
   try {

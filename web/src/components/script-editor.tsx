@@ -117,6 +117,11 @@ export function ScriptEditor({
                 ) : (
                   <span className="px-2">Tự tìm ảnh trên mạng</span>
                 )}
+                {!!step.extra_assets?.length && (
+                  <span className="absolute right-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                    +{step.extra_assets.length} clip
+                  </span>
+                )}
                 <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-[11px] text-white">Đổi asset</span>
               </button>
               <div className="space-y-2">
@@ -163,7 +168,7 @@ export function ScriptEditor({
           <Button
             size="sm"
             onClick={() => {
-              if (picking !== null) setStep(picking, { library_image: null });
+              if (picking !== null) setStep(picking, { library_image: null, extra_assets: [] });
               setPicking(null);
             }}
           >
@@ -174,7 +179,7 @@ export function ScriptEditor({
           single
           selected={picking !== null && script.steps[picking]?.library_image ? [script.steps[picking].library_image!] : []}
           onChange={([id]) => {
-            if (picking !== null) setStep(picking, { library_image: id });
+            if (picking !== null) setStep(picking, { library_image: id, extra_assets: [] });
             setPicking(null);
           }}
         />

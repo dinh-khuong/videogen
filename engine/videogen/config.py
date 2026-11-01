@@ -54,7 +54,7 @@ class Settings:
             for p in _get("VIDEO_PROVIDERS", "pexels,pixabay,wikimedia,youtube").split(",")
             if p.strip()
         ]
-        self.web_clip_seconds = float(_get("WEB_CLIP_SECONDS", "15"))
+        self.web_clip_seconds = float(_get("WEB_CLIP_SECONDS", "10"))
         # URL hoặc email liên hệ gửi kèm User-Agent khi tải từ Wikimedia (khuyến nghị theo chính sách của Wikimedia)
         self.wikimedia_contact = _get("WIKIMEDIA_CONTACT")
         self.ddg_region = _get("DDG_REGION", "wt-wt")

@@ -207,7 +207,7 @@ export function VideoDetailView({ id }: { id: string }) {
           <h2 className="mb-3 font-semibold text-zinc-900">Assets dùng trong video</h2>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
             {video.assets.map((asset) => (
-              <a key={asset.step} href={asset.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
+              <a key={`${asset.step}-${asset.position}`} href={asset.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
                 <AssetThumb asset={asset} className="aspect-[4/3] w-full" />
                 <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                   {asset.step === 0 ? "Nhạc nền" : `Bước ${asset.step}`}

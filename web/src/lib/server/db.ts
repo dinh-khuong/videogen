@@ -143,6 +143,20 @@ const MIGRATIONS: string[] = [
     SELECT vt.video_id, vt.tag_id FROM video_tags vt JOIN videos v ON v.id = vt.video_id WHERE v.kind = 'upload';
   DELETE FROM videos WHERE kind = 'upload';
   `,
+  // Một bước có thể ghép nhiều asset nối tiếp (vd nhiều clip video): thêm thứ tự trong bước vào khóa chính
+  `
+  CREATE TABLE video_assets_new (
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    step INTEGER NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (video_id, step, position)
+  );
+  INSERT INTO video_assets_new (video_id, asset_id, step, position) SELECT video_id, asset_id, step, 0 FROM video_assets;
+  DROP TABLE video_assets;
+  ALTER TABLE video_assets_new RENAME TO video_assets;
+  CREATE INDEX video_assets_asset ON video_assets(asset_id);
+  `,
 ];
 
 function open(): Database.Database {

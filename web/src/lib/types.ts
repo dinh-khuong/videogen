@@ -54,6 +54,9 @@ export type ScriptStep = {
   hashtags?: string[];
   /** id asset (ảnh/video) trong thư viện dùng cho bước này */
   library_image?: string | null;
+  /** asset ghép nối tiếp sau library_image (vd thêm clip video) */
+  extra_assets?: string[];
+  media?: "video" | "image" | null;
 };
 
 export type Script = {
@@ -67,7 +70,7 @@ export type Script = {
 
 export type VideoDetail = VideoItem & {
   script: Script | null;
-  assets: (AssetItem & { step: number })[];
+  assets: (AssetItem & { step: number; position: number })[];
   contacts: { id: string; name: string; company: string }[];
 };
 
@@ -87,6 +90,8 @@ export type JobInput = {
   webImages: boolean;
   /** Loại nội dung tìm trên mạng: ảnh, clip video (Creative Commons/stock) hoặc AI chọn cho từng bước */
   webMedia?: "image" | "video" | "auto";
+  /** số clip video ghép nối tiếp trong một bước (1-6) */
+  clipsPerStep?: number;
   libraryMode: "off" | "auto" | "selected";
   libraryTag?: string | null;
   /** asset chọn làm nội dung chính (chế độ "selected"), theo thứ tự */

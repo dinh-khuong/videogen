@@ -109,6 +109,8 @@ def cmd_make(argv: list[str]) -> int:
     parser.add_argument("--web-media", choices=("image", "video", "auto"), default="image",
                         help="Tìm trên mạng: image (ảnh), video (clip Creative Commons/stock, thiếu thì dùng ảnh), "
                              "auto (AI chọn ảnh hay clip cho từng bước)")
+    parser.add_argument("--clips-per-step", type=int, default=3, choices=range(1, 7), metavar="1-6",
+                        help="Số clip mạng ghép nối tiếp trong một bước dùng video (mặc định 3)")
     args = parser.parse_args(argv)
 
     if not args.topic and not args.script:
@@ -134,6 +136,7 @@ def cmd_make(argv: list[str]) -> int:
         image_style=args.image_style,
         web_images=not args.no_web_images,
         web_media=args.web_media,
+        clips_per_step=args.clips_per_step,
         library=library,
         library_mode=args.library_mode if library else "off",
     )

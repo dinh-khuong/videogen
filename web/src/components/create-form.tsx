@@ -58,6 +58,7 @@ export function CreateVideoForm() {
   const [assetIds, setAssetIds] = useState<string[]>([]);
   const [webImages, setWebImages] = useState(true);
   const [webMedia, setWebMedia] = useState<NonNullable<JobInput["webMedia"]>>("auto");
+  const [clipsPerStep, setClipsPerStep] = useState(3);
   const [imageStyle, setImageStyle] = useState<JobInput["imageStyle"]>("auto");
   const [contactId, setContactId] = useState(params.get("contact") ?? "");
   const [music, setMusic] = useState({ musicId: "", volume: 0.12 });
@@ -86,6 +87,7 @@ export function CreateVideoForm() {
         imageStyle,
         webImages,
         webMedia,
+        clipsPerStep,
         libraryMode,
         libraryTag: libraryMode === "auto" ? libraryTag || null : null,
         assetIds: libraryMode === "selected" ? assetIds : [],
@@ -261,6 +263,17 @@ export function CreateVideoForm() {
               <option value="off">Không tìm (bước thiếu asset dùng nền chữ)</option>
             </select>
           </Field>
+          {webImages && webMedia !== "image" && (
+            <Field label="Số clip ghép trong mỗi bước" hint="Nhiều clip nối nhau làm video sinh động hơn; mở đầu và kết thúc tự ghép từ các clip.">
+              <select className={inputClass} value={clipsPerStep} onChange={(e) => setClipsPerStep(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n} clip{n === 3 ? " (mặc định)" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
         </div>
       </Card>
 

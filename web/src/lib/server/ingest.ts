@@ -36,6 +36,7 @@ export type EngineResult = {
     credit: { source: string; url: string; author?: string; license?: string } | null;
     query: string | null;
     media?: "image" | "video";
+    position?: number;
   }[];
 };
 
@@ -46,20 +47,26 @@ export type EngineResult = {
 export async function ingestResult(job: JobRow, result: EngineResult): Promise<string> {
   if (!result.video || !fs.existsSync(result.video.path)) throw new Error("Engine không tạo ra file video");
   const script = result.script;
-  const stepAssets = new Map<number, string>();
-  const pending: { step: number; asset: NewAsset }[] = [];
+  // bước -> (thứ tự trong bước -> id asset)
+  const stepAssets = new Map<number, Map<number, string>>();
+  const setAsset = (step: number, position: number, id: string) => {
+    if (!stepAssets.has(step)) stepAssets.set(step, new Map());
+    stepAssets.get(step)!.set(position, id);
+  };
+  const pending: { step: number; position: number; asset: NewAsset }[] = [];
 
   for (const img of result.images) {
     if (img.kind === "placeholder") continue;
+    const position = img.position ?? 0;
     if (img.kind === "library" && img.library_id && getAsset(img.library_id)) {
-      stepAssets.set(img.step, img.library_id);
+      setAsset(img.step, position, img.library_id);
       continue;
     }
     if (!fs.existsSync(img.path)) continue;
     const sha1 = await sha1File(img.path);
     const existing = findAssetBySha1(sha1);
     if (existing) {
-      stepAssets.set(img.step, existing);
+      setAsset(img.step, position, existing);
       continue;
     }
     const ext = extOf(img.path) || ".jpg";
@@ -73,6 +80,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
       : "";
     pending.push({
       step: img.step,
+      position,
       asset: {
         tmpPath: tmp,
         ext,
@@ -86,13 +94,18 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     });
   }
   const added = await addAssets(pending.map((p) => p.asset));
-  pending.forEach((p, i) => stepAssets.set(p.step, added[i].id));
+  pending.forEach((p, i) => setAsset(p.step, p.position, added[i].id));
+  const orderedIds = (step: number) =>
+    [...(stepAssets.get(step) ?? new Map<number, string>()).entries()].sort((a, b) => a[0] - b[0]).map(([, id]) => id);
   if (added.some((a) => !a.existed)) analyzer().kick();
 
   // Lưu kịch bản kèm id asset thư viện từng bước để có thể sửa và render lại
   const storedScript: Script = {
     ...script,
-    steps: script.steps.map((s, i) => ({ ...s, image: null, library_image: stepAssets.get(i + 1) ?? null })),
+    steps: script.steps.map((s, i) => {
+      const [first = null, ...extra] = [...new Set(orderedIds(i + 1))];
+      return { ...s, image: null, library_image: first, extra_assets: extra };
+    }),
   };
   const video = {
     srcPath: result.video.path,
@@ -116,13 +129,15 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
   try {
     db().transaction(() => {
       insertVideo(video, files);
-      const link = db().prepare("INSERT OR IGNORE INTO video_assets (video_id, asset_id, step) VALUES (?, ?, ?)");
-      for (const [step, assetId] of stepAssets) {
-        if (getAsset(assetId)) link.run(files.id, assetId, step);
+      const link = db().prepare("INSERT OR IGNORE INTO video_assets (video_id, asset_id, step, position) VALUES (?, ?, ?, ?)");
+      for (const [step, byPosition] of stepAssets) {
+        for (const [position, assetId] of byPosition) {
+          if (getAsset(assetId)) link.run(files.id, assetId, step, position);
+        }
       }
       // Nhạc nền gắn với video ở "bước 0"
       const musicId = (JSON.parse(job.input) as JobInput).musicId;
-      if (musicId && getAsset(musicId)) link.run(files.id, musicId, 0);
+      if (musicId && getAsset(musicId)) link.run(files.id, musicId, 0, 0);
       if (job.contact_id && db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(job.contact_id)) {
         db().prepare("INSERT OR IGNORE INTO contact_videos (contact_id, video_id) VALUES (?, ?)").run(job.contact_id, files.id);
       }

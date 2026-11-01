@@ -26,6 +26,7 @@ from .image_search import TARGET_RATIO, Credit, ProviderUnavailable, UrlRegistry
 from .probe import ffmpeg_exe, video_info
 
 MIN_SECONDS = 3.0
+SHORT_SOURCE = 120.0  # clip gốc ngắn tải nhanh hơn và thường là b-roll đúng chủ đề
 MAX_SIDE = 1280
 MAX_DOWNLOAD_BYTES = 250e6  # bỏ qua file gốc lớn hơn (tải lâu)
 YOUTUBE_CC_FILTER = "EgIwAQ%253D%253D"  # bộ lọc "Creative Commons" của trang kết quả YouTube
@@ -49,7 +50,8 @@ def _rank(candidates: list[VideoCandidate], orientation: str) -> list[VideoCandi
     def penalty(item: tuple[int, VideoCandidate]) -> float:
         i, c = item
         ratio = abs((c.width / c.height) - target) / target if c.width and c.height else 1.0
-        return ratio + i * 0.05
+        long = 0.5 if c.duration > SHORT_SOURCE else 0.0
+        return ratio + long + i * 0.05
 
     usable = [c for c in candidates if not c.duration or c.duration >= MIN_SECONDS]
     return [c for _, c in sorted(enumerate(usable), key=penalty)]
@@ -356,25 +358,41 @@ class VideoProviderPool:
         return []
 
 
-def fetch_video(
-    queries: list[str], dest: Path, orientation: str, pool: VideoProviderPool, registry: UrlRegistry,
+def fetch_videos(
+    queries: list[str], dests: list[Path], orientation: str, pool: VideoProviderPool, registry: UrlRegistry,
     seconds: float | None = None,
-) -> Credit | None:
-    """Thử lần lượt nguồn × query, tải clip hợp lệ đầu tiên vào dest; trả về thông tin ghi công."""
+) -> list[tuple[Path, Credit]]:
+    """Tải tối đa len(dests) clip khác nhau (nguồn × query theo thứ tự), mỗi clip vào một dest.
+
+    Trả về danh sách (đường dẫn, ghi công) của các clip tải được.
+    """
     seconds = seconds or pool.settings.web_clip_seconds
+    found: list[tuple[Path, Credit]] = []
     for name in pool.names:
         for query in queries:
             if name not in pool.enabled():
                 break
-            for cand in pool.search(name, query, orientation)[:4]:
+            for cand in pool.search(name, query, orientation)[:6]:
+                if len(found) == len(dests):
+                    return found
                 if not registry.claim(cand.credit.url or cand.url):
                     continue
+                dest = dests[len(found)]
                 try:
                     if download_clip(cand, dest, seconds):
-                        return cand.credit
+                        found.append((dest, cand.credit))
                 except ProviderUnavailable as e:
                     pool.disable(name, str(e))
                     break
                 except (subprocess.SubprocessError, OSError, RuntimeError, requests.RequestException) as e:
                     print(f"      ⚠️  Không tải được clip {cand.credit.url}: {type(e).__name__}", flush=True)
-    return None
+    return found
+
+
+def fetch_video(
+    queries: list[str], dest: Path, orientation: str, pool: VideoProviderPool, registry: UrlRegistry,
+    seconds: float | None = None,
+) -> Credit | None:
+    """Tải một clip vào dest; trả về thông tin ghi công."""
+    found = fetch_videos(queries, [dest], orientation, pool, registry, seconds)
+    return found[0][1] if found else None
