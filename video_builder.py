@@ -1,11 +1,20 @@
 """Dựng video từ các scene: nền ảnh (Ken Burns) + lớp đồ họa + phụ đề + giọng đọc."""
 import os
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from moviepy.audio.fx.all import audio_fadein, audio_fadeout, audio_loop
-from moviepy.editor import AudioFileClip, CompositeAudioClip, VideoClip, concatenate_videoclips
+from moviepy.editor import (
+    AudioFileClip,
+    CompositeAudioClip,
+    CompositeVideoClip,
+    VideoClip,
+    VideoFileClip,
+    concatenate_videoclips,
+    vfx,
+)
 from PIL import Image
 
 from graphics import prepare_background, render_subtitle, split_subtitles
@@ -17,6 +26,7 @@ TRANSITION = 0.5   # thời lượng crossfade giữa các scene
 SILENT_SCENE = 3.0 # thời lượng scene không có giọng đọc
 
 ASPECTS = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (1080, 1080)}
+SPLIT_RATIO = 0.5  # tỉ lệ chiều cao phần nội dung (nửa trên) khi có video nền
 
 
 @dataclass
@@ -95,6 +105,33 @@ def _make_scene_clip(
     return clip
 
 
+def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
+    """Kích thước (nửa trên nội dung, nửa dưới video nền) cho bố cục chia đôi 9:16."""
+    w, h = ASPECTS["9:16"]
+    top_h = round(h * SPLIT_RATIO / 2) * 2
+    return (w, top_h), (w, h - top_h)
+
+
+def _background_clip(path: Path, size: tuple[int, int], duration: float) -> VideoClip:
+    """Video nền (gameplay): tắt tiếng, phủ kín khung, bắt đầu ở vị trí ngẫu nhiên, tự lặp nếu ngắn."""
+    w, h = size
+    clip = VideoFileClip(str(path), audio=False)
+    # Cắt vùng giữa của khung gốc rồi thu nhỏ bằng Pillow (resize của moviepy 1.x lỗi với Pillow >= 10)
+    scale = max(w / clip.w, h / clip.h)
+    crop_w, crop_h = w / scale, h / scale
+    x0, y0 = (clip.w - crop_w) / 2, (clip.h - crop_h) / 2
+    box = (x0, y0, x0 + crop_w, y0 + crop_h)
+
+    def fit(frame: np.ndarray) -> np.ndarray:
+        return np.asarray(Image.fromarray(frame).resize((w, h), Image.BILINEAR, box=box))
+
+    clip = clip.fl_image(fit)
+    if clip.duration > duration:
+        start = random.uniform(0, clip.duration - duration)
+        return clip.subclip(start, start + duration)
+    return clip.fx(vfx.loop, duration=duration)
+
+
 def build_video(
     scenes: list[Scene],
     out_path: Path,
@@ -104,13 +141,25 @@ def build_video(
     music_volume: float = 0.12,
     font_override: str | None = None,
     work_dir: Path | None = None,
+    bg_video: Path | None = None,
 ) -> Path:
-    size = ASPECTS[aspect]
+    if bg_video:
+        size, bg_size = split_sizes()
+    else:
+        size = ASPECTS[aspect]
     clips = [_make_scene_clip(s, i, size, font_override) for i, s in enumerate(scenes)]
 
     transition = min([TRANSITION] + [c.duration / 3 for c in clips])
     clips = [clips[0]] + [c.crossfadein(transition) for c in clips[1:]]
     final = concatenate_videoclips(clips, method="compose", padding=-transition)
+
+    if bg_video:
+        background = _background_clip(bg_video, bg_size, final.duration)
+        final = CompositeVideoClip(
+            [background.set_position((0, size[1])), final.set_position((0, 0))],
+            size=ASPECTS["9:16"],
+        ).set_duration(final.duration).set_audio(final.audio)
+
     final = final.fadein(0.4).fadeout(0.6)
 
     if music_path:

@@ -9,6 +9,7 @@ Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các b�
 - **Giọng đọc**: edge-tts (Microsoft Neural, miễn phí) có retry; tự chuyển sang gTTS nếu edge-tts lỗi.
 - **Video đẹp**: phụ đề tiếng Việt chia đoạn theo thời gian đọc, title card, nhãn bước, zoom/pan Ken Burns, crossfade giữa các cảnh, fade in/out, nhạc nền tự lặp.
 - **Nhiều khung hình**: `16:9` (YouTube), `9:16` (TikTok/Shorts/Reels), `1:1`. Ảnh lệch tỉ lệ tự đặt trên nền mờ.
+- **Shorts chia đôi màn hình**: `--bg-video` đặt nội dung ở nửa trên, video nền (vd gameplay) chạy liên tục ở nửa dưới — định dạng giữ chân người xem phổ biến trên Shorts/TikTok.
 - **Nhanh & tiết kiệm**: tải ảnh và tạo giọng đọc song song; cache ảnh/audio, chạy lại không tốn thêm lượt gọi API.
 - **Sửa rồi render lại**: kịch bản lưu ở `output/<tên>/script.json`, sửa lời/ảnh rồi render lại không cần gọi LLM.
 
@@ -41,6 +42,18 @@ python main.py --script output/cach_thay_lop_xe_dap/script.json
 ```
 
 Xem tất cả tùy chọn: `python main.py -h`
+
+### Shorts chia đôi với video nền (gameplay)
+
+```bash
+# Đặt các video gameplay vào thư mục gameplay/ rồi:
+python main.py "3 mẹo học tiếng Anh nhanh" --steps 4 --bg-video gameplay/
+```
+
+- `--bg-video` nhận một file hoặc một thư mục (chọn ngẫu nhiên một video mỗi lần chạy).
+- Video nền được tắt tiếng, cắt vừa nửa dưới khung 720x1280, bắt đầu ở vị trí ngẫu nhiên và tự lặp nếu ngắn hơn video chính. Tự động dùng khung 9:16.
+- Shorts tối đa 3 phút; nên dùng `--steps 3`–`5` để video ngắn gọn.
+- **Bản quyền**: gameplay của game (vd Subway Surfers) là tài sản của nhà phát hành; tải lại video của người khác trên YouTube vi phạm điều khoản YouTube và dễ bị đánh dấu "nội dung sử dụng lại" (không kiếm tiền được). Nên tự quay màn hình khi chơi.
 
 ### Sửa kịch bản
 

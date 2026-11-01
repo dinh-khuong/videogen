@@ -1,6 +1,7 @@
 """Điều phối: prompt -> kịch bản (DeepSeek) -> ảnh (Google/Serper/Pexels) -> giọng đọc (edge-tts) -> video."""
 import hashlib
 import json
+import random
 import re
 import threading
 import unicodedata
@@ -13,7 +14,7 @@ from graphics import make_placeholder, render_step_badge, render_title_card
 from image_search import Credit, ProviderPool, UrlRegistry, fetch_image
 from llm import Script, generate_script
 from tts import synthesize_many
-from video_builder import ASPECTS, Scene, build_video
+from video_builder import ASPECTS, Scene, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
 
@@ -28,6 +29,19 @@ class Options:
     music: Path | None = None
     music_volume: float = 0.12
     script_only: bool = False
+    bg_video: Path | None = None  # file hoặc thư mục video nền -> bố cục chia đôi 9:16
+
+
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+
+
+def pick_background(path: Path) -> Path:
+    if path.is_dir():
+        videos = [p for p in path.iterdir() if p.suffix.lower() in VIDEO_EXTS]
+        if not videos:
+            raise FileNotFoundError(f"Thư mục {path} không có video nào ({', '.join(sorted(VIDEO_EXTS))}).")
+        return random.choice(videos)
+    return path
 
 
 def slugify(text: str) -> str:
@@ -59,9 +73,9 @@ def _load_credit(path: Path) -> Credit | None:
         return None
 
 
-def _prepare_images(script: Script, work_dir: Path, settings: Settings, aspect: str) -> list[Path]:
-    size = ASPECTS[aspect]
-    orientation = ORIENTATIONS[aspect]
+def _prepare_images(
+    script: Script, work_dir: Path, settings: Settings, size: tuple[int, int], orientation: str
+) -> list[Path]:
     images_dir = work_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     registry = UrlRegistry()
@@ -133,7 +147,12 @@ def run(topic: str | None, out_path: str | None, script_path: str | None, opts: 
     settings = load_settings()
     voice = opts.voice or settings.tts_voice
     rate = opts.rate or settings.tts_rate
-    size = ASPECTS[opts.aspect]
+    bg_video = pick_background(opts.bg_video) if opts.bg_video else None
+    if bg_video:
+        # Nửa trên gần vuông -> tìm ảnh vuông cho vừa khung
+        size, orientation, layout = split_sizes()[0], "square", "9:16 chia đôi"
+    else:
+        size, orientation, layout = ASPECTS[opts.aspect], ORIENTATIONS[opts.aspect], opts.aspect
 
     if script_path:
         script_file = Path(script_path)
@@ -155,7 +174,7 @@ def run(topic: str | None, out_path: str | None, script_path: str | None, opts: 
         return script_file
 
     print("[2/4] Tìm & tải ảnh minh họa (song song) ...")
-    images = _prepare_images(script, work_dir, settings, opts.aspect)
+    images = _prepare_images(script, work_dir, settings, size, orientation)
 
     print(f"[3/4] Tạo giọng đọc ({voice}, tốc độ {rate}) ...")
     audio = _prepare_audio(script, work_dir, voice, rate)
@@ -188,7 +207,9 @@ def run(topic: str | None, out_path: str | None, script_path: str | None, opts: 
             )
         )
 
-    print(f"[4/4] Dựng video {opts.aspect} ({len(scenes)} cảnh) ...")
+    print(f"[4/4] Dựng video {layout} ({len(scenes)} cảnh) ...")
+    if bg_video:
+        print(f"      Video nền: {bg_video}")
     final_out = Path(out_path) if out_path else work_dir / f"{slugify(script.title)}.mp4"
     final_out.parent.mkdir(parents=True, exist_ok=True)
     build_video(
@@ -199,6 +220,7 @@ def run(topic: str | None, out_path: str | None, script_path: str | None, opts: 
         music_volume=opts.music_volume,
         font_override=font,
         work_dir=work_dir,
+        bg_video=bg_video,
     )
     print(f"✅ Hoàn tất! Video: {final_out.resolve()}")
     return final_out

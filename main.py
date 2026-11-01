@@ -5,6 +5,7 @@ Ví dụ:
     python main.py "cách pha cà phê phin" --aspect 9:16 --music nhac.mp3
     python main.py "cách trồng rau mầm" --script-only        # chỉ viết kịch bản để sửa
     python main.py --script output/cach_trong_rau_mam/script.json   # render lại từ kịch bản đã sửa
+    python main.py "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/   # Shorts chia đôi với gameplay
 """
 import argparse
 import sys
@@ -29,12 +30,17 @@ def main() -> None:
     parser.add_argument("--rate", help="Tốc độ đọc, vd '+10%%' hoặc '-5%%' (ghi đè TTS_RATE)")
     parser.add_argument("--music", type=Path, help="File nhạc nền (mp3/wav), tự lặp và giảm âm lượng")
     parser.add_argument("--music-volume", type=float, default=0.12, help="Âm lượng nhạc nền 0-1 (mặc định 0.12)")
+    parser.add_argument("--bg-video", type=Path,
+                        help="File hoặc thư mục video nền (vd gameplay). Tạo video dọc 9:16 chia đôi: "
+                             "nội dung ở trên, video nền (tắt tiếng) ở dưới")
     args = parser.parse_args()
 
     if not args.topic and not args.script:
         parser.error("Cần nhập chủ đề hoặc --script <file>.")
     if args.music and not args.music.exists():
         parser.error(f"Không tìm thấy file nhạc: {args.music}")
+    if args.bg_video and not args.bg_video.exists():
+        parser.error(f"Không tìm thấy video nền: {args.bg_video}")
 
     opts = Options(
         aspect=args.aspect,
@@ -45,6 +51,7 @@ def main() -> None:
         music=args.music,
         music_volume=args.music_volume,
         script_only=args.script_only,
+        bg_video=args.bg_video,
     )
     try:
         run(args.topic, args.output, args.script, opts)
