@@ -25,7 +25,7 @@ Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu
 }
 Yêu cầu:
 - Viết bằng {language}, giọng văn tự nhiên như người dẫn video, không đánh số trong câu.
-- "image_queries": 2 cụm từ khóa TIẾNG ANH để tìm trong kho ảnh stock (Pexels):
+- "image_queries": 2 cụm từ khóa TIẾNG ANH để tìm ảnh (Google Images / kho ảnh stock):
   query 1 cụ thể (3-5 từ, vd "whisking eggs in bowl"), query 2 chung hơn (1-3 từ, vd "baking kitchen").
   Mô tả cảnh/đồ vật chụp được, tránh từ trừu tượng và tên riêng địa phương.
 - Mỗi bước là một hành động rõ ràng, không lặp ý.
