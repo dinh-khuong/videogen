@@ -52,6 +52,12 @@ class ProviderUnavailable(RuntimeError):
 class Credit:
     source: str
     url: str
+    author: str = ""
+    license: str = ""  # giấy phép (vd "CC BY 4.0") khi nguồn yêu cầu ghi công
+
+    def attribution(self) -> str:
+        parts = [self.source, self.author, self.license]
+        return f"{' — '.join(p for p in parts if p)}: {self.url}"
 
 
 @dataclass

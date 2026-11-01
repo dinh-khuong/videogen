@@ -110,8 +110,8 @@ function describeInput(job: JobDetail): string[] {
     i.script ? "Kịch bản: sửa tay (không gọi AI)" : `Số bước: ${i.numSteps ?? "AI tự chọn (5-8)"}`,
     `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
-    `Ảnh thư viện: ${{ off: "không dùng", auto: `AI tự chọn${i.libraryTag ? ` trong #${i.libraryTag}` : ""}`, selected: `${i.imageIds?.length ?? 0} ảnh đã chọn` }[i.libraryMode]}`,
-    `Tìm ảnh trên mạng: ${i.webImages ? "có" : "không"}`,
+    `Assets: ${{ off: "không dùng", auto: `AI tự chọn${i.libraryTag ? ` trong #${i.libraryTag}` : ""}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
+    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}`,
   ];
   if (i.voice || i.rate) lines.push(`Giọng: ${i.voice ?? "mặc định"} ${i.rate ?? ""}`.trim());
   return lines;

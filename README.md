@@ -25,6 +25,11 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản v
   - *AI tự chọn từ Assets* (mặc định): AI đọc mô tả, tóm tắt và chữ trong từng asset rồi tự gán asset phù hợp cho từng bước. Bước nào không có asset khớp thì tìm ảnh trên mạng.
   - *Dùng asset tôi chọn*: các asset bạn chọn là nội dung chính. AI viết lời bình dựa trên nội dung và chữ đọc được trong từng asset (vd tên món, giá), theo đúng thứ tự bạn chọn.
   - Asset của bạn hiển thị **trọn vẹn trong khung** (không bị cắt) trên nền mờ. Clip video được tắt tiếng và tự lặp nếu ngắn hơn lời bình. Ảnh tìm trên mạng phủ kín khung.
+- **Clip video trên mạng** cho các bước chưa có asset: chọn "AI tự chọn ảnh hay clip" (AI đánh dấu bước có hành động để dùng clip), "Ưu tiên clip video" hoặc "Chỉ ảnh".
+  - Chỉ lấy video **được phép dùng lại**: Pexels, Pixabay (kho stock, dùng thương mại), Wikimedia Commons (giấy phép tự do, không cần key), YouTube (**chỉ** video Creative Commons Attribution).
+  - Mỗi clip lấy một đoạn ~15 giây (`WEB_CLIP_SECONDS`), tắt tiếng, lưu vào Assets kèm tác giả + giấy phép; nguồn được tự thêm vào cuối mô tả video để ghi công khi đăng.
+  - Video Wikimedia có giấy phép CC BY-SA yêu cầu video của bạn cũng chia sẻ theo CC BY-SA: kiểm tra mô tả trước khi dùng cho quảng cáo.
+  - YouTube: cần bật YouTube Data API cho key (hoặc dùng bộ lọc Creative Commons của trang tìm kiếm). YouTube có thể chặn tải từ máy chủ/máy cá nhân (yêu cầu đăng nhập); khi đó engine tự bỏ qua YouTube và dùng nguồn khác.
 - **Phân tích asset tự động** (chạy nền sau khi tải lên):
   - **Đọc chữ trong ảnh/video** bằng Tesseract (chạy trên máy, hỗ trợ tiếng Việt). Với video, engine đọc chữ ở vài khung hình đầu/giữa/cuối.
   - **AI tóm tắt** nội dung + gợi ý hashtag (DeepSeek), đồng thời sửa lỗi nhận dạng chữ. Bạn có thể sửa tóm tắt hoặc bấm "Phân tích lại".
@@ -95,6 +100,7 @@ python -m videogen "cách pha cà phê phin" --aspect 9:16 --steps 6 --music nha
 python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/          # Shorts chia đôi
 python -m videogen "giới thiệu menu quán" --library-dir anh_mon/ --analyze-library   # ảnh/video của bạn làm nội dung chính
 python -m videogen analyze menu.jpg clip.mp4                                     # đọc chữ + AI tóm tắt, in JSON
+python -m videogen "cách pha cà phê drip" --web-media auto                       # AI chọn ảnh hay clip mạng cho từng bước
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
 python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa
 python main.py ...                                                               # cách gọi cũ vẫn dùng được
@@ -135,11 +141,15 @@ Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,
 
 > Ảnh từ DuckDuckGo, Google hoặc Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc. Chỉ nên dùng cho học tập hoặc thử nghiệm. Với quảng cáo, hãy dùng ảnh của chính bạn (tải lên thư viện) hoặc ảnh Pexels.
 
-### 3. Đọc chữ và mô tả asset — **không cần key**
+### 3. Clip video trên mạng — **Wikimedia Commons không cần key**
+- `PEXELS_API_KEY` (dùng chung với ảnh), `PIXABAY_API_KEY` (miễn phí), `YOUTUBE_API_KEY` (hoặc `GOOGLE_API_KEY` đã bật YouTube Data API v3).
+- Thứ tự nguồn: `VIDEO_PROVIDERS` (mặc định `pexels,pixabay,wikimedia,youtube`).
+
+### 4. Đọc chữ và mô tả asset — **không cần key**
 - Đọc chữ bằng Tesseract chạy trên máy; tóm tắt dùng chung key DeepSeek.
 - Tùy chọn: mô hình thị giác (Gemini, OpenAI, hoặc Ollama chạy local) để mô tả ảnh không có chữ. Đặt `VISION_BASE_URL`, `VISION_MODEL`, `VISION_API_KEY`.
 
-### 4. Giọng đọc — **không cần key**
+### 5. Giọng đọc — **không cần key**
 - edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS.
 
 ## Cấu trúc code
@@ -154,6 +164,7 @@ engine/                      # Python: tạo video (process riêng, CLI)
     llm.py                   # DeepSeek: kịch bản, hashtag, chọn asset thư viện
     analyze.py               # phân tích asset: OCR (Tesseract) + AI tóm tắt
     image_search.py          # DuckDuckGo / Google / Serper / Pexels
+    video_search.py          # clip được phép dùng lại: Pexels / Pixabay / Wikimedia / YouTube CC
     tts.py                   # edge-tts (+ gTTS dự phòng)
     graphics.py              # Pillow: phụ đề, nhãn bước, khung ảnh nội dung
     video_builder.py         # moviepy: Ken Burns, clip video, crossfade, chia đôi màn hình

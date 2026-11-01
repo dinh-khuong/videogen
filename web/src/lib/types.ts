@@ -85,6 +85,8 @@ export type JobInput = {
   bgVideoId?: string | null;
   imageStyle: "auto" | "cover" | "frame";
   webImages: boolean;
+  /** Loại nội dung tìm trên mạng: ảnh, clip video (Creative Commons/stock) hoặc AI chọn cho từng bước */
+  webMedia?: "image" | "video" | "auto";
   libraryMode: "off" | "auto" | "selected";
   libraryTag?: string | null;
   /** asset chọn làm nội dung chính (chế độ "selected"), theo thứ tự */
@@ -175,6 +177,7 @@ export type EngineHealth = {
   python?: string;
   deepseek?: boolean;
   image_providers?: string[];
+  video_providers?: string[];
   voice?: string;
   font?: string | null;
   moviepy?: string;

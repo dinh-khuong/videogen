@@ -24,7 +24,7 @@ Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu
       "heading": "Tên bước rất ngắn (2-6 từ)",
       "narration": "Lời bình được đọc thành giọng nói cho bước này (1-3 câu, cụ thể: định lượng, thời gian, mẹo).",
       "image_queries": ["english search query 1", "alternative english query 2"],
-      "hashtags": ["hashtag1", "hashtag2"]{library_field}
+      "hashtags": ["hashtag1", "hashtag2"]{media_field}{library_field}
     }
   ],
   "outro": "1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối."
@@ -36,6 +36,11 @@ Yêu cầu:
   Mô tả cảnh/đồ vật chụp được, tránh từ trừu tượng và tên riêng địa phương.
 - "hashtags": viết thường, không dấu, viết liền, không có ký tự #. Video: 4-8 hashtag; mỗi bước: 2-4 hashtag mô tả nội dung ảnh minh họa.
 - Mỗi bước là một hành động rõ ràng, không lặp ý.
+"""
+
+MEDIA_FIELD = ',\n      "media": "video" hoặc "image"'
+MEDIA_RULE = """- "media": "video" nếu bước có hành động/chuyển động nên minh họa bằng clip video (rót, khuấy, chạy, lắp ráp...),
+  "image" nếu ảnh tĩnh là đủ (chân dung, sơ đồ, món ăn hoàn thành, địa danh). "image_queries" dùng để tìm cả ảnh lẫn clip.
 """
 
 LIBRARY_FIELD = ',\n      "library_image": "id asset (ảnh/video) trong thư viện dùng cho bước này, hoặc null"'
@@ -70,6 +75,7 @@ class Step:
     image: str | None = None  # đường dẫn ảnh local tự chọn (ưu tiên hơn tìm kiếm)
     hashtags: list[str] = field(default_factory=list)
     library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
+    media: str | None = None  # "video" | "image": loại nội dung nên tìm trên mạng cho bước này
 
 
 @dataclass
@@ -177,6 +183,7 @@ def parse_script(data: dict, default_title: str) -> Script:
                 image_queries=[q.strip() for q in queries if q and q.strip()],
                 image=s.get("image") or None,
                 hashtags=normalize_hashtags(s.get("hashtags")),
+                media=s.get("media") if s.get("media") in ("video", "image") else None,
                 library_image=(str(s["library_image"]).strip() or None) if s.get("library_image") else None,
             )
         )
@@ -224,6 +231,7 @@ def generate_script(
     language: str = "tiếng Việt",
     library: list[LibraryAsset] | None = None,
     library_mode: str = "off",
+    web_media: str = "image",
 ) -> Script:
     client = OpenAI(
         api_key=require("DEEPSEEK_API_KEY", settings.deepseek_api_key),
@@ -234,6 +242,10 @@ def generate_script(
     library = library if library_mode in ("auto", "selected") else []
     system = SYSTEM_PROMPT.replace("{language}", language)
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
+    # Chế độ tự động: LLM quyết định bước nào dùng clip video, bước nào dùng ảnh
+    system = system.replace("{media_field}", MEDIA_FIELD if web_media == "auto" else "")
+    if web_media == "auto":
+        system += MEDIA_RULE
     if library:
         template = LIBRARY_SELECTED if library_mode == "selected" else LIBRARY_AUTO
         if library_mode == "auto":

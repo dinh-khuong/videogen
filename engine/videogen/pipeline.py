@@ -13,6 +13,7 @@ from .config import Settings, load_settings
 from .events import Reporter
 from .graphics import make_placeholder, render_step_badge, render_title_card
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
+from .video_search import VideoProviderPool, fetch_video
 from .llm import LibraryAsset, Script, generate_script, parse_script, short_title
 from .probe import VIDEO_EXTS
 from .tts import synthesize_many
@@ -20,6 +21,7 @@ from .video_builder import ASPECTS, Scene, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
 IMAGE_STYLES = ("auto", "cover", "frame")
+WEB_MEDIA = ("image", "video", "auto")
 LIBRARY_MODES = ("off", "auto", "selected")
 
 
@@ -36,7 +38,9 @@ class Options:
     bg_video: Path | None = None  # file hoặc thư mục video nền -> bố cục chia đôi 9:16
     # auto: ảnh thư viện/ảnh tự chọn hiển thị trọn vẹn (frame), ảnh tìm trên mạng phủ kín khung (cover)
     image_style: str = "auto"
-    web_images: bool = True  # cho phép tìm ảnh trên mạng khi bước không có ảnh thư viện
+    web_images: bool = True  # cho phép tìm ảnh/clip trên mạng khi bước không có asset thư viện
+    # Loại nội dung tìm trên mạng: image | video (clip, thiếu thì dùng ảnh) | auto (LLM chọn cho từng bước)
+    web_media: str = "image"
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
@@ -73,6 +77,8 @@ class RunResult:
     def to_dict(self) -> dict:
         return {
             "script": self.script.to_dict(),
+            # Ghi công cho nội dung có giấy phép yêu cầu (Creative Commons, kho stock)
+            "credits": [img.credit.attribution() for img in self.images if img.credit and img.credit.license],
             "script_file": str(self.script_file.resolve()),
             "work_dir": str(self.work_dir.resolve()),
             "video": {
@@ -119,7 +125,7 @@ def _write_credits(images: list[StepImage], work_dir: Path) -> None:
         return
     lines = ["Nguồn ảnh:"]
     for img in credited:
-        lines.append(f"- Bước {img.step}: {img.credit.source} — {img.credit.url}")
+        lines.append(f"- Bước {img.step}: {img.credit.attribution()}")
     (work_dir / "credits.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -138,6 +144,8 @@ def _prepare_images(
     registry = UrlRegistry()
     library = {img.id: img for img in opts.library}
     providers: list[ProviderPool] = []
+    video_pools: list[VideoProviderPool] = []
+    video_registry = UrlRegistry()
     lock = threading.Lock()
     total, done = len(script.steps), 0
 
@@ -148,6 +156,34 @@ def _prepare_images(
                 providers.append(ProviderPool(settings))
                 print(f"      Nguồn ảnh: {' → '.join(providers[0].names)}", flush=True)
             return providers[0]
+
+    def video_pool() -> VideoProviderPool:
+        with lock:
+            if not video_pools:
+                video_pools.append(VideoProviderPool(settings))
+                names = video_pools[0].names
+                print(f"      Nguồn video: {' → '.join(names) if names else '(không có — dùng ảnh)'}", flush=True)
+            return video_pools[0]
+
+    def wants_video(step) -> bool:
+        return opts.web_media == "video" or (opts.web_media == "auto" and step.media == "video")
+
+    def find_video(n: int, step) -> StepImage | None:
+        query = step.image_queries[0]
+        path = images_dir / f"step_{n:02d}_{_hash('video', orientation, *step.image_queries)}.mp4"
+        credit_path = path.with_suffix(".json")
+        if path.exists():
+            return StepImage(n, path, "web", credit=_load_credit(credit_path), query=query, media="video")
+        pool = video_pool()
+        if not pool.names:
+            return None
+        credit = fetch_video(step.image_queries, path, orientation, pool, video_registry)
+        if not credit:
+            print(f"      ⚠️  Không tìm được clip cho bước {n}, chuyển sang tìm ảnh.", flush=True)
+            return None
+        credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
+        print(f"      ✓ Clip bước {n}: {query} ({credit.source})", flush=True)
+        return StepImage(n, path, "web", credit=credit, query=query, media="video")
 
     def find(i: int) -> StepImage:
         step = script.steps[i]
@@ -170,6 +206,10 @@ def _prepare_images(
             print(f"      ⚠️  Asset thư viện {lib.id} không còn trên đĩa, chuyển sang tìm kiếm.", flush=True)
 
         query = step.image_queries[0] if step.image_queries else None
+        if opts.web_images and step.image_queries and wants_video(step):
+            clip = find_video(n, step)
+            if clip:
+                return clip
         if opts.web_images and step.image_queries:
             path = images_dir / f"step_{n:02d}_{_hash(orientation, *step.image_queries)}.jpg"
             credit_path = path.with_suffix(".json")
@@ -262,7 +302,9 @@ def run(
             print(f"[1/4] DeepSeek đang viết kịch bản cho: {short_title(topic, 80)!r} ({len(topic)} ký tự) ...", flush=True)
             reporter.stage("script", "DeepSeek đang viết kịch bản")
             library = opts.library if opts.library_mode != "off" else []
-            script = generate_script(topic, settings, opts.num_steps, opts.language, library, opts.library_mode)
+            script = generate_script(
+                topic, settings, opts.num_steps, opts.language, library, opts.library_mode, opts.web_media
+            )
         work_dir = opts.work_dir or OUTPUT_ROOT / slugify(script.title)
         work_dir.mkdir(parents=True, exist_ok=True)
         script_file = work_dir / "script.json"

@@ -45,6 +45,18 @@ class Settings:
             for p in _get("IMAGE_PROVIDERS", "duckduckgo,google,serper,pexels").split(",")
             if p.strip()
         ]
+        self.pixabay_api_key = _get("PIXABAY_API_KEY")
+        # YouTube Data API v3 (bật API trong Google Cloud); không có thì dùng GOOGLE_API_KEY
+        self.youtube_api_key = _get("YOUTUBE_API_KEY") or self.google_api_key
+        # Nguồn clip video trên mạng, chỉ lấy video được phép dùng lại (stock / Creative Commons)
+        self.video_providers = [
+            p.strip().lower()
+            for p in _get("VIDEO_PROVIDERS", "pexels,pixabay,wikimedia,youtube").split(",")
+            if p.strip()
+        ]
+        self.web_clip_seconds = float(_get("WEB_CLIP_SECONDS", "15"))
+        # URL hoặc email liên hệ gửi kèm User-Agent khi tải từ Wikimedia (khuyến nghị theo chính sách của Wikimedia)
+        self.wikimedia_contact = _get("WIKIMEDIA_CONTACT")
         self.ddg_region = _get("DDG_REGION", "wt-wt")
         self.ddg_license = _get("DDG_LICENSE")
 

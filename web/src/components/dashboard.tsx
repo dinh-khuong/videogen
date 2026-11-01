@@ -28,6 +28,7 @@ function EngineStatus() {
         <p className="font-medium text-emerald-700">● Engine sẵn sàng</p>
         <p>Python {data.python} · moviepy {data.moviepy}</p>
         <p>Nguồn ảnh: {data.image_providers?.join(", ")}</p>
+        <p>Nguồn clip video: {data.video_providers?.length ? data.video_providers.join(", ") : "chưa có"}</p>
         <p>Giọng đọc mặc định: {data.voice}</p>
         <p>Đọc chữ trong asset: {data.ocr ?? "chưa có Tesseract"}</p>
         {data.vision && <p>Mô hình thị giác: {data.vision}</p>}

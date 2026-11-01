@@ -16,6 +16,8 @@ import { insertVideo, moveVideoFiles } from "./videos";
 /** Kết quả engine ghi ra result.json (xem RunResult.to_dict trong engine/videogen/pipeline.py). */
 export type EngineResult = {
   script: Script;
+  /** ghi công cho clip/ảnh có giấy phép (Creative Commons, kho stock) */
+  credits?: string[];
   video: {
     path: string;
     thumbnail: string | null;
@@ -31,7 +33,7 @@ export type EngineResult = {
     path: string;
     kind: "custom" | "library" | "web" | "placeholder";
     library_id: string | null;
-    credit: { source: string; url: string } | null;
+    credit: { source: string; url: string; author?: string; license?: string } | null;
     query: string | null;
     media?: "image" | "video";
   }[];
@@ -64,7 +66,11 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     const tmp = path.join(/* turbopackIgnore: true */ TMP_DIR, `${crypto.randomUUID()}${ext}`);
     await fsp.copyFile(/* turbopackIgnore: true */ img.path, tmp);
     const step = script.steps[img.step - 1];
-    const queryNote = img.query ? `\nTừ khóa tìm ảnh: ${img.query}` : "";
+    const queryNote = img.query ? `\nTừ khóa tìm kiếm: ${img.query}` : "";
+    const credit = img.credit;
+    const creditNote = credit?.license
+      ? `\nNguồn: ${[credit.source, credit.author, credit.license].filter(Boolean).join(" — ")} (${credit.url})`
+      : "";
     pending.push({
       step: img.step,
       asset: {
@@ -73,7 +79,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
         sha1,
         size: (await fsp.stat(/* turbopackIgnore: true */ tmp)).size,
         title: step?.heading || script.title,
-        description: withHashtags(`${step?.narration ?? ""}${queryNote}`, step?.hashtags ?? []),
+        description: withHashtags(`${step?.narration ?? ""}${queryNote}${creditNote}`, step?.hashtags ?? []),
         source: img.credit?.source ?? (img.kind === "web" ? "web" : "upload"),
         sourceUrl: img.credit?.url ?? null,
       },
@@ -94,7 +100,11 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     ext: ".mp4",
     size: (await fsp.stat(result.video.path)).size,
     title: result.video.title,
-    description: withHashtags(result.video.description, result.video.hashtags),
+    // Giấy phép Creative Commons yêu cầu ghi công: thêm nguồn vào mô tả video (dùng khi đăng)
+    description: withHashtags(
+      result.credits?.length ? `${result.video.description}\n\nNguồn hình ảnh:\n${result.credits.map((c) => `- ${c}`).join("\n")}` : result.video.description,
+      result.video.hashtags,
+    ),
     kind: "generated" as const,
     duration: result.video.duration,
     width: result.video.width,

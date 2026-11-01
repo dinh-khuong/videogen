@@ -159,6 +159,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     bgVideoId,
     imageStyle,
     webImages: raw.webImages !== false,
+    webMedia: raw.webMedia === "video" || raw.webMedia === "auto" ? raw.webMedia : "image",
     libraryMode: script ? "off" : libraryMode,
     libraryTag: libraryMode === "auto" ? raw.libraryTag?.trim() || null : null,
     assetIds: libraryMode === "selected" && !script ? assetIds : [],
@@ -191,6 +192,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     aspect: input.layout === "split" ? "9:16" : input.aspect,
     image_style: input.imageStyle,
     web_images: input.webImages,
+    web_media: input.webMedia ?? "image",
     library_mode: input.libraryMode,
     library: [],
   };

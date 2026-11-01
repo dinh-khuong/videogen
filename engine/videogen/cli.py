@@ -105,7 +105,10 @@ def cmd_make(argv: list[str]) -> int:
                         help="selected: dùng hết file trong thư mục; auto: AI tự chọn file phù hợp")
     parser.add_argument("--analyze-library", action="store_true",
                         help="Đọc chữ (OCR) + AI tóm tắt nội dung từng file trong --library-dir trước khi viết kịch bản")
-    parser.add_argument("--no-web-images", action="store_true", help="Không tìm ảnh trên mạng")
+    parser.add_argument("--no-web-images", action="store_true", help="Không tìm ảnh/clip trên mạng")
+    parser.add_argument("--web-media", choices=("image", "video", "auto"), default="image",
+                        help="Tìm trên mạng: image (ảnh), video (clip Creative Commons/stock, thiếu thì dùng ảnh), "
+                             "auto (AI chọn ảnh hay clip cho từng bước)")
     args = parser.parse_args(argv)
 
     if not args.topic and not args.script:
@@ -130,6 +133,7 @@ def cmd_make(argv: list[str]) -> int:
         bg_video=args.bg_video,
         image_style=args.image_style,
         web_images=not args.no_web_images,
+        web_media=args.web_media,
         library=library,
         library_mode=args.library_mode if library else "off",
     )
@@ -210,6 +214,9 @@ def cmd_doctor(argv: list[str]) -> int:
         ]
         if not report["image_providers"]:
             report["problems"].append("Không có nguồn ảnh nào dùng được (IMAGE_PROVIDERS)")
+        from .video_search import active_video_providers
+
+        report["video_providers"] = active_video_providers(settings)
         report["voice"] = settings.tts_voice
         from .analyze import ocr_available
 

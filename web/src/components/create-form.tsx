@@ -57,6 +57,7 @@ export function CreateVideoForm() {
   const [libraryTag, setLibraryTag] = useState("");
   const [assetIds, setAssetIds] = useState<string[]>([]);
   const [webImages, setWebImages] = useState(true);
+  const [webMedia, setWebMedia] = useState<NonNullable<JobInput["webMedia"]>>("auto");
   const [imageStyle, setImageStyle] = useState<JobInput["imageStyle"]>("auto");
   const [contactId, setContactId] = useState(params.get("contact") ?? "");
   const [music, setMusic] = useState({ musicId: "", volume: 0.12 });
@@ -84,6 +85,7 @@ export function CreateVideoForm() {
         bgVideoId: layout.layout === "split" ? bgVideoId : null,
         imageStyle,
         webImages,
+        webMedia,
         libraryMode,
         libraryTag: libraryMode === "auto" ? libraryTag || null : null,
         assetIds: libraryMode === "selected" ? assetIds : [],
@@ -241,13 +243,24 @@ export function CreateVideoForm() {
               <option value="cover">Luôn phủ kín khung hình (làm nền)</option>
             </select>
           </Field>
-          <label className="flex items-start gap-2.5 self-end rounded-lg p-2 text-sm text-zinc-700">
-            <input type="checkbox" className="mt-0.5 size-4 accent-brand-500" checked={webImages} onChange={(e) => setWebImages(e.target.checked)} />
-            <span>
-              Tìm ảnh trên mạng cho các bước chưa có asset
-              <span className="block text-xs text-zinc-500">Tắt: bước thiếu ảnh dùng nền chữ thay thế.</span>
-            </span>
-          </label>
+          <Field
+            label="Tìm trên mạng cho bước chưa có asset"
+            hint="Clip chỉ lấy từ nguồn được phép dùng lại (Pexels, Pixabay, Wikimedia Commons, YouTube Creative Commons) và tự ghi nguồn vào mô tả video."
+          >
+            <select
+              className={inputClass}
+              value={webImages ? webMedia : "off"}
+              onChange={(e) => {
+                setWebImages(e.target.value !== "off");
+                if (e.target.value !== "off") setWebMedia(e.target.value as NonNullable<JobInput["webMedia"]>);
+              }}
+            >
+              <option value="auto">AI tự chọn ảnh hay clip video cho từng bước</option>
+              <option value="video">Ưu tiên clip video (thiếu thì dùng ảnh)</option>
+              <option value="image">Chỉ ảnh</option>
+              <option value="off">Không tìm (bước thiếu asset dùng nền chữ)</option>
+            </select>
+          </Field>
         </div>
       </Card>
 

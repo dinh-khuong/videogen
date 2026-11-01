@@ -10,7 +10,8 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "bg_video": "/abs/gameplay.mp4",          # có -> bố cục 9:16 chia đôi
   "music": "/abs/nhac.mp3", "music_volume": 0.12,
   "image_style": "auto",                    # auto | cover | frame
-  "web_images": true,
+  "web_images": true,                      # tìm nội dung trên mạng cho bước chưa có asset
+  "web_media": "image",                     # image | video (clip CC/stock) | auto (LLM chọn từng bước)
   "library_mode": "off",                    # off | auto | selected
   "library": [{"id": "...", "path": "/abs/anh.jpg", "kind": "image",   # asset ảnh/video của người dùng
                "description": "...", "tags": ["..."],
@@ -26,7 +27,7 @@ from pathlib import Path
 from .config import ConfigError
 from .events import JsonReporter
 from .llm import LibraryAsset
-from .pipeline import IMAGE_STYLES, LIBRARY_MODES, Options, run
+from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .video_builder import ASPECTS
 
 
@@ -37,6 +38,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     image_style = spec.get("image_style") or "auto"
     if image_style not in IMAGE_STYLES:
         raise ValueError(f"image_style không hợp lệ: {image_style}")
+    web_media = spec.get("web_media") or "image"
+    if web_media not in WEB_MEDIA:
+        raise ValueError(f"web_media không hợp lệ: {web_media}")
     library_mode = spec.get("library_mode") or "off"
     if library_mode not in LIBRARY_MODES:
         raise ValueError(f"library_mode không hợp lệ: {library_mode}")
@@ -61,6 +65,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         bg_video=optional_path("bg_video"),
         image_style=image_style,
         web_images=bool(spec.get("web_images", True)),
+        web_media=web_media,
         library=[
             LibraryAsset(
                 id=str(item["id"]),
