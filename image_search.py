@@ -1,15 +1,18 @@
 """Tìm, tải và kiểm tra ảnh minh họa.
 
-Nguồn ảnh (dùng nguồn đầu tiên có key, theo thứ tự IMAGE_PROVIDERS):
+Nguồn ảnh (dùng theo thứ tự IMAGE_PROVIDERS, bỏ qua nguồn chưa có key):
+- duckduckgo: DuckDuckGo Images, không cần key (endpoint không chính thức)
 - google: Google Custom Search JSON API (GOOGLE_API_KEY + GOOGLE_CSE_ID)
 - serper: Google Images qua Serper.dev (SERPER_API_KEY)
 - pexels: kho ảnh Pexels, được dùng thương mại (PEXELS_API_KEY)
 """
 import io
+import re
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image, ImageOps
@@ -25,6 +28,24 @@ HEADERS = {
 MIN_WIDTH, MIN_HEIGHT = 480, 320
 MAX_SIDE = 2400
 TARGET_RATIO = {"landscape": 16 / 9, "portrait": 9 / 16, "square": 1.0}
+DDG_LAYOUT = {"landscape": "Wide", "portrait": "Tall", "square": "Square"}
+
+# Kho ảnh trả phí: ảnh xem trước thường có watermark
+WATERMARK_DOMAINS = (
+    "istockphoto.com", "gettyimages.", "shutterstock.com", "dreamstime.com", "alamy.com",
+    "depositphotos.com", "123rf.com", "freepik.com", "ftcdn.net", "stock.adobe.com",
+    "vectorstock.com", "canstockphoto.", "bigstockphoto.com", "pond5.com", "agefotostock.com",
+    "vecteezy.com", "colourbox.com", "stocksy.com",
+)
+
+
+def _is_watermarked(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return any(d in host for d in WATERMARK_DOMAINS)
+
+
+class ProviderUnavailable(RuntimeError):
+    """Nguồn ảnh không dùng được trong lượt chạy này (bị chặn/giới hạn)."""
 
 
 @dataclass
@@ -84,6 +105,69 @@ def _rank(candidates: list[Candidate], orientation: str) -> list[Candidate]:
         return c.width * c.height / (1 + 2 * ratio_penalty)
 
     return sorted(candidates, key=score, reverse=True)
+
+
+DDG_MIN_INTERVAL = 2.0  # giây giữa các lần tìm, tránh bị DuckDuckGo giới hạn tốc độ
+DDG_RETRIES = 3
+_ddg_lock = threading.Lock()
+_ddg_last_call = 0.0
+
+
+def _ddg_throttle() -> None:
+    """Tuần tự hóa và giãn cách các lần gọi DuckDuckGo giữa các luồng."""
+    global _ddg_last_call
+    with _ddg_lock:
+        wait = _ddg_last_call + DDG_MIN_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _ddg_last_call = time.monotonic()
+
+
+def _search_duckduckgo(query: str, orientation: str, settings: Settings) -> list[Candidate]:
+    session = requests.Session()
+    session.headers.update({**HEADERS, "Accept-Language": "en-US,en;q=0.5"})
+    # Thứ tự bộ lọc: thời gian, kích thước, màu, loại ảnh, bố cục, giấy phép
+    filters = ["", "size:Large", "", "type:photo", f"layout:{DDG_LAYOUT[orientation]}", ""]
+    if settings.ddg_license:
+        filters[5] = f"license:{settings.ddg_license}"
+
+    for attempt in range(DDG_RETRIES):
+        _ddg_throttle()
+        # DuckDuckGo cần token vqd lấy từ trang kết quả trước khi gọi i.js
+        page = session.get(
+            "https://duckduckgo.com/", params={"q": query, "iax": "images", "ia": "images"}, timeout=20
+        )
+        match = re.search(r"vqd=[\"']?([\d-]+)", page.text)
+        if page.ok and match:
+            resp = session.get(
+                "https://duckduckgo.com/i.js",
+                params={
+                    "o": "json", "q": query, "l": settings.ddg_region, "vqd": match.group(1),
+                    "p": "1", "f": ",".join(filters),
+                },
+                headers={"Referer": "https://duckduckgo.com/"},
+                timeout=20,
+            )
+            # 202/403/429 = bị giới hạn tốc độ (202 trả về kết quả rỗng)
+            if resp.status_code not in (202, 403, 429):
+                resp.raise_for_status()
+                items = resp.json().get("results", [])
+                return _rank(
+                    [
+                        Candidate(
+                            image_url=it["image"],
+                            width=it.get("width", 0),
+                            height=it.get("height", 0),
+                            credit=Credit(source=urlparse(it.get("url", "")).netloc, url=it.get("url", it["image"])),
+                        )
+                        for it in items
+                        if it.get("image")
+                    ],
+                    orientation,
+                )
+        if attempt < DDG_RETRIES - 1:
+            time.sleep(5 * 2**attempt)
+    raise ProviderUnavailable("DuckDuckGo đang giới hạn tốc độ, thử lại sau ít phút")
 
 
 def _search_google(query: str, orientation: str, settings: Settings) -> list[Candidate]:
@@ -155,6 +239,7 @@ def _search_pexels(query: str, orientation: str, settings: Settings) -> list[Can
 
 
 PROVIDERS = {
+    "duckduckgo": (_search_duckduckgo, lambda s: True),
     "google": (_search_google, lambda s: bool(s.google_api_key and s.google_cse_id)),
     "serper": (_search_serper, lambda s: bool(s.serper_api_key)),
     "pexels": (_search_pexels, lambda s: bool(s.pexels_api_key)),
@@ -197,6 +282,15 @@ class ProviderPool:
                 else:
                     print(f"      ⚠️  Nguồn ảnh '{name}' lỗi cho '{query}': {e}")
                 continue
+            except ProviderUnavailable as e:
+                with self._lock:
+                    if name not in self._disabled:
+                        self._disabled.add(name)
+                        print(f"      ⚠️  Tạm bỏ nguồn ảnh '{name}': {e}")
+                continue
+            except (requests.RequestException, ValueError) as e:
+                print(f"      ⚠️  Nguồn ảnh '{name}' lỗi cho '{query}': {type(e).__name__}: {e}")
+                continue
             if results:
                 return results
         return []
@@ -232,7 +326,7 @@ def fetch_image(
     """Thử lần lượt các query, tải ảnh hợp lệ đầu tiên vào dest_path và trả về nguồn ảnh."""
     for query in queries:
         for cand in pool.search(query, orientation):
-            if not registry.claim(cand.image_url):
+            if _is_watermarked(cand.image_url) or not registry.claim(cand.image_url):
                 continue
             if download_valid_image(cand.image_url, dest_path):
                 return cand.credit

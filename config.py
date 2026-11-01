@@ -36,8 +36,12 @@ class Settings:
         self.serper_api_key = _get("SERPER_API_KEY")
         self.pexels_api_key = _get("PEXELS_API_KEY")
         self.image_providers = [
-            p.strip().lower() for p in _get("IMAGE_PROVIDERS", "google,serper,pexels").split(",") if p.strip()
+            p.strip().lower()
+            for p in _get("IMAGE_PROVIDERS", "duckduckgo,google,serper,pexels").split(",")
+            if p.strip()
         ]
+        self.ddg_region = _get("DDG_REGION", "wt-wt")
+        self.ddg_license = _get("DDG_LICENSE")
 
         self.tts_voice = _get("TTS_VOICE", "vi-VN-HoaiMyNeural")
         self.tts_rate = _get("TTS_RATE", "+0%")

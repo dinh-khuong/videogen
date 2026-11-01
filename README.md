@@ -1,11 +1,11 @@
 # videogen — Tạo video hướng dẫn tự động
 
-Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các bước, kết) → Google Search (hoặc Serper / Pexels) tìm ảnh minh họa cho từng bước → edge-tts đọc lời bình → dựng video có phụ đề, title card, nhãn "Bước N", hiệu ứng Ken Burns, chuyển cảnh và nhạc nền.
+Pipeline: **chủ đề** → DeepSeek viết kịch bản (mở đầu, các bước, kết) → DuckDuckGo (hoặc Google / Serper / Pexels) tìm ảnh minh họa cho từng bước → edge-tts đọc lời bình → dựng video có phụ đề, title card, nhãn "Bước N", hiệu ứng Ken Burns, chuyển cảnh và nhạc nền.
 
 ## Tính năng
 
 - **Kịch bản thông minh**: DeepSeek (JSON mode) sinh tiêu đề, lời mở đầu, các bước (tên bước + lời bình + 2 từ khóa ảnh), lời kết.
-- **Nhiều nguồn ảnh, tự chuyển nguồn**: Google Custom Search → Serper (Google Images) → Pexels, dùng nguồn nào có key; nguồn bị từ chối quyền thì tự chuyển nguồn sau. Ưu tiên ảnh lớn, đúng tỉ lệ khung hình; kiểm tra ảnh hợp lệ, thử từ khóa dự phòng; nếu vẫn không có thì tạo ảnh nền thay thế. Nguồn từng ảnh ghi vào `credits.txt`.
+- **Nhiều nguồn ảnh, tự chuyển nguồn**: DuckDuckGo (không cần key) → Google Custom Search → Serper (Google Images) → Pexels; nguồn lỗi hoặc bị từ chối thì tự chuyển nguồn sau. Ưu tiên ảnh lớn, đúng tỉ lệ khung hình, bỏ ảnh từ kho ảnh trả phí (thường có watermark); kiểm tra ảnh hợp lệ, thử từ khóa dự phòng; nếu vẫn không có thì tạo ảnh nền thay thế. Nguồn từng ảnh ghi vào `credits.txt`.
 - **Giọng đọc**: edge-tts (Microsoft Neural, miễn phí) có retry; tự chuyển sang gTTS nếu edge-tts lỗi.
 - **Video đẹp**: phụ đề tiếng Việt chia đoạn theo thời gian đọc, title card, nhãn bước, zoom/pan Ken Burns, crossfade giữa các cảnh, fade in/out, nhạc nền tự lặp.
 - **Nhiều khung hình**: `16:9` (YouTube), `9:16` (TikTok/Shorts/Reels), `1:1`. Ảnh lệch tỉ lệ tự đặt trên nền mờ.
@@ -67,8 +67,14 @@ Xem tất cả tùy chọn: `python main.py -h`
 - Lấy tại: https://platform.deepseek.com/api_keys
 - `.env`: `DEEPSEEK_API_KEY=sk-...`
 
-### 2. Nguồn ảnh — **cần ít nhất một**
-Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `google,serper,pexels`).
+### 2. Nguồn ảnh — **mặc định không cần key** (DuckDuckGo)
+Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,google,serper,pexels`). Các nguồn sau chỉ dùng khi có key và nguồn trước lỗi.
+
+**DuckDuckGo** — không cần key
+- Tự lọc ảnh đúng hướng khung hình (ngang/dọc/vuông) và kích thước lớn.
+- `DDG_REGION`: vùng tìm kiếm (`wt-wt` toàn cầu, `vn-vi` Việt Nam...).
+- `DDG_LICENSE`: lọc giấy phép ảnh. Làm quảng cáo nên đặt `ShareCommercially` hoặc `ModifyCommercially` (ít kết quả hơn nhưng an toàn hơn về bản quyền).
+- DuckDuckGo không có API chính thức: chương trình gọi endpoint web của họ, có thể bị giới hạn tốc độ khi tìm nhiều; khi đó tự chờ/thử lại rồi chuyển nguồn sau.
 
 **a) Google Custom Search** — `GOOGLE_API_KEY` + `GOOGLE_CSE_ID`
 1. Bật [Custom Search API](https://console.cloud.google.com/apis/library/customsearch.googleapis.com) cho project.
@@ -84,7 +90,7 @@ Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `google,serp
 - Key miễn phí tại https://www.pexels.com/api/. 200 lượt/giờ, 20.000 lượt/tháng.
 - Ảnh được dùng thương mại miễn phí — **nên dùng nguồn này khi làm video quảng cáo**.
 
-> Ảnh từ Google/Serper thuộc bản quyền của website gốc — chỉ nên dùng cho học tập/thử nghiệm, không dùng cho quảng cáo trả phí.
+> Ảnh từ DuckDuckGo/Google/Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc — chỉ nên dùng cho học tập/thử nghiệm, không dùng cho quảng cáo trả phí.
 
 ### 3. Giọng đọc — **không cần API key**
 - edge-tts, giọng mặc định `vi-VN-HoaiMyNeural` (nữ). Giọng nam: `vi-VN-NamMinhNeural`.
@@ -97,7 +103,7 @@ main.py           # CLI
 pipeline.py       # điều phối, cache, thư mục output
 config.py         # đọc API key từ .env
 llm.py            # DeepSeek -> kịch bản (Script/Step), lưu/đọc script.json
-image_search.py   # Google / Serper / Pexels -> tải & kiểm tra ảnh, tự chuyển nguồn
+image_search.py   # DuckDuckGo / Google / Serper / Pexels -> tải & kiểm tra ảnh, tự chuyển nguồn
 tts.py            # edge-tts (+ gTTS dự phòng), chạy song song
 graphics.py       # Pillow: phụ đề, nhãn bước, title card, ảnh dự phòng, font tiếng Việt
 video_builder.py  # moviepy: Ken Burns, phụ đề theo thời gian, crossfade, nhạc nền
