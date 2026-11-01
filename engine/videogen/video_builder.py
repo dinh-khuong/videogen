@@ -7,16 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from moviepy.audio.fx.all import audio_fadein, audio_fadeout, audio_loop
-from moviepy.editor import (
-    AudioFileClip,
-    CompositeAudioClip,
-    CompositeVideoClip,
-    VideoClip,
-    VideoFileClip,
-    concatenate_videoclips,
-    vfx,
-)
+from moviepy.audio.AudioClip import AudioArrayClip
+from moviepy.editor import CompositeVideoClip, VideoClip, VideoFileClip, concatenate_videoclips, vfx
 from PIL import Image
 
 from .graphics import framed_backdrop, prepare_background, render_subtitle, split_subtitles
@@ -32,6 +24,11 @@ SILENT_SCENE = 3.0 # thời lượng scene không có giọng đọc
 ASPECTS = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (1080, 1080)}
 SPLIT_RATIO = 0.5  # tỉ lệ chiều cao phần nội dung (nửa trên) khi có video nền
 CLIP_MAX_SIDE = 1280  # clip lớn hơn được thu nhỏ trước khi dựng (giải mã 4K mỗi khung hình rất chậm)
+
+AUDIO_RATE = 44100
+EDGE_FADE = 0.008  # làm mềm đầu/cuối mỗi đoạn âm thanh để không có tiếng "bụp"
+FADE_IN, FADE_OUT = 0.4, 0.6  # mờ dần đầu/cuối video (hình và tiếng)
+MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
 
 
 @dataclass
@@ -141,14 +138,78 @@ def _video_frames(scene: Scene, size: tuple[int, int], cache_dir: Path | None):
     return cover, source
 
 
+def decode_audio(path: Path) -> np.ndarray:
+    """Giải mã toàn bộ file âm thanh bằng ffmpeg thành mảng float32 (số mẫu, 2 kênh) ở AUDIO_RATE.
+
+    Không dùng AudioFileClip của moviepy 1.x: nó đọc lố cuối file mp3 và trả về dữ liệu rác trong bộ đệm,
+    gây tiếng "bụp"/âm thanh bị cắt ở cuối mỗi đoạn giọng đọc.
+    """
+    raw = subprocess.run(
+        [ffmpeg_exe(), "-v", "error", "-i", str(path), "-vn", "-ac", "2", "-ar", str(AUDIO_RATE), "-f", "f32le", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    return np.frombuffer(raw, dtype=np.float32).reshape(-1, 2).copy()
+
+
+def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
+    n = len(samples)
+    for seconds, ramp_up in ((fade_in, True), (fade_out, False)):
+        k = min(n, int(seconds * AUDIO_RATE))
+        if k > 1:
+            ramp = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
+            if ramp_up:
+                samples[:k] *= ramp
+            else:
+                samples[n - k:] *= ramp[::-1]
+    return samples
+
+
+def _mix_at(track: np.ndarray, samples: np.ndarray, start: float) -> None:
+    i = int(round(start * AUDIO_RATE))
+    if i >= len(track) or not len(samples):
+        return
+    part = samples[: len(track) - i]
+    track[i : i + len(part)] += part
+
+
+def _build_audio(
+    speeches: list[np.ndarray | None], starts: list[float], duration: float, music_path: Path | None, music_volume: float
+) -> AudioArrayClip:
+    """Ghép giọng đọc của các scene (và nhạc nền) thành một track duy nhất, chính xác tới từng mẫu."""
+    track = np.zeros((int(np.ceil(duration * AUDIO_RATE)), 2), dtype=np.float32)
+    for speech, start in zip(speeches, starts):
+        if speech is not None:
+            _mix_at(track, _fade(speech.copy(), EDGE_FADE, EDGE_FADE), start + HEAD)
+    if music_path:
+        music = decode_audio(music_path)
+        if len(music):
+            reps = int(np.ceil(len(track) / len(music)))
+            music = np.tile(music, (reps, 1))[: len(track)] * music_volume
+            track += _fade(music, MUSIC_FADE_IN, MUSIC_FADE_OUT)
+    _fade(track, 0.0, FADE_OUT)
+    np.clip(track, -1.0, 1.0, out=track)
+    clip = AudioArrayClip(track, fps=AUDIO_RATE)
+
+    def make_frame(t):
+        # Bản gốc lấy chỉ số bằng int(fps*t) nên đôi khi lệch một mẫu do sai số số thực: làm tròn thay vì cắt
+        idx = np.round(np.asarray(t, dtype=np.float64) * AUDIO_RATE).astype(np.int64)
+        inside = (idx >= 0) & (idx < len(track))
+        out = np.zeros(idx.shape + (2,), dtype=np.float32)
+        out[inside] = track[idx[inside]]
+        return out
+
+    clip.make_frame = make_frame
+    return clip
+
+
 def _make_scene_clip(
     scene: Scene, index: int, size: tuple[int, int], font_override: str | None, cache_dir: Path | None = None
-) -> tuple[VideoClip, list]:
-    """Trả về (clip của scene, các clip nguồn cần đóng sau khi render)."""
+) -> tuple[VideoClip, list, np.ndarray | None]:
+    """Trả về (clip hình của scene, các clip nguồn cần đóng sau khi render, giọng đọc đã giải mã)."""
     w, h = size
-    audio = AudioFileClip(str(scene.audio_path)) if scene.audio_path else None
-    speech = audio.duration if audio else 0.0
-    duration = HEAD + speech + TAIL if audio else SILENT_SCENE
+    speech_samples = decode_audio(scene.audio_path) if scene.audio_path else None
+    speech = len(speech_samples) / AUDIO_RATE if speech_samples is not None else 0.0
+    duration = HEAD + speech + TAIL if speech_samples is not None else SILENT_SCENE
 
     sources = []
     if scene.media == "video":
@@ -182,10 +243,7 @@ def _make_scene_clip(
             frame.paste(current[0], current[1], current[0])
         return np.asarray(frame)
 
-    clip = VideoClip(make_frame, duration=duration)
-    if audio:
-        clip = clip.set_audio(CompositeAudioClip([audio.set_start(HEAD)]).set_duration(duration))
-    return clip, sources
+    return VideoClip(make_frame, duration=duration), sources, speech_samples
 
 
 def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
@@ -235,30 +293,28 @@ def build_video(
         size = ASPECTS[aspect]
     cache_dir = (work_dir or out_path.parent) / "clips"
     built = [_make_scene_clip(s, i, size, font_override, cache_dir) for i, s in enumerate(scenes)]
-    clips = [clip for clip, _ in built]
-    sources = [src for _, srcs in built for src in srcs]
+    clips = [clip for clip, _, _ in built]
+    sources = [src for _, srcs, _ in built for src in srcs]
 
     transition = min([TRANSITION] + [c.duration / 3 for c in clips])
+    # Scene sau bắt đầu chồng lên `transition` giây cuối của scene trước (crossfade hình)
+    starts = [0.0]
+    for c in clips[:-1]:
+        starts.append(starts[-1] + c.duration - transition)
     clips = [clips[0]] + [c.crossfadein(transition) for c in clips[1:]]
-    final = concatenate_videoclips(clips, method="compose", padding=-transition)
+    # moviepy 1.x trừ padding cả sau scene cuối -> video hụt `transition` giây, cắt mất đuôi lời kết
+    final = concatenate_videoclips(clips, method="compose", padding=-transition).set_duration(starts[-1] + clips[-1].duration)
 
     if bg_video:
         background = _background_clip(bg_video, bg_size, final.duration, cache_dir)
         final = CompositeVideoClip(
             [background.set_position((0, size[1])), final.set_position((0, 0))],
             size=ASPECTS["9:16"],
-        ).set_duration(final.duration).set_audio(final.audio)
+        ).set_duration(final.duration)
 
-    final = final.fadein(0.4).fadeout(0.6)
-
-    if music_path:
-        music = AudioFileClip(str(music_path))
-        music = audio_loop(music, duration=final.duration).volumex(music_volume)
-        music = audio_fadeout(audio_fadein(music, 1.0), 2.0)
-        tracks = [final.audio, music] if final.audio else [music]
-        final = final.set_audio(CompositeAudioClip(tracks).set_duration(final.duration))
-    elif final.audio:
-        final = final.set_audio(audio_fadeout(final.audio, 0.6))
+    final = final.fadein(FADE_IN).fadeout(FADE_OUT)
+    # Âm thanh dựng riêng thành một track liền mạch: chuyển cảnh chỉ làm mờ hình, không đụng tới tiếng
+    final = final.set_audio(_build_audio([speech for _, _, speech in built], starts, final.duration, music_path, music_volume))
 
     temp_audio = (work_dir or out_path.parent) / f"{out_path.stem}.temp-audio.m4a"
     final.write_videofile(
