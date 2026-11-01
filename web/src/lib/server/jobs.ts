@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
+import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, VIDEO_TYPES, normalizeStyle } from "@/lib/video-options";
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
@@ -93,6 +94,7 @@ export function getJobDetail(id: string): JobDetail | null {
 }
 
 const ASPECTS = ["16:9", "9:16", "1:1"];
+const VOICE_RE = /^[a-z]{2,3}-[A-Z]{2,3}-\w+$/;
 /** Asset dùng làm hình trong từng bước (audio chỉ dùng làm nhạc nền) */
 const VISUAL_KINDS = "image,video";
 const DEFAULT_MUSIC_VOLUME = 0.12;
@@ -129,7 +131,14 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
   const rate = raw.rate?.trim() || undefined;
   if (rate && !/^[+-]\d{1,3}%$/.test(rate)) throw new HttpError(400, "Tốc độ đọc dạng +10% hoặc -5%");
   const voice = raw.voice?.trim() || undefined;
-  if (voice && !/^[a-z]{2,3}-[A-Z]{2,3}-\w+$/.test(voice)) throw new HttpError(400, "Tên giọng đọc không hợp lệ");
+  if (voice && !VOICE_RE.test(voice)) throw new HttpError(400, "Tên giọng đọc không hợp lệ");
+  const voice2 = raw.voice2?.trim() || null;
+  if (voice2 && !VOICE_RE.test(voice2)) throw new HttpError(400, "Tên giọng đọc thứ hai không hợp lệ");
+  const pitch = raw.pitch?.trim() || undefined;
+  if (pitch && !/^[+-]\d{1,3}Hz$/.test(pitch)) throw new HttpError(400, "Cao độ giọng dạng +6Hz hoặc -6Hz");
+  // Job tạo trước khi có tùy chọn phong cách (hoặc API không gửi): dựng như cũ
+  const style = raw.style === undefined ? LEGACY_STYLE : normalizeStyle(raw.style);
+  if (style.logoId && !assetFilePath(style.logoId, "image")) throw new HttpError(400, "Không tìm thấy ảnh logo trong Assets");
 
   const assetIds = [...new Set((raw.assetIds ?? []).map(String))].slice(0, 30);
   if (libraryMode === "selected" && !script) {
@@ -153,7 +162,13 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     numSteps: script ? null : numSteps,
     language: raw.language?.trim() || "tiếng Việt",
     voice,
+    voice2: voice2 && voice2 !== voice ? voice2 : null,
     rate,
+    pitch,
+    videoType: raw.videoType && Object.hasOwn(VIDEO_TYPES, raw.videoType) ? raw.videoType : "howto",
+    tone: String(raw.tone ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TONE_CHARS),
+    length: raw.length && Object.hasOwn(LENGTHS, raw.length) ? raw.length : "medium",
+    style,
     aspect: aspect as JobInput["aspect"],
     layout,
     bgVideoId,
@@ -189,7 +204,12 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     num_steps: input.numSteps ?? null,
     language: input.language,
     voice: input.voice ?? null,
+    voice2: input.voice2 ?? null,
     rate: input.rate ?? null,
+    pitch: input.pitch ?? null,
+    video_type: input.videoType ?? "howto",
+    tone: input.tone ?? "",
+    length: input.length ?? "medium",
     aspect: input.layout === "split" ? "9:16" : input.aspect,
     image_style: input.imageStyle,
     web_images: input.webImages,
@@ -197,6 +217,23 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     clips_per_step: input.clipsPerStep ?? 3,
     library_mode: input.libraryMode,
     library: [],
+  };
+  const style = input.style ?? LEGACY_STYLE;
+  let logo: string | null = null;
+  if (style.logoId) {
+    logo = assetFilePath(style.logoId, "image");
+    if (!logo || !fs.existsSync(logo)) throw new Error("Ảnh logo đã bị xóa khỏi Assets");
+  }
+  spec.style = {
+    pacing: style.pacing,
+    transition: style.transition,
+    subtitle_style: style.subtitleStyle,
+    color_filter: style.colorFilter,
+    accent: style.accent,
+    progress_bar: style.progressBar,
+    sfx: style.sfx,
+    logo,
+    cta: style.cta,
   };
   if (input.layout === "split" && input.bgVideoId) {
     const bg = assetFilePath(input.bgVideoId, "video");

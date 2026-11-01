@@ -1,24 +1,34 @@
-"""Dựng video từ các scene: nền ảnh (Ken Burns) hoặc clip video + lớp đồ họa + phụ đề + giọng đọc."""
+"""Dựng video từ các scene: ảnh (Ken Burns đa dạng) hoặc clip video + lớp đồ họa động + phụ đề + giọng đọc.
+
+Mỗi khung hình được ghép trực tiếp bằng Pillow theo một timeline: scene sau chồng lên `transition` giây cuối của
+scene trước, đoạn chồng nhau dùng một kiểu chuyển cảnh (đẩy, lia nhanh, zoom, quét, vòng tròn...). Sau đó thêm
+video nền (bố cục chia đôi), logo, thanh tiến độ và mờ dần đầu/cuối. Âm thanh dựng riêng thành một track liền mạch.
+"""
 import hashlib
 import os
 import random
 import subprocess
+from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from moviepy.audio.AudioClip import AudioArrayClip
-from moviepy.editor import CompositeVideoClip, VideoClip, VideoFileClip, concatenate_videoclips, vfx
-from PIL import Image
+from moviepy.editor import VideoClip, VideoFileClip, vfx
+from PIL import Image, ImageDraw
 
-from .graphics import framed_backdrop, prepare_background, render_subtitle, split_subtitles
+from . import sfx
+from .effects import (
+    MOTIONS, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, make_motion, motion_box,
+    pick_transitions,
+)
+from .graphics import Fonts, framed_backdrop, logo_layer, prepare_background, resolve_fonts
 from .probe import ffmpeg_exe, video_info
+from .style import Style
+from .subtitles import SubtitleTrack, build_cues
 
-ZOOM = 1.12        # biên độ zoom Ken Burns
-FRAME_ZOOM = 1.04  # zoom nhẹ hơn khi ảnh là nội dung chính (giữ trọn ảnh, chữ trong ảnh dễ đọc)
-HEAD = 0.25        # khoảng lặng trước lời bình mỗi scene (giây)
-TAIL = 0.6         # khoảng lặng sau lời bình (phải >= TRANSITION để giọng không chồng nhau)
-TRANSITION = 0.5   # thời lượng crossfade giữa các scene
+FRAME_ZOOM = 1.04  # zoom nhẹ khi ảnh là nội dung chính (giữ trọn ảnh, chữ trong ảnh dễ đọc)
 SILENT_SCENE = 3.0 # thời lượng scene không có giọng đọc
 
 ASPECTS = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (1080, 1080)}
@@ -29,10 +39,7 @@ AUDIO_RATE = 44100
 EDGE_FADE = 0.008  # làm mềm đầu/cuối mỗi đoạn âm thanh để không có tiếng "bụp"
 FADE_IN, FADE_OUT = 0.4, 0.6  # mờ dần đầu/cuối video (hình và tiếng)
 MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
-
-
-MIN_SEGMENT = 2.2   # thời lượng tối thiểu của một đoạn hình trong scene (giây)
-SEGMENT_BLEND = 0.3 # chuyển mềm giữa các đoạn hình trong cùng scene
+WHOOSH_GAIN, POP_GAIN = 0.16, 0.11  # âm lượng hiệu ứng âm thanh so với giọng đọc
 
 
 @dataclass
@@ -48,7 +55,18 @@ class Scene:
     segments: list[Segment]  # nối tiếp nhau, chia đều thời lượng scene (vd nhiều clip cho một bước)
     audio_path: Path | None
     narration: str = ""
-    overlays: list[Image.Image] = field(default_factory=list)
+    overlays: list[Layer] = field(default_factory=list)  # nhãn bước, title card, lời kêu gọi... (có hoạt ảnh)
+    words: list[dict] | None = None  # thời điểm từng từ của giọng đọc (edge-tts), để phụ đề khớp tiếng
+    pops: list[float] = field(default_factory=list)  # thời điểm (giây trong scene) phát tiếng "tách"
+
+
+@dataclass
+class SceneRender:
+    frame: Callable[[float], Image.Image]
+    duration: float
+    speech: np.ndarray | None
+    sources: list
+    pops: list[float]
 
 
 def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
@@ -78,46 +96,30 @@ def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
     return out
 
 
-def _layer_region(layer: Image.Image) -> tuple[Image.Image, tuple[int, int]] | None:
-    """Cắt lớp RGBA về vùng có nội dung để paste nhanh hơn mỗi frame."""
-    bbox = layer.getbbox()
-    if not bbox:
-        return None
-    return layer.crop(bbox), (bbox[0], bbox[1])
-
-
-def _image_frames(seg: Segment, index: int, size: tuple[int, int], duration: float):
-    """Ảnh tĩnh với hiệu ứng Ken Burns: trả về hàm t -> khung hình PIL."""
+def _image_frames(seg: Segment, motion_kind: str, size: tuple[int, int], duration: float, zoom: float):
+    """Ảnh tĩnh với chuyển động Ken Burns (zoom vào/ra, lia ngang/dọc...): trả về hàm t -> khung hình PIL."""
     w, h = size
-    zoom = FRAME_ZOOM if seg.style == "frame" else ZOOM
+    if seg.style == "frame":
+        # Ảnh là nội dung chính: chỉ zoom rất nhẹ để chữ trong ảnh luôn đọc được
+        zoom = FRAME_ZOOM
+        motion_kind = "zoom_out" if motion_kind in ("zoom_out", "pan_left", "pan_up") else "zoom_in"
     big_size = (round(w * zoom), round(h * zoom))
     background = prepare_background(seg.path, big_size, seg.style).convert("RGB")
-    zoom_in = index % 2 == 0
-    pan = 0.0 if seg.style == "frame" else 0.08
-    pan_x = 0.5 + (pan if index % 3 == 1 else -pan if index % 3 == 2 else 0.0)
+    motion = make_motion(motion_kind, zoom)
 
     def frame_at(t: float) -> Image.Image:
-        progress = min(max(t / duration, 0.0), 1.0)
-        progress = progress * progress * (3 - 2 * progress)  # ease in-out
-        k = zoom - (zoom - 1) * progress if zoom_in else 1 + (zoom - 1) * progress
-        crop_w = min(w * k, big_size[0])
-        crop_h = min(h * k, big_size[1])
-        cx = big_size[0] * (0.5 + (pan_x - 0.5) * progress)
-        cx = min(max(cx, crop_w / 2), big_size[0] - crop_w / 2)
-        cy = big_size[1] / 2
-        box = (
-            max(0.0, cx - crop_w / 2),
-            max(0.0, cy - crop_h / 2),
-            min(big_size[0], cx + crop_w / 2),
-            min(big_size[1], cy + crop_h / 2),
-        )
+        x0, y0, x1, y1 = motion_box(motion, t / duration, size, zoom)
+        box = (max(0.0, x0), max(0.0, y0), min(big_size[0], x1), min(big_size[1], y1))
         return background.resize(size, Image.BILINEAR, box=box)
 
     return frame_at
 
 
-def _video_frames(seg: Segment, size: tuple[int, int], cache_dir: Path | None):
-    """Clip video làm nội dung: tắt tiếng, tự lặp nếu ngắn hơn đoạn. Trả về (hàm t -> khung hình PIL, clip nguồn)."""
+def _video_frames(seg: Segment, size: tuple[int, int], cache_dir: Path | None, duration: float, push: float):
+    """Clip video làm nội dung: tắt tiếng, tự lặp nếu ngắn hơn đoạn, zoom chậm vào giữa cho sinh động.
+
+    Trả về (hàm t -> khung hình PIL, clip nguồn).
+    """
     source = VideoFileClip(str(prepare_clip(seg.path, cache_dir)), audio=False)
     last = max(0.0, source.duration - 1.0 / (source.fps or 30))
 
@@ -139,11 +141,13 @@ def _video_frames(seg: Segment, size: tuple[int, int], cache_dir: Path | None):
         return framed, source
 
     scale = max(w / source.w, h / source.h)
-    x0, y0 = (source.w - w / scale) / 2, (source.h - h / scale) / 2
-    box = (x0, y0, source.w - x0, source.h - y0)
+    base_w, base_h = w / scale, h / scale
+    cx, cy = source.w / 2, source.h / 2
 
     def cover(t: float) -> Image.Image:
-        return source_frame(t).resize(size, Image.BILINEAR, box=box)
+        s = 1 + (push - 1) * min(max(t / duration, 0.0), 1.0)
+        cw, ch = base_w / s, base_h / s
+        return source_frame(t).resize(size, Image.BILINEAR, box=(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2))
 
     return cover, source
 
@@ -176,20 +180,25 @@ def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
 
 def _mix_at(track: np.ndarray, samples: np.ndarray, start: float) -> None:
     i = int(round(start * AUDIO_RATE))
-    if i >= len(track) or not len(samples):
+    if not len(samples) or i >= len(track):
         return
+    if i < 0:
+        samples, i = samples[-i:], 0
     part = samples[: len(track) - i]
     track[i : i + len(part)] += part
 
 
 def _build_audio(
-    speeches: list[np.ndarray | None], starts: list[float], duration: float, music_path: Path | None, music_volume: float
+    speeches: list[np.ndarray | None], starts: list[float], duration: float, music_path: Path | None,
+    music_volume: float, effects: list[tuple[float, np.ndarray, float]] | None = None,
 ) -> AudioArrayClip:
-    """Ghép giọng đọc của các scene (và nhạc nền) thành một track duy nhất, chính xác tới từng mẫu."""
+    """Ghép giọng đọc của các scene, hiệu ứng âm thanh và nhạc nền thành một track duy nhất, chính xác tới từng mẫu."""
     track = np.zeros((int(np.ceil(duration * AUDIO_RATE)), 2), dtype=np.float32)
     for speech, start in zip(speeches, starts):
         if speech is not None:
-            _mix_at(track, _fade(speech.copy(), EDGE_FADE, EDGE_FADE), start + HEAD)
+            _mix_at(track, _fade(speech.copy(), EDGE_FADE, EDGE_FADE), start)
+    for start, samples, gain in effects or []:
+        _mix_at(track, samples * gain, start)
     if music_path:
         music = decode_audio(music_path)
         if len(music):
@@ -212,64 +221,57 @@ def _build_audio(
     return clip
 
 
-def _make_scene_clip(
-    scene: Scene, index: int, size: tuple[int, int], font_override: str | None, cache_dir: Path | None = None
-) -> tuple[VideoClip, list, np.ndarray | None]:
-    """Trả về (clip hình của scene, các clip nguồn cần đóng sau khi render, giọng đọc đã giải mã)."""
-    w, h = size
+def _build_scene(
+    scene: Scene, index: int, size: tuple[int, int], style: Style, fonts: Fonts, cache_dir: Path | None,
+    rng: random.Random,
+) -> SceneRender:
+    pacing = style.timing
     speech_samples = decode_audio(scene.audio_path) if scene.audio_path else None
     speech = len(speech_samples) / AUDIO_RATE if speech_samples is not None else 0.0
-    duration = HEAD + speech + TAIL if speech_samples is not None else SILENT_SCENE
+    duration = pacing.head + speech + pacing.tail if speech_samples is not None else SILENT_SCENE
 
     # Chia scene thành các đoạn hình đều nhau (bỏ bớt đoạn nếu scene quá ngắn)
-    segments = scene.segments[: max(1, int(duration // MIN_SEGMENT))]
+    segments = scene.segments[: max(1, int(duration // pacing.min_segment))]
     seg_len = duration / len(segments)
-    sources = []
-    bases = []
+    blend = min(pacing.segment_blend, seg_len / 3)
+    sources, bases = [], []
+    last_motion = None
     for k, seg in enumerate(segments):
         if seg.media == "video":
-            fn, source = _video_frames(seg, size, cache_dir)
+            fn, source = _video_frames(seg, size, cache_dir, seg_len + blend, pacing.clip_push)
             sources.append(source)
         else:
-            fn = _image_frames(seg, index + k, size, seg_len + SEGMENT_BLEND)
+            last_motion = rng.choice([m for m in MOTIONS if m != last_motion])
+            fn = _image_frames(seg, last_motion, size, seg_len + blend, pacing.zoom)
         bases.append(fn)
 
     def base(t: float) -> Image.Image:
         k = min(int(t // seg_len), len(bases) - 1)
         local = t - k * seg_len
-        frame = bases[k](local).convert("RGB")
-        if k > 0 and local < SEGMENT_BLEND:
+        frame = bases[k](local)
+        if k > 0 and local < blend:
             # Đoạn trước tiếp tục chạy thêm một chút, hòa dần sang đoạn mới
-            prev = bases[k - 1](seg_len + local).convert("RGB")
-            frame = Image.blend(prev, frame, local / SEGMENT_BLEND)
-        return frame
+            frame = Image.blend(bases[k - 1](seg_len + local).convert("RGB"), frame.convert("RGB"), local / blend)
+        return frame.convert("RGB") if frame.mode != "RGB" else frame
 
-    static_layers = [r for r in (_layer_region(o) for o in scene.overlays) if r]
+    kind = style.subtitles_for(size)
+    subtitles = None
+    if scene.narration and kind != "none":
+        cues = build_cues(scene.narration, scene.words, speech, kind, size)
+        subtitles = SubtitleTrack(cues, kind, size, fonts, style.accent, offset=pacing.head)
+    grade = color_filter(style.color_filter)
 
-    # Phụ đề: chia lời bình thành đoạn, thời gian mỗi đoạn tỉ lệ với số ký tự
-    max_chars = 70 if w >= h else 45
-    chunks = split_subtitles(scene.narration, max_chars) if scene.narration else []
-    total_chars = sum(len(c) for c in chunks) or 1
-    subtitle_timeline: list[tuple[float, tuple[Image.Image, tuple[int, int]] | None]] = []
-    t = HEAD
-    for chunk in chunks:
-        region = _layer_region(render_subtitle(chunk, size, font_override))
-        subtitle_timeline.append((t, region))
-        t += speech * len(chunk) / total_chars
+    def frame(t: float) -> Image.Image:
+        img = base(t)
+        if grade:
+            img = grade(img)
+        for layer in scene.overlays:
+            draw_layer(img, layer, t)
+        if subtitles:
+            subtitles.draw(img, t)
+        return img
 
-    def make_frame(t: float) -> np.ndarray:
-        frame = base(t)
-        for layer, pos in static_layers:
-            frame.paste(layer, pos, layer)
-        current = None
-        for start, region in subtitle_timeline:
-            if t >= start or current is None:
-                current = region
-        if current:
-            frame.paste(current[0], current[1], current[0])
-        return np.asarray(frame)
-
-    return VideoClip(make_frame, duration=duration), sources, speech_samples
+    return SceneRender(frame, duration, speech_samples, sources, scene.pops)
 
 
 def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
@@ -299,6 +301,12 @@ def _background_clip(path: Path, size: tuple[int, int], duration: float, cache_d
     return clip.fx(vfx.loop, duration=duration)
 
 
+def _seed(scenes: list[Scene]) -> int:
+    """Cùng kịch bản -> cùng chuyển cảnh/chuyển động (render lại cho kết quả giống nhau)."""
+    text = "|".join(s.narration for s in scenes)
+    return int(hashlib.sha1(text.encode("utf-8")).hexdigest()[:8], 16)
+
+
 def build_video(
     scenes: list[Scene],
     out_path: Path,
@@ -306,41 +314,81 @@ def build_video(
     fps: int = 30,
     music_path: Path | None = None,
     music_volume: float = 0.12,
-    font_override: str | None = None,
+    fonts: Fonts | None = None,
     work_dir: Path | None = None,
     bg_video: Path | None = None,
     logger="bar",
     thumbnail_path: Path | None = None,
+    style: Style | None = None,
 ) -> float:
     """Render video ra out_path, trả về thời lượng (giây). `logger`: "bar", None hoặc proglog logger."""
+    style = style or Style()
+    fonts = fonts or resolve_fonts()
+    pacing = style.timing
     if bg_video:
         size, bg_size = split_sizes()
+        frame_size = ASPECTS["9:16"]
     else:
-        size = ASPECTS[aspect]
+        size = frame_size = ASPECTS[aspect]
     cache_dir = (work_dir or out_path.parent) / "clips"
-    built = [_make_scene_clip(s, i, size, font_override, cache_dir) for i, s in enumerate(scenes)]
-    clips = [clip for clip, _, _ in built]
-    sources = [src for _, srcs, _ in built for src in srcs]
+    rng = random.Random(_seed(scenes))
+    renders = [_build_scene(s, i, size, style, fonts, cache_dir, rng) for i, s in enumerate(scenes)]
 
-    transition = min([TRANSITION] + [c.duration / 3 for c in clips])
-    # Scene sau bắt đầu chồng lên `transition` giây cuối của scene trước (crossfade hình)
+    transition = min([pacing.transition] + [r.duration / 3 for r in renders])
+    # Scene sau bắt đầu chồng lên `transition` giây cuối của scene trước
     starts = [0.0]
-    for c in clips[:-1]:
-        starts.append(starts[-1] + c.duration - transition)
-    clips = [clips[0]] + [c.crossfadein(transition) for c in clips[1:]]
-    # moviepy 1.x trừ padding cả sau scene cuối -> video hụt `transition` giây, cắt mất đuôi lời kết
-    final = concatenate_videoclips(clips, method="compose", padding=-transition).set_duration(starts[-1] + clips[-1].duration)
+    for r in renders[:-1]:
+        starts.append(starts[-1] + r.duration - transition)
+    total = starts[-1] + renders[-1].duration
+    kinds = pick_transitions(style.transition, len(renders) - 1, rng)
+    transitions = [TRANSITION_FNS[k] for k in kinds]
 
-    if bg_video:
-        background = _background_clip(bg_video, bg_size, final.duration, cache_dir)
-        final = CompositeVideoClip(
-            [background.set_position((0, size[1])), final.set_position((0, 0))],
-            size=ASPECTS["9:16"],
-        ).set_duration(final.duration)
+    background = _background_clip(bg_video, bg_size, total, cache_dir) if bg_video else None
+    logo = logo_layer(style.logo, frame_size) if style.logo else None
+    bar_h = max(4, round(frame_size[1] * 0.006))
+    black = Image.new("RGB", frame_size, (0, 0, 0))
 
-    final = final.fadein(FADE_IN).fadeout(FADE_OUT)
-    # Âm thanh dựng riêng thành một track liền mạch: chuyển cảnh chỉ làm mờ hình, không đụng tới tiếng
-    final = final.set_audio(_build_audio([speech for _, _, speech in built], starts, final.duration, music_path, music_volume))
+    def content(t: float) -> Image.Image:
+        i = max(0, bisect_right(starts, t) - 1)
+        local = t - starts[i]
+        img = renders[i].frame(min(local, renders[i].duration))
+        if i > 0 and local < transition:
+            prev = renders[i - 1].frame(t - starts[i - 1])
+            img = transitions[i - 1](prev, img, local / transition)
+        return img
+
+    def compose(t: float) -> Image.Image:
+        img = content(t)
+        if background is not None:
+            canvas = Image.new("RGB", frame_size)
+            canvas.paste(img, (0, 0))
+            canvas.paste(Image.fromarray(background.get_frame(min(t, background.duration - 1e-3))[..., :3]), (0, size[1]))
+            img = canvas
+        if logo:
+            draw_layer(img, logo, t)
+        if style.progress_bar:
+            w = frame_size[0]
+            img.paste((0, 0, 0), (0, 0, w, bar_h), Image.new("L", (w, bar_h), 90))
+            ImageDraw.Draw(img).rectangle((0, 0, round(w * min(t / total, 1.0)), bar_h - 1), fill=style.accent)
+        k = min(1.0, t / FADE_IN, (total - t) / FADE_OUT)
+        if k < 1:
+            img = Image.blend(black, img, max(0.0, k))
+        return img
+
+    effects: list[tuple[float, np.ndarray, float]] = []
+    if style.sfx:
+        for i, kind in enumerate(kinds):
+            if kind not in WHOOSH_TRANSITIONS:
+                continue
+            sound = sfx.whoosh(round(max(0.4, transition * 1.4), 2), seed=i % 3, direction=-1 if kind.endswith("right") else 1)
+            effects.append((starts[i + 1] + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN))
+        for start, render in zip(starts, renders):
+            effects.extend((start + p, sfx.pop(), POP_GAIN) for p in render.pops)
+
+    audio = _build_audio(
+        [r.speech for r in renders], [s + pacing.head for s in starts], total, music_path, music_volume, effects
+    )
+    final = VideoClip(lambda t: np.asarray(compose(t)), duration=total).set_audio(audio)
 
     temp_audio = (work_dir or out_path.parent) / f"{out_path.stem}.temp-audio.m4a"
     final.write_videofile(
@@ -354,15 +402,14 @@ def build_video(
         temp_audiofile=str(temp_audio),
         logger=logger,
     )
-    duration = final.duration
     if thumbnail_path:
-        # Khung hình title card (đã hết fade-in) làm ảnh đại diện; lỗi ở đây không làm hỏng video
+        # Khung hình title card (đã hiện đủ tiêu đề) làm ảnh đại diện; lỗi ở đây không làm hỏng video
         try:
-            frame = final.get_frame(min(1.2, duration / 2))
-            Image.fromarray(np.asarray(frame)[..., :3].astype("uint8")).save(thumbnail_path, "JPEG", quality=88)
+            compose(min(1.6, total / 2)).save(thumbnail_path, "JPEG", quality=88)
         except Exception as e:
             print(f"      ⚠️  Không tạo được thumbnail: {e}", flush=True)
     final.close()
-    for clip in clips + sources:
-        clip.close()
-    return duration
+    for clip in [background] + [src for r in renders for src in r.sources]:
+        if clip is not None:
+            clip.close()
+    return total

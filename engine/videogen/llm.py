@@ -9,38 +9,80 @@ from openai import OpenAI
 
 from .config import Settings, require
 
-SYSTEM_PROMPT = """Bạn là biên tập viên viết kịch bản video hướng dẫn (how-to) ngắn, cuốn hút, chính xác.
+SYSTEM_PROMPT = """Bạn là biên tập viên viết kịch bản {role} ngắn, cuốn hút, chính xác.
 Người dùng đưa ra chủ đề hoặc một yêu cầu chi tiết (có thể dài: nội dung cần nói, đối tượng người xem, giọng văn,
-thông tin sản phẩm/dịch vụ...). Hãy viết kịch bản gồm lời mở đầu, các bước thực hiện theo thứ tự, và lời kết.
+thông tin sản phẩm/dịch vụ...). Hãy viết kịch bản gồm lời mở đầu, {parts}, và lời kết.
 Làm đúng mọi yêu cầu của người dùng; giữ nguyên thông tin cụ thể họ cung cấp (tên, giá, số liệu, địa chỉ).
-Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu trúc:
+Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu trúc ("steps" là danh sách {parts}):
 {
-  "title": "Tiêu đề video ngắn gọn (tối đa 60 ký tự)",
+  "title": "Tiêu đề video ngắn gọn, gây tò mò (tối đa 60 ký tự)",
   "description": "Mô tả video 1-3 câu để đăng kèm khi chia sẻ lên mạng xã hội.",
   "hashtags": ["hashtag1", "hashtag2"],
-  "intro": "1-2 câu mở đầu giới thiệu video sẽ hướng dẫn gì.",
+  "intro": "{intro}",
   "steps": [
     {
-      "heading": "Tên bước rất ngắn (2-6 từ)",
-      "narration": "Lời bình được đọc thành giọng nói cho bước này (1-3 câu, cụ thể: định lượng, thời gian, mẹo).",
-      "image_queries": ["english search query 1", "alternative english query 2"],
+      "heading": "{heading}",
+      "narration": "Lời bình được đọc thành giọng nói cho phần này ({narration}).",
+      "image_queries": ["specific english query", "alternative english query", "general english query"],
       "hashtags": ["hashtag1", "hashtag2"]{media_field}{library_field}
     }
   ],
   "outro": "1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối."
 }
 Yêu cầu:
-- Viết bằng {language}, giọng văn tự nhiên như người dẫn video, không đánh số trong câu.
-- "image_queries": 2 cụm từ khóa TIẾNG ANH để tìm ảnh (Google Images / kho ảnh stock):
-  query 1 cụ thể (3-5 từ, vd "whisking eggs in bowl"), query 2 chung hơn (1-3 từ, vd "baking kitchen").
-  Mô tả cảnh/đồ vật chụp được, tránh từ trừu tượng và tên riêng địa phương.
-- "hashtags": viết thường, không dấu, viết liền, không có ký tự #. Video: 4-8 hashtag; mỗi bước: 2-4 hashtag mô tả nội dung ảnh minh họa.
-- Mỗi bước là một hành động rõ ràng, không lặp ý.
+- Viết bằng {language}, giọng văn tự nhiên như người dẫn video, không đánh số trong câu.{tone}
+- Câu mở đầu phải "móc" được người xem ngay trong 3 giây đầu (câu hỏi, con số bất ngờ, lợi ích rõ ràng).
+- "image_queries": 3 cụm từ khóa TIẾNG ANH để tìm ảnh/clip (kho ảnh, video stock):
+  query 1 cụ thể (3-5 từ, vd "whisking eggs in bowl"), query 2 cách diễn đạt khác, query 3 chung hơn (1-3 từ, vd "baking kitchen").
+  Mô tả cảnh/đồ vật quay chụp được, ưu tiên cảnh có chuyển động; tránh từ trừu tượng và tên riêng địa phương.
+- "hashtags": viết thường, không dấu, viết liền, không có ký tự #. Video: 4-8 hashtag; mỗi phần: 2-4 hashtag mô tả nội dung ảnh minh họa.
+{rule}
 """
 
+VIDEO_TYPES = {
+    "howto": dict(
+        role="video hướng dẫn (how-to)", parts="các bước thực hiện theo thứ tự",
+        intro="1-2 câu mở đầu giới thiệu video sẽ hướng dẫn gì.", heading="Tên bước rất ngắn (2-6 từ)",
+        rule="- Mỗi bước là một hành động rõ ràng, cụ thể (định lượng, thời gian, mẹo), không lặp ý.",
+    ),
+    "listicle": dict(
+        role="video top danh sách (vd \"Top 5 ...\")", parts="các mục trong danh sách",
+        intro="1-2 câu mở đầu gây tò mò, nói video điểm qua bao nhiêu mục.", heading="Tên mục ngắn (2-6 từ)",
+        rule="- Mỗi mục là một lựa chọn riêng biệt (địa điểm, sản phẩm, món...), nêu lý do nổi bật; xếp mục ấn tượng nhất ở cuối.",
+    ),
+    "tips": dict(
+        role="video mẹo hay", parts="các mẹo",
+        intro="1 câu hook nêu lợi ích người xem nhận được.", heading="Tên mẹo ngắn (2-6 từ)",
+        rule="- Mỗi mẹo thực tế, làm được ngay, có ví dụ cụ thể; không lặp ý.",
+    ),
+    "facts": dict(
+        role="video sự thật thú vị / kiến thức", parts="các sự thật thú vị",
+        intro="1 câu hook gây tò mò mạnh.", heading="Tóm tắt sự thật (2-6 từ)",
+        rule="- Mỗi sự thật phải chính xác và đáng ngạc nhiên; không bịa số liệu, không chắc chắn thì không nêu.",
+    ),
+    "promo": dict(
+        role="video giới thiệu / quảng cáo sản phẩm, dịch vụ", parts="các điểm nổi bật (lợi ích, tính năng, ưu đãi)",
+        intro="1-2 câu hook nêu vấn đề của khách hàng hoặc lợi ích nổi bật nhất.", heading="Điểm nổi bật ngắn (2-5 từ)",
+        rule="- Tập trung vào lợi ích cho khách hàng, giữ đúng tên, giá, ưu đãi người dùng đưa ra;"
+             " lời kết kêu gọi hành động rõ ràng (mua, gọi, ghé thăm, nhắn tin).",
+    ),
+    "story": dict(
+        role="video kể chuyện", parts="các đoạn của câu chuyện theo diễn biến",
+        intro="1-2 câu dẫn dắt vào câu chuyện.", heading="Tên đoạn ngắn (2-5 từ)",
+        rule="- Câu chuyện có mở đầu, cao trào và kết thúc; lời bình giàu hình ảnh, cảm xúc.",
+    ),
+}
+
+# Độ dài video: (số phần mặc định, độ dài lời bình mỗi phần)
+LENGTHS = {
+    "short": ("3 đến 4", "1-2 câu ngắn, súc tích; cả video dưới 45 giây"),
+    "medium": ("từ 5 đến 8", "1-3 câu, cụ thể"),
+    "long": ("từ 8 đến 12", "2-4 câu, giàu thông tin"),
+}
+
 MEDIA_FIELD = ',\n      "media": "video" hoặc "image"'
-MEDIA_RULE = """- "media": mặc định "video" (clip làm video sinh động hơn) cho phần lớn các bước;
-  chỉ đặt "image" khi nội dung chỉ minh họa được bằng ảnh tĩnh (chân dung người cụ thể, sơ đồ, bảng giá, tài liệu lịch sử).
+MEDIA_RULE = """- "media": đặt "video" cho gần như mọi phần (clip quay thật làm video sinh động hơn nhiều so với ảnh tĩnh);
+  chỉ đặt "image" khi nội dung CHỈ minh họa được bằng ảnh tĩnh (chân dung người cụ thể, sơ đồ, bảng giá, tài liệu lịch sử).
   "image_queries" dùng để tìm cả ảnh lẫn clip: mô tả cảnh có chuyển động quay được (vd "pouring milk into coffee").
 """
 
@@ -236,6 +278,9 @@ def generate_script(
     library: list[LibraryAsset] | None = None,
     library_mode: str = "off",
     web_media: str = "image",
+    video_type: str = "howto",
+    tone: str = "",
+    length: str = "medium",
 ) -> Script:
     client = OpenAI(
         api_key=require("DEEPSEEK_API_KEY", settings.deepseek_api_key),
@@ -244,7 +289,14 @@ def generate_script(
         timeout=120,
     )
     library = library if library_mode in ("auto", "selected") else []
+    kind = VIDEO_TYPES.get(video_type, VIDEO_TYPES["howto"])
+    parts_default, narration_hint = LENGTHS.get(length, LENGTHS["medium"])
     system = SYSTEM_PROMPT.replace("{language}", language)
+    for key in ("role", "parts", "intro", "heading", "rule"):
+        system = system.replace("{" + key + "}", kind[key])
+    system = system.replace("{narration}", narration_hint)
+    tone = " ".join((tone or "").split())[:200]
+    system = system.replace("{tone}", f"\n- Giọng văn: {tone}." if tone else "")
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
     # Chế độ tự động: LLM quyết định bước nào dùng clip video, bước nào dùng ảnh
     system = system.replace("{media_field}", MEDIA_FIELD if web_media == "auto" else "")
@@ -258,12 +310,12 @@ def generate_script(
         system += template.replace("{catalog}", "\n".join(a.catalog_line(detailed) for a in library))
 
     if num_steps:
-        steps_hint = f"đúng {num_steps} bước"
+        steps_hint = f"đúng {num_steps}"
     elif library_mode == "selected" and library:
-        steps_hint = f"{max(3, len(library))} bước"
+        steps_hint = f"{max(3, len(library))}"
     else:
-        steps_hint = "từ 5 đến 8 bước"
-    user_msg = f"Yêu cầu của người dùng:\n{topic}\n\nSố bước: {steps_hint}."
+        steps_hint = f"{parts_default} phần"
+    user_msg = f"Yêu cầu của người dùng:\n{topic}\n\nSố phần trong \"steps\": {steps_hint}."
 
     last_error: Exception | None = None
     for _ in range(3):

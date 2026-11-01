@@ -1,3 +1,5 @@
+import type { VideoLength, VideoStyle, VideoType } from "./video-options";
+
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
 export type AssetKind = "image" | "video" | "audio";
@@ -81,7 +83,18 @@ export type JobInput = {
   numSteps?: number | null;
   language?: string;
   voice?: string;
+  /** giọng thứ hai đọc xen kẽ các bước chẵn */
+  voice2?: string | null;
   rate?: string;
+  /** cao độ giọng, vd "+6Hz" */
+  pitch?: string;
+  /** loại video: hướng dẫn, top danh sách, mẹo, sự thật, quảng cáo, kể chuyện */
+  videoType?: VideoType;
+  /** giọng văn mong muốn của kịch bản */
+  tone?: string;
+  length?: VideoLength;
+  /** nhịp dựng, chuyển cảnh, phụ đề, màu, logo, lời kêu gọi... (job cũ không có: dựng như trước) */
+  style?: VideoStyle;
   aspect: "16:9" | "9:16" | "1:1";
   layout: "normal" | "split";
   /** id asset video làm nền (bố cục chia đôi) */

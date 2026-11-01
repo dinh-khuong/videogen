@@ -156,7 +156,7 @@ export function VideoDetailView({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a href={`${video.url}?download=${encodeURIComponent(`${video.title || "video"}.mp4`)}`} className="inline-flex items-center rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-zinc-800 ring-1 ring-zinc-300 hover:bg-zinc-50">
+          <a href={`${video.url}?download=${encodeURIComponent(`${video.title || "video"}.mp4`)}`} className="inline-flex items-center rounded-lg bg-surface px-3.5 py-2 text-sm font-medium text-zinc-800 ring-1 ring-zinc-300 hover:bg-zinc-50">
             Tải về
           </a>
           <ConfirmButton
@@ -228,6 +228,7 @@ export function VideoDetailView({ id }: { id: string }) {
           <Card className="p-4">
             {editingScript ? (
               <ScriptEditor
+                jobId={video.jobId}
                 initial={video.script}
                 defaults={{
                   aspect: aspectOf(video),

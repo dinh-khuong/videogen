@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, formatDate, useApi, useDocumentTitle } from "@/lib/client";
 import type { JobDetail, JobItem } from "@/lib/types";
+import { COLOR_FILTERS, LENGTHS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
 import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx } from "./ui";
 
@@ -40,7 +41,7 @@ export function JobsList() {
             onClick={() => setStatus(f.value)}
             className={cx(
               "rounded-full px-3 py-1 text-sm font-medium",
-              status === f.value ? "bg-zinc-900 text-white" : "bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50",
+              status === f.value ? "bg-zinc-900 text-zinc-50" : "bg-surface text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50",
             )}
           >
             {f.label}
@@ -97,7 +98,7 @@ function LogView({ log }: { log: string }) {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
-      className="scroll-thin max-h-80 overflow-auto rounded-lg bg-zinc-900 p-3 font-mono text-xs leading-relaxed text-zinc-200"
+      className="scroll-thin max-h-80 overflow-auto rounded-lg bg-neutral-900 p-3 font-mono text-xs leading-relaxed text-neutral-200 dark:ring-1 dark:ring-white/10"
     >
       {log.trim() || "Chưa có log."}
     </pre>
@@ -113,7 +114,20 @@ function describeInput(job: JobDetail): string[] {
     `Assets: ${{ off: "không dùng", auto: `AI tự chọn${i.libraryTag ? ` trong #${i.libraryTag}` : ""}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
     `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}`,
   ];
-  if (i.voice || i.rate) lines.push(`Giọng: ${i.voice ?? "mặc định"} ${i.rate ?? ""}`.trim());
+  if (i.videoType || i.length) {
+    lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
+  }
+  if (i.voice || i.rate || i.pitch) {
+    const voices = [voiceLabel(i.voice) || "mặc định", i.voice2 ? `${voiceLabel(i.voice2)} (xen kẽ)` : ""].filter(Boolean).join(" + ");
+    lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}`);
+  }
+  if (i.style) {
+    const st = i.style;
+    lines.push(`Nhịp ${PACINGS[st.pacing].label.toLowerCase()} · chuyển cảnh ${TRANSITIONS[st.transition].split(" (")[0].toLowerCase()}`);
+    lines.push(`Phụ đề: ${SUBTITLE_STYLES[st.subtitleStyle].split(" (")[0]} · màu ${COLOR_FILTERS[st.colorFilter].toLowerCase()}`);
+    const extras = [st.progressBar && "thanh tiến độ", st.sfx && "hiệu ứng âm thanh", st.logoId && "logo", st.cta && `lời kêu gọi “${st.cta}”`].filter(Boolean);
+    if (extras.length) lines.push(`Thêm: ${extras.join(", ")}`);
+  }
   return lines;
 }
 
@@ -173,6 +187,11 @@ export function JobDetailView({ id }: { id: string }) {
               <Button variant="danger" onClick={() => act(async () => (await api(`/api/jobs/${id}/cancel`, { method: "POST" }), void reload()))}>
                 Hủy job
               </Button>
+            )}
+            {!active && !job.input.script && (
+              <Link href={`/create?from=${job.id}`} className={buttonClass("secondary")}>
+                Tạo video tương tự
+              </Link>
             )}
             {!active && (
               <Button

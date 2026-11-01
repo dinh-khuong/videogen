@@ -53,7 +53,7 @@ export function UploadList({ uploads, onClear }: { uploads: UploadState[]; onCle
   if (!uploads.length) return null;
   const finished = uploads.every((u) => u.done || u.error);
   return (
-    <div className="mb-4 space-y-2 rounded-xl bg-white p-3 ring-1 ring-zinc-200">
+    <div className="mb-4 space-y-2 rounded-xl bg-surface p-3 ring-1 ring-zinc-200">
       {uploads.map((u, i) => (
         <div key={i} className="text-sm">
           <div className="flex justify-between gap-3">
@@ -161,7 +161,7 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
   return (
     <div className="grid gap-5 md:grid-cols-2">
       <div>
-        <div className="overflow-hidden rounded-lg bg-zinc-900">
+        <div className="overflow-hidden rounded-lg bg-neutral-900">
           {asset.kind === "video" ? (
             <video src={asset.url} poster={asset.thumbUrl ?? undefined} controls preload="metadata" className="max-h-[60vh] w-full" />
           ) : asset.kind === "audio" ? (
@@ -238,7 +238,7 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
           {asset.kind === "audio" ? null : asset.ocrText ? (
             <div>
               <p className="mb-1 text-sm font-medium text-zinc-700">Chữ đọc được trong {KIND_LABEL[asset.kind]}</p>
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 font-sans text-xs text-zinc-700 ring-1 ring-zinc-200">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-surface p-2 font-sans text-xs text-zinc-700 ring-1 ring-zinc-200">
                 {asset.ocrText}
               </pre>
             </div>
@@ -301,7 +301,7 @@ export function AssetGrid({
         return (
           <div
             key={asset.id}
-            className={cx("overflow-hidden rounded-xl bg-white ring-1", order >= 0 ? "ring-2 ring-brand-500" : "ring-zinc-200/80")}
+            className={cx("overflow-hidden rounded-xl bg-surface ring-1", order >= 0 ? "ring-2 ring-brand-500" : "ring-zinc-200/80")}
           >
             <button type="button" onClick={() => onOpen(asset)} className="relative block w-full">
               <AssetThumb asset={asset} className="aspect-[4/3] w-full" />
@@ -544,6 +544,7 @@ export function MusicPicker({
       <div className="flex flex-wrap items-center gap-3">
         <select className={`${inputClass} max-w-md`} value={musicId} onChange={(e) => onChange({ musicId: e.target.value, volume })}>
           <option value="">Không có nhạc nền</option>
+          {musicId && data && !current && <option value={musicId}>(Nhạc đã bị xóa — chọn lại)</option>}
           {data?.items.map((a) => (
             <option key={a.id} value={a.id}>
               {a.title} ({formatDuration(a.duration)})

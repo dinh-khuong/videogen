@@ -6,6 +6,17 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "topic": "cách pha cà phê phin",
   "script": {...},                          # kịch bản có sẵn (bỏ qua LLM), cùng cấu trúc script.json
   "num_steps": 5, "language": "tiếng Việt", "voice": null, "rate": null,
+  "voice2": null,                           # giọng thứ hai đọc xen kẽ các bước chẵn
+  "pitch": "+0Hz",                          # cao độ giọng, vd "+5Hz" / "-8Hz"
+  "video_type": "howto",                    # howto | listicle | tips | facts | promo | story
+  "tone": "hài hước",                       # giọng văn (tùy ý)
+  "length": "medium",                       # short | medium | long
+  "style": {"pacing": "normal",             # slow | normal | fast
+            "transition": "mix",            # mix | fade | slide | zoom | whip | wipe | circle | flash
+            "subtitle_style": "auto",       # auto | box | karaoke | outline | none
+            "color_filter": "none",         # none | vivid | warm | cool | cinematic | vintage | bw
+            "accent": "#e95420", "progress_bar": false, "sfx": false,
+            "logo": "/abs/logo.png", "cta": "Gọi ngay 0909 123 456"},
   "aspect": "16:9",                         # 16:9 | 9:16 | 1:1
   "bg_video": "/abs/gameplay.mp4",          # có -> bố cục 9:16 chia đôi
   "music": "/abs/nhac.mp3", "music_volume": 0.12,
@@ -29,6 +40,7 @@ from .config import ConfigError
 from .events import JsonReporter
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
+from .style import VIDEO_TYPES, Style
 from .video_builder import ASPECTS
 
 
@@ -46,8 +58,8 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     if library_mode not in LIBRARY_MODES:
         raise ValueError(f"library_mode không hợp lệ: {library_mode}")
 
-    def optional_path(key: str) -> Path | None:
-        value = spec.get(key)
+    def optional_path(key: str, source: dict | None = None) -> Path | None:
+        value = (spec if source is None else source).get(key)
         if not value:
             return None
         path = Path(value)
@@ -55,12 +67,34 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
             raise FileNotFoundError(f"Không tìm thấy {key}: {path}")
         return path
 
+    video_type = spec.get("video_type") or "howto"
+    if video_type not in VIDEO_TYPES:
+        raise ValueError(f"video_type không hợp lệ: {video_type}")
+    style_spec = spec.get("style") or {}
+    style = Style(
+        pacing=style_spec.get("pacing") or "normal",
+        transition=style_spec.get("transition") or "mix",
+        subtitle_style=style_spec.get("subtitle_style") or "auto",
+        color_filter=style_spec.get("color_filter") or "none",
+        accent=style_spec.get("accent"),
+        progress_bar=bool(style_spec.get("progress_bar")),
+        sfx=bool(style_spec.get("sfx")),
+        logo=optional_path("logo", style_spec),
+        cta=style_spec.get("cta") or "",
+    )
+
     return Options(
         aspect=aspect,
         num_steps=int(spec["num_steps"]) if spec.get("num_steps") else None,
         language=spec.get("language") or "tiếng Việt",
         voice=spec.get("voice") or None,
+        voice2=spec.get("voice2") or None,
         rate=spec.get("rate") or None,
+        pitch=spec.get("pitch") or None,
+        video_type=video_type,
+        tone=spec.get("tone") or "",
+        length=spec.get("length") if spec.get("length") in ("short", "medium", "long") else "medium",
+        style=style,
         music=optional_path("music"),
         music_volume=float(spec.get("music_volume") or 0.12),
         bg_video=optional_path("bg_video"),

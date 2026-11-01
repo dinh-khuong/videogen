@@ -11,8 +11,8 @@ export function cx(...classes: (string | false | null | undefined)[]): string {
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 const BUTTON: Record<ButtonVariant, string> = {
   primary: "bg-brand-500 text-white hover:bg-brand-600 shadow-sm",
-  secondary: "bg-white text-zinc-800 ring-1 ring-zinc-300 hover:bg-zinc-50",
-  danger: "bg-white text-red-600 ring-1 ring-red-200 hover:bg-red-50",
+  secondary: "bg-surface text-zinc-800 ring-1 ring-zinc-300 hover:bg-zinc-50",
+  danger: "bg-surface text-red-600 ring-1 ring-red-200 hover:bg-red-50",
   ghost: "text-zinc-600 hover:bg-zinc-100",
 };
 
@@ -50,7 +50,7 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx("rounded-xl bg-white ring-1 ring-zinc-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.04)]", className)}>{children}</div>;
+  return <div className={cx("rounded-xl bg-surface ring-1 ring-zinc-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.04)]", className)}>{children}</div>;
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
@@ -76,7 +76,7 @@ export function Field({ label, hint, children, className }: { label: string; hin
 }
 
 export const inputClass =
-  "w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-zinc-300 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500";
+  "w-full rounded-lg border-0 bg-surface px-3 py-2 text-sm text-zinc-900 ring-1 ring-zinc-300 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-500";
 
 export function ErrorBox({ message, onRetry }: { message: string | null | undefined; onRetry?: () => void }) {
   if (!message) return null;
@@ -94,7 +94,7 @@ export function ErrorBox({ message, onRetry }: { message: string | null | undefi
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-300 bg-white/60 px-6 py-12 text-center">
+    <div className="rounded-xl border border-dashed border-zinc-300 bg-surface/60 px-6 py-12 text-center">
       <p className="font-medium text-zinc-700">{title}</p>
       {children && <div className="mt-2 text-sm text-zinc-500">{children}</div>}
     </div>
@@ -175,11 +175,11 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
         className={cx(
-          "max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:rounded-2xl",
+          "max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-surface shadow-xl sm:rounded-2xl",
           wide ? "sm:max-w-4xl" : "sm:max-w-lg",
         )}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-100 bg-white px-5 py-3.5">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-100 bg-surface px-5 py-3.5">
           <h2 className="font-semibold text-zinc-900">{title}</h2>
           <button type="button" onClick={onClose} aria-label="Đóng" className="rounded-md p-1 text-zinc-500 hover:bg-zinc-100">
             <svg viewBox="0 0 20 20" className="size-5" fill="currentColor">
@@ -246,6 +246,77 @@ export function DescriptionInput({
       <div className="mt-1.5 min-h-5">
         {tags.length ? <TagList tags={tags} /> : <span className="text-xs text-zinc-400">Hashtag trong mô tả sẽ thành tag để lọc và để AI chọn ảnh.</span>}
       </div>
+    </div>
+  );
+}
+
+/** Ô lựa chọn dạng thẻ (một trong nhiều). */
+export function Choice({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children?: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cx(
+        "rounded-xl p-3 text-left ring-1 transition-colors",
+        active ? "bg-brand-50 ring-2 ring-brand-500" : "bg-surface ring-zinc-200 hover:ring-zinc-300",
+      )}
+    >
+      <p className={cx("text-sm font-medium", active ? "text-brand-700" : "text-zinc-800")}>{title}</p>
+      {children && <div className="mt-0.5 text-xs text-zinc-500">{children}</div>}
+    </button>
+  );
+}
+
+/** Công tắc bật/tắt kèm nhãn và mô tả. */
+export function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={cx("relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors", checked ? "bg-brand-500" : "bg-zinc-300")}
+      >
+        <span className={cx("absolute top-0.5 size-4 rounded-full bg-white shadow transition-[left]", checked ? "left-4.5" : "left-0.5")} />
+      </button>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-zinc-800">{label}</span>
+        {hint && <span className="block text-xs text-zinc-500">{hint}</span>}
+      </span>
+    </label>
+  );
+}
+
+/** Nhóm nút chọn một giá trị (vd nhịp dựng Chậm / Vừa / Nhanh). */
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string; hint?: string }[];
+}) {
+  return (
+    <div role="radiogroup" className="grid gap-1 rounded-xl bg-zinc-100 p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cx(
+            "rounded-lg px-2 py-1.5 text-center transition-colors",
+            value === o.value ? "bg-surface shadow-sm ring-1 ring-zinc-200" : "hover:bg-zinc-50",
+          )}
+        >
+          <span className={cx("block text-sm font-medium", value === o.value ? "text-brand-700" : "text-zinc-700")}>{o.label}</span>
+          {o.hint && <span className="block truncate text-[11px] text-zinc-500">{o.hint}</span>}
+        </button>
+      ))}
     </div>
   );
 }

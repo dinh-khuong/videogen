@@ -3,23 +3,46 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useApi } from "@/lib/client";
-import type { AssetItem, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
+import type { AssetItem, JobDetail, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
+import { DEFAULT_VOICE, LEGACY_STYLE, VIDEO_TYPES, languageOf, type VideoType } from "@/lib/video-options";
 import { AssetPicker, AssetThumb, MusicPicker } from "./assets-library";
-import { Button, ErrorBox, Field, Modal, inputClass } from "./ui";
+import { Button, ErrorBox, Field, Loading, Modal, inputClass } from "./ui";
+import { StyleFields, VoiceFields } from "./video-style-fields";
 
-/** Sửa kịch bản của video rồi tạo lại (không gọi LLM; ảnh/video từng bước lấy từ Assets). */
-export function ScriptEditor({
+type Defaults = Pick<JobInput, "aspect" | "contactId" | "sourceVideoId" | "musicId" | "musicVolume">;
+
+/**
+ * Sửa kịch bản của video rồi tạo lại (không gọi LLM; ảnh/video từng bước lấy từ Assets).
+ * Giọng đọc và phong cách lấy từ job đã tạo video (nếu còn) và đổi được trước khi tạo lại.
+ */
+export function ScriptEditor({ jobId, ...props }: { initial: Script; defaults: Defaults; jobId?: string | null; onCancel: () => void }) {
+  const job = useApi<JobDetail>(jobId ? `/api/jobs/${jobId}` : null);
+  if (jobId && !job.data && !job.error) return <Loading />;
+  return <ScriptEditorForm {...props} source={job.data?.input ?? null} />;
+}
+
+function ScriptEditorForm({
   initial,
   defaults,
+  source,
   onCancel,
 }: {
   initial: Script;
-  defaults: Pick<JobInput, "aspect" | "contactId" | "sourceVideoId" | "musicId" | "musicVolume">;
+  defaults: Defaults;
+  source: JobInput | null;
   onCancel: () => void;
 }) {
   const router = useRouter();
   const [script, setScript] = useState<Script>(() => structuredClone(initial));
   const [aspect, setAspect] = useState(defaults.aspect);
+  const [voice, setVoice] = useState(() => {
+    const lang = languageOf(source?.language);
+    return source
+      ? { language: lang.value, voice: source.voice || lang.voices[0].value, voice2: source.voice2 || "", rate: source.rate || "+0%", pitch: source.pitch || "+0Hz" }
+      : DEFAULT_VOICE;
+  });
+  const [style, setStyle] = useState(() => source?.style ?? LEGACY_STYLE);
+  const [videoType, setVideoType] = useState<VideoType>(source?.videoType ?? "howto");
   const [picking, setPicking] = useState<number | null>(null);
   const [music, setMusic] = useState({ musicId: defaults.musicId ?? "", volume: defaults.musicVolume ?? 0.12 });
   const [busy, setBusy] = useState(false);
@@ -54,6 +77,13 @@ export function ScriptEditor({
           imageStyle: "auto",
           webImages: true,
           libraryMode: "off",
+          language: voice.language,
+          voice: voice.voice,
+          voice2: voice.voice2 || null,
+          rate: voice.rate,
+          pitch: voice.pitch,
+          videoType,
+          style,
           contactId: defaults.contactId ?? null,
           sourceVideoId: defaults.sourceVideoId ?? null,
           musicId: music.musicId || null,
@@ -153,6 +183,24 @@ export function ScriptEditor({
         <p className="mb-1.5 text-sm font-medium text-zinc-700">Nhạc nền</p>
         <MusicPicker musicId={music.musicId} volume={music.volume} onChange={setMusic} />
       </div>
+      <details className="group rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
+        <summary className="cursor-pointer text-sm font-medium text-zinc-800">
+          Giọng đọc & hiệu ứng <span className="font-normal text-zinc-500">— đổi giọng, chuyển cảnh, phụ đề, màu... rồi tạo lại</span>
+        </summary>
+        <div className="mt-4 space-y-6">
+          <Field label="Kiểu nhãn">
+            <select className={`${inputClass} max-w-xs`} value={videoType} onChange={(e) => setVideoType(e.target.value as VideoType)}>
+              {(Object.keys(VIDEO_TYPES) as VideoType[]).map((k) => (
+                <option key={k} value={k}>
+                  {VIDEO_TYPES[k].label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <VoiceFields value={voice} onChange={setVoice} lockLanguage={!!source} />
+          <StyleFields value={style} onChange={setStyle} />
+        </div>
+      </details>
       <ErrorBox message={error} />
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>

@@ -8,8 +8,8 @@ import { JobStatusBadge, ProgressBar, cx } from "./ui";
 export function VideoCard({ video, action }: { video: VideoItem; action?: React.ReactNode }) {
   const vertical = (video.height ?? 0) > (video.width ?? 0);
   return (
-    <div className="group overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200/80">
-      <Link href={`/videos/${video.id}`} className="relative block aspect-video bg-zinc-900">
+    <div className="group overflow-hidden rounded-xl bg-surface ring-1 ring-zinc-200/80">
+      <Link href={`/videos/${video.id}`} className="relative block aspect-video bg-neutral-900">
         {video.thumbUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={video.thumbUrl} alt={video.title} loading="lazy" className={cx("size-full", vertical ? "object-contain" : "object-cover")} />
