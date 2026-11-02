@@ -27,7 +27,7 @@ Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu
       "hashtags": ["hashtag1", "hashtag2"]{media_field}{library_field}
     }
   ],
-  "outro": "1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối."
+  "outro": "1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối."{voice_field}
 }
 Yêu cầu:
 - Viết bằng {language}, giọng văn tự nhiên như người dẫn video, không đánh số trong câu.{tone}
@@ -110,6 +110,13 @@ Mỗi dòng: id [loại]: mô tả | tóm tắt của AI | chữ đọc được
 
 AUTO_LIBRARY_LIMIT = 80  # số asset tối đa đưa vào prompt ở chế độ AI tự chọn
 
+VOICE_FIELD = ',\n  "voice_tuning": {"pitch": 0, "rate": 0, "reason": "vì sao chỉnh (1 câu)"}'
+VOICE_RULE = """- "voice_tuning": bạn được quyền tinh chỉnh giọng đọc cho hợp với video. Giọng người dùng đang chọn: {voice}.
+  "pitch" (số nguyên Hz, -{pitch_limit}..{pitch_limit}) và "rate" (số nguyên %, -{rate_limit}..{rate_limit}) được CỘNG THÊM vào mức đó:
+  kể chuyện ma/bí ẩn/buồn: trầm và chậm hơn (pitch âm, rate âm); quảng cáo, top viral, Gen Z: sáng và nhanh hơn;
+  hướng dẫn/kiến thức: rõ ràng, chỉ chỉnh nhẹ. Giọng đã hợp thì để 0 và 0. Chỉnh vừa phải, giọng phải còn tự nhiên.
+"""
+
 
 @dataclass
 class Step:
@@ -147,6 +154,9 @@ class Script:
     # classic: mở đầu (title card) + các bước có nhãn + lời kết
     # director: mỗi bước là một cảnh tự do do Đạo diễn AI dựng (hook, meme, nhiều giọng...), không có cảnh phụ
     format: str = "classic"
+    # AI tinh chỉnh giọng chung của video: {"pitch": Hz, "rate": %, "reason"} cộng vào cài đặt người dùng
+    # (xem delivery.normalize_tuning). Khi dựng, pipeline ghi thêm base_rate/base_pitch/final_rate/final_pitch.
+    voice_tuning: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -279,6 +289,8 @@ def normalize_line(value) -> dict | None:
 
 
 def parse_script(data: dict, default_title: str) -> Script:
+    from .delivery import normalize_tuning
+
     steps = []
     for s in data["steps"]:
         queries = s.get("image_queries") or [s.get("image_query", "")]
@@ -312,6 +324,7 @@ def parse_script(data: dict, default_title: str) -> Script:
         description=(data.get("description") or "").strip(),
         hashtags=normalize_hashtags(data.get("hashtags")),
         format="director" if data.get("format") == "director" else "classic",
+        voice_tuning=normalize_tuning(data.get("voice_tuning")),
     )
 
 
@@ -351,7 +364,12 @@ def generate_script(
     video_type: str = "howto",
     tone: str = "",
     length: str = "medium",
+    voice: str | None = None,
 ) -> Script:
+    """voice: mô tả giọng người dùng đã chọn (vd "vi-VN-HoaiMyNeural, cao độ +4Hz, tốc độ +0%"). Có giá trị nghĩa là
+    AI được quyền tinh chỉnh giọng (trường "voice_tuning" của kịch bản); None = giữ nguyên giọng người dùng chọn."""
+    from .delivery import TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT
+
     client = OpenAI(
         api_key=require("DEEPSEEK_API_KEY", settings.deepseek_api_key),
         base_url=settings.deepseek_base_url,
@@ -370,8 +388,12 @@ def generate_script(
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
     # Chế độ tự động: LLM quyết định bước nào dùng clip video, bước nào dùng ảnh
     system = system.replace("{media_field}", MEDIA_FIELD if web_media == "auto" else "")
+    system = system.replace("{voice_field}", VOICE_FIELD if voice else "")
     if web_media == "auto":
         system += MEDIA_RULE
+    if voice:
+        system += (VOICE_RULE.replace("{voice}", voice).replace("{pitch_limit}", str(TUNE_PITCH_LIMIT))
+                   .replace("{rate_limit}", str(TUNE_RATE_LIMIT)))
     if library:
         template = LIBRARY_SELECTED if library_mode == "selected" else LIBRARY_AUTO
         if library_mode == "auto":
@@ -406,5 +428,7 @@ def generate_script(
             continue
         if library:
             _assign_library(script, library, library_mode)
+        if not voice:
+            script.voice_tuning = None  # người dùng không cho AI chỉnh giọng
         return script
     raise RuntimeError(f"DeepSeek trả về kịch bản không hợp lệ sau 3 lần thử: {last_error}")

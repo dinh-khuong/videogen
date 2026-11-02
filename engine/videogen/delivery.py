@@ -43,17 +43,55 @@ RATE_RANGE = (-50, 100)
 PITCH_RANGE = (-40, 40)
 PART_RATE = 44100
 
+# AI được tinh chỉnh giọng chung của cả video quanh mức người dùng chọn, trong giới hạn này
+TUNE_PITCH_LIMIT = 15  # Hz
+TUNE_RATE_LIMIT = 20   # %
+
 
 def mood_of(name: str | None) -> str:
     return name if name in MOODS else "neutral"
 
 
+def _shift(base_rate: str, base_pitch: str, rate_delta: int, pitch_delta: int) -> tuple[str, str]:
+    rate = min(max(int(base_rate.rstrip("%")) + rate_delta, RATE_RANGE[0]), RATE_RANGE[1])
+    pitch = min(max(int(base_pitch.rstrip("Hz")) + pitch_delta, PITCH_RANGE[0]), PITCH_RANGE[1])
+    return f"{rate:+d}%", f"{pitch:+d}Hz"
+
+
 def prosody(base_rate: str, base_pitch: str, mood: str) -> tuple[str, str]:
     """Tốc độ/cao độ của một câu: giá trị gốc (vd "+10%", "-2Hz") cộng độ lệch theo cảm xúc."""
     m = MOODS[mood_of(mood)]
-    rate = min(max(int(base_rate.rstrip("%")) + m.rate, RATE_RANGE[0]), RATE_RANGE[1])
-    pitch = min(max(int(base_pitch.rstrip("Hz")) + m.pitch, PITCH_RANGE[0]), PITCH_RANGE[1])
-    return f"{rate:+d}%", f"{pitch:+d}Hz"
+    return _shift(base_rate, base_pitch, m.rate, m.pitch)
+
+
+def _clamp_int(value, limit: int) -> int:
+    try:
+        number = round(float(str(value).strip().removesuffix("Hz").removesuffix("%")))
+    except (TypeError, ValueError):
+        return 0
+    return min(max(number, -limit), limit)
+
+
+def normalize_tuning(value) -> dict | None:
+    """Tinh chỉnh giọng của AI: {"pitch": Hz, "rate": %, "reason": "..."} (độ lệch so với cài đặt người dùng).
+
+    Trả về None khi không có gì để chỉnh. Các trường khác (base_*, final_* do pipeline ghi lại) bị bỏ.
+    """
+    if not isinstance(value, dict):
+        return None
+    tuning = {
+        "pitch": _clamp_int(value.get("pitch"), TUNE_PITCH_LIMIT),
+        "rate": _clamp_int(value.get("rate"), TUNE_RATE_LIMIT),
+        "reason": " ".join(str(value.get("reason") or "").split())[:200],
+    }
+    return tuning if tuning["pitch"] or tuning["rate"] else None
+
+
+def apply_tuning(base_rate: str, base_pitch: str, tuning: dict | None) -> tuple[str, str]:
+    """Tốc độ/cao độ chung của video sau khi cộng phần AI tinh chỉnh (cảm xúc từng câu cộng tiếp sau đó)."""
+    if not tuning:
+        return base_rate, base_pitch
+    return _shift(base_rate, base_pitch, int(tuning.get("rate") or 0), int(tuning.get("pitch") or 0))
 
 
 def _even_words(text: str, duration: float) -> list[dict]:

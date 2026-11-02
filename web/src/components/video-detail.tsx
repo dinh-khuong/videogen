@@ -4,10 +4,65 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, formatBytes, formatDate, formatDuration, useApi, useDocumentTitle } from "@/lib/client";
-import type { Contact, JobInput, Page, VideoDetail } from "@/lib/types";
+import type { Contact, JobDetail, JobInput, Page, VideoDetail, VoiceTuning } from "@/lib/types";
+import { languageOf, voiceLabel } from "@/lib/video-options";
 import { AssetThumb } from "./assets-library";
 import { ScriptEditor } from "./script-editor";
 import { Button, Card, ConfirmButton, DescriptionInput, ErrorBox, Field, Loading, TagList, inputClass } from "./ui";
+import { PreviewStatus, VoicePreview, previewParams, useVoicePreview } from "./video-style-fields";
+
+const signed = (n: number, unit: string) => `${n < 0 ? "−" : "+"}${Math.abs(n)}${unit}`;
+
+/** Giọng AI đã tinh chỉnh cho video: mức trước/sau, lý do, và nghe thử đúng mức đã dùng để so với mức ban đầu. */
+function AiVoiceCard({ tuning, jobId }: { tuning: VoiceTuning; jobId: string | null }) {
+  const job = useApi<JobDetail>(jobId ? `/api/jobs/${jobId}` : null);
+  const player = useVoicePreview();
+  const input = job.data?.input;
+  const lang = languageOf(input?.language);
+  const voice = input?.voice || lang.voices[0].value;
+  const common = { language: lang.value, effect: input?.voiceEffect ?? "none" };
+  const finalRate = tuning.final_rate ?? tuning.base_rate ?? "+0%";
+  const finalPitch = tuning.final_pitch ?? tuning.base_pitch ?? "+0Hz";
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <h2 className="font-semibold text-zinc-900">Giọng đọc AI đã tinh chỉnh</h2>
+        {tuning.reason && <p className="text-sm text-zinc-600">“{tuning.reason}”</p>}
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt className="text-zinc-500">Giọng</dt>
+        <dd className="text-zinc-800">{input ? voiceLabel(voice) : "—"}</dd>
+        <dt className="text-zinc-500">Cao độ</dt>
+        <dd className="tabular-nums text-zinc-800">
+          {tuning.base_pitch} → <span className="font-semibold">{finalPitch}</span>
+          {tuning.pitch !== 0 && <span className="text-zinc-500"> (AI {signed(tuning.pitch, "Hz")})</span>}
+        </dd>
+        <dt className="text-zinc-500">Tốc độ</dt>
+        <dd className="tabular-nums text-zinc-800">
+          {tuning.base_rate} → <span className="font-semibold">{finalRate}</span>
+          {tuning.rate !== 0 && <span className="text-zinc-500"> (AI {signed(tuning.rate, "%")})</span>}
+        </dd>
+      </dl>
+      {input && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <VoicePreview player={player} params={previewParams(voice, { ...common, rate: finalRate, pitch: finalPitch })} />
+            <span className="self-center text-xs text-zinc-500">mức AI chỉnh (như trong video)</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <VoicePreview
+              player={player}
+              params={previewParams(voice, { ...common, rate: tuning.base_rate ?? "+0%", pitch: tuning.base_pitch ?? "+0Hz" })}
+            />
+            <span className="self-center text-xs text-zinc-500">mức bạn chọn ban đầu</span>
+          </div>
+          <PreviewStatus player={player} />
+        </div>
+      )}
+      <p className="text-xs text-zinc-500">Muốn đổi: “Sửa kịch bản & tạo lại”, thanh cao độ sẽ bắt đầu từ mức AI đã chỉnh.</p>
+    </Card>
+  );
+}
 
 function aspectOf(v: VideoDetail): JobInput["aspect"] {
   if (!v.width || !v.height) return "16:9";
@@ -198,6 +253,7 @@ export function VideoDetailView({ id }: { id: string }) {
         </div>
         <div className="space-y-4">
           <MetaEditor key={video.description + video.title} video={video} onSaved={() => void reload()} />
+          {video.script?.voice_tuning?.final_pitch && <AiVoiceCard tuning={video.script.voice_tuning} jobId={video.jobId} />}
           <ContactLinks video={video} onChanged={() => void reload()} />
         </div>
       </div>

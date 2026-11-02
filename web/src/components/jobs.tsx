@@ -129,9 +129,9 @@ function describeInput(job: JobDetail): string[] {
   if (i.videoType || i.length) {
     lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
   }
-  if (i.voice || i.rate || i.pitch || i.voiceEffect) {
+  if (i.voice || i.rate || i.pitch || i.voiceEffect || i.aiVoice) {
     const voices = [voiceLabel(i.voice) || "mặc định", i.voice2 ? `${voiceLabel(i.voice2)} (xen kẽ)` : ""].filter(Boolean).join(" + ");
-    lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}${i.voiceEffect && i.voiceEffect !== "none" ? ` · hiệu ứng ${VOICE_EFFECTS[i.voiceEffect].toLowerCase()}` : ""}`);
+    lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}${i.voiceEffect && i.voiceEffect !== "none" ? ` · hiệu ứng ${VOICE_EFFECTS[i.voiceEffect].toLowerCase()}` : ""}${i.aiVoice ? " · AI được tinh chỉnh" : ""}`);
   }
   if (i.style) {
     const st = i.style;

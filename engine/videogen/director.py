@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAI
 
 from .config import ConfigError, Settings, require
-from .delivery import MOODS, mood_of
+from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mood_of, normalize_tuning
 from .image_search import ProviderPool, UrlRegistry, fetch_image
 from .llm import (
     CAMERA_MOVES, SFX_NAMES, LibraryAsset, Script, _oneline, _tokens, normalize_hashtags, parse_script, short_title,
@@ -72,8 +72,15 @@ Nghệ thuật dựng:
 - Cảnh cuối: chốt hạ gọn, có thể kêu gọi follow/bình luận một cách duyên dáng.
 - Giữ đúng mọi thông tin người dùng cung cấp (tên, giá, số liệu). Không bịa số liệu.
 
-Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
+{voice_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
 Toàn bộ lời thoại viết bằng {language}."""
+
+VOICE_RULE = """Giọng đọc: bạn ĐƯỢC QUYỀN tinh chỉnh giọng chung của cả video bằng tune_voice (cao độ, tốc độ quanh mức người dùng
+chọn) cho hợp không khí video: chuyện ma/bí ẩn/buồn → trầm, chậm hơn; hài, Gen Z, quảng cáo, top viral → sáng, nhanh hơn;
+hướng dẫn/kiến thức → rõ ràng, chỉnh nhẹ. Chỉnh vừa phải, giọng phải còn tự nhiên; giọng đã hợp thì không cần chỉnh.
+Cảm xúc từng câu ("mood") vẫn cộng thêm sau mức chung này. Người dùng góp ý về giọng (cao/trầm/nhanh/chậm) thì sửa bằng tune_voice.
+
+"""
 
 MOOD_DOC = "; ".join(f"{k}: {m.label}" for k, m in MOODS.items())
 
@@ -136,6 +143,12 @@ TOOLS = [
         "scene": {"type": "string"}, "position": {"type": "integer", "description": "Vị trí mới (1 = đầu)."},
     }, ["scene", "position"]),
     _tool("review_storyboard", "Xem toàn bộ storyboard hiện tại kèm nhận xét tự động (thời lượng, giọng, hình, meme...).", {}),
+    _tool("tune_voice", "Tinh chỉnh giọng đọc chung của cả video: cao độ và tốc độ CỘNG THÊM vào mức người dùng đã chọn. "
+                        "Gọi lại để đổi; pitch=0, rate=0 là giữ nguyên giọng người dùng chọn.", {
+        "pitch": {"type": "integer", "description": f"Cao độ cộng thêm (Hz), -{TUNE_PITCH_LIMIT}..{TUNE_PITCH_LIMIT}. Âm = trầm hơn."},
+        "rate": {"type": "integer", "description": f"Tốc độ cộng thêm (%), -{TUNE_RATE_LIMIT}..{TUNE_RATE_LIMIT}. Âm = chậm hơn."},
+        "reason": {"type": "string", "description": "Vì sao chỉnh như vậy (1 câu, người dùng sẽ đọc)."},
+    }, ["pitch", "rate", "reason"]),
     _tool("finish", "Chốt storyboard để dựng video. Chỉ gọi khi đã duyệt và hài lòng.", {
         "title": {"type": "string", "description": "Tiêu đề video gây tò mò (≤ 60 ký tự)."},
         "description": {"type": "string", "description": "Mô tả 1-3 câu để đăng mạng xã hội."},
@@ -149,9 +162,10 @@ def _is_meme(asset: LibraryAsset) -> bool:
     return any(w in text for w in MEME_WORDS)
 
 
-def _line_seconds(line: dict) -> float:
+def _line_seconds(line: dict, base_rate: int = 0) -> float:
     m = MOODS[mood_of(line.get("mood"))]
-    return len(line["text"]) / (CHARS_PER_SECOND * (1 + m.rate / 100)) + m.before + m.after
+    speed = max(1 + (base_rate + m.rate) / 100, 0.3)
+    return len(line["text"]) / (CHARS_PER_SECOND * speed) + m.before + m.after
 
 
 class Director:
@@ -166,6 +180,11 @@ class Director:
         self.reviewed_since_change = False
         self.reviews = 0
         self.turn = 0
+        # Giọng người dùng chọn; AI có quyền tinh chỉnh (tune_voice) khi opts.ai_voice
+        self.base_rate = opts.rate or settings.tts_rate or "+0%"
+        self.base_pitch = opts.pitch or "+0Hz"
+        self.voice_tuning: dict | None = None
+        self.voice_checked = False  # AI đã cân nhắc giọng (gọi tune_voice, kể cả giữ nguyên)
         self.log_file = work_dir / "director.jsonl"
         self.log_file.unlink(missing_ok=True)
         self.registry, self.video_registry = UrlRegistry(), UrlRegistry()
@@ -187,7 +206,7 @@ class Director:
             self.opts.reporter.stage("director", _oneline(text, 140), min(0.95, self.turn / MAX_TURNS))
 
     def save_storyboard(self) -> None:
-        data = {"scenes": self.scenes, "media": self.web, "meta": self.meta}
+        data = {"scenes": self.scenes, "media": self.web, "meta": self.meta, "voice_tuning": self.voice_tuning}
         (self.work_dir / "storyboard.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # ===== Tư liệu =====
@@ -338,7 +357,42 @@ class Director:
         return next((i for i, s in enumerate(self.scenes) if s["id"] == scene_id), None)
 
     def _scene_seconds(self, scene: dict) -> float:
-        return SCENE_PAD + sum(_line_seconds(l) for l in scene["lines"])
+        rate = int(self.voice_rate().rstrip("%"))
+        return SCENE_PAD + sum(_line_seconds(l, rate) for l in scene["lines"])
+
+    # ===== Giọng đọc =====
+
+    def voice_rate(self) -> str:
+        return apply_tuning(self.base_rate, self.base_pitch, self.voice_tuning)[0]
+
+    def voice_summary(self) -> str:
+        rate, pitch = apply_tuning(self.base_rate, self.base_pitch, self.voice_tuning)
+        voice = self.opts.voice or self.settings.tts_voice
+        text = f"{voice}, cao độ {pitch}, tốc độ {rate}"
+        if self.opts.voice_effect and self.opts.voice_effect != "none":
+            text += f", hiệu ứng {self.opts.voice_effect}"
+        if self.voice_tuning:
+            t = self.voice_tuning
+            text += f" (người dùng chọn {self.base_pitch}, {self.base_rate}; AI chỉnh {t['pitch']:+d}Hz, {t['rate']:+d}%)"
+        return text
+
+    def tune_voice(self, pitch=0, rate=0, reason: str = "") -> str:
+        if not self.opts.ai_voice:
+            return "Người dùng không cho AI chỉnh giọng: giữ nguyên giọng đã chọn."
+        tuning = normalize_tuning({"pitch": pitch, "rate": rate, "reason": reason})
+        self.voice_checked = True
+        clipped = tuning and (tuning["pitch"] != _int(pitch) or tuning["rate"] != _int(rate))
+        self.voice_tuning = tuning
+        self._changed()
+        rate_now, pitch_now = apply_tuning(self.base_rate, self.base_pitch, tuning)
+        if not tuning:
+            msg = f"Giữ nguyên giọng người dùng chọn (cao độ {self.base_pitch}, tốc độ {self.base_rate})."
+        else:
+            msg = (f"Giọng chung của video: cao độ {self.base_pitch} → {pitch_now}, tốc độ {self.base_rate} → {rate_now}. "
+                   f"Tổng ~{self.total_seconds():.0f}s / mục tiêu ~{self.target_seconds()}s.")
+        if clipped:
+            msg += f" (Đã giới hạn trong ±{TUNE_PITCH_LIMIT}Hz, ±{TUNE_RATE_LIMIT}%.)"
+        return msg
 
     def _changed(self) -> None:
         self.reviewed_since_change = False
@@ -436,6 +490,8 @@ class Director:
             notes.append(f"Âm '{Counter(sfx).most_common(1)[0][0]}' lặp quá nhiều lần.")
         if not any(l.get("voice") == "second" for l in lines) and len(lines) >= 6:
             notes.append("Có thể thêm vài câu giọng phụ (voice second) để đối đáp, đỡ độc thoại.")
+        if self.opts.ai_voice and self.voice_tuning is None and not self.voice_checked:
+            notes.append("Giọng chung chưa tinh chỉnh: nếu cao độ/tốc độ chưa hợp không khí video, dùng tune_voice.")
         return notes
 
     def review_storyboard(self) -> str:
@@ -443,7 +499,8 @@ class Director:
         self.reviewed_since_change = True
         if not self.scenes:
             return "Storyboard trống."
-        out = [f"Storyboard {len(self.scenes)} cảnh, ~{self.total_seconds():.0f}s (mục tiêu ~{self.target_seconds()}s):"]
+        out = [f"Storyboard {len(self.scenes)} cảnh, ~{self.total_seconds():.0f}s (mục tiêu ~{self.target_seconds()}s):",
+               f"Giọng: {self.voice_summary()}"]
         for k, s in enumerate(self.scenes, 1):
             extra = [x for x in (s.get("heading") and f"nhãn '{s['heading']}'", s.get("title_card") and "title card",
                                  (s.get("meme_top") or s.get("meme_bottom")) and f"meme '{s.get('meme_top', '')} / {s.get('meme_bottom', '')}'")
@@ -482,6 +539,8 @@ class Director:
             f"Yêu cầu của người dùng:\n{self.topic}",
             f"Loại video: {opts.video_type}. Giọng văn mong muốn: {opts.tone or 'tự chọn cho hợp chủ đề, ưu tiên duyên dáng, hài hước'}.",
             f"Thời lượng mục tiêu: ~{self.target_seconds()} giây. Khung hình: {opts.aspect}.",
+            f"Giọng đọc người dùng chọn: {self.voice_summary()}."
+            + (" Bạn được quyền tinh chỉnh bằng tune_voice." if opts.ai_voice else " Giữ nguyên, không chỉnh giọng."),
             f"Thư viện của người dùng: {lib}.",
             "Tìm trên mạng: " + ("được phép (search_web)." if opts.web_images else "TẮT, chỉ dùng thư viện."),
         ]
@@ -504,13 +563,15 @@ class Director:
             "search_assets": self.search_assets, "inspect_asset": self.inspect_asset, "search_web": self.search_web,
             "add_scene": self.add_scene, "update_scene": self.update_scene, "remove_scene": self.remove_scene,
             "move_scene": self.move_scene, "review_storyboard": self.review_storyboard, "finish": self.finish,
+            "tune_voice": self.tune_voice,
         }
         fn = handlers.get(name)
         if not fn:
             return f"Không có công cụ '{name}'."
         allowed = {"search_assets": {"query", "kind", "memes_only"}, "inspect_asset": {"id"},
                    "search_web": {"query", "media", "count"}, "remove_scene": {"scene"}, "move_scene": {"scene", "position"},
-                   "review_storyboard": set(), "finish": {"title", "description", "hashtags"}}
+                   "review_storyboard": set(), "finish": {"title", "description", "hashtags"},
+                   "tune_voice": {"pitch", "rate", "reason"}}
         if name in allowed:
             args = {k: v for k, v in args.items() if k in allowed[name]}
         try:
@@ -535,6 +596,8 @@ class Director:
             "remove_scene": lambda: f"Bỏ cảnh {args.get('scene')}",
             "move_scene": lambda: f"Đưa cảnh {args.get('scene')} lên vị trí {args.get('position')}",
             "review_storyboard": lambda: "Tự duyệt lại toàn bộ storyboard",
+            "tune_voice": lambda: f"Chỉnh giọng: cao độ {_int(args.get('pitch')):+d}Hz, tốc độ {_int(args.get('rate')):+d}%"
+                                  + (f" — {_oneline(str(args.get('reason')), 100)}" if args.get("reason") else ""),
             "finish": lambda: f"Chốt kịch bản: “{args.get('title', '')}”",
         }.get(name, lambda: name)()
 
@@ -544,8 +607,10 @@ class Director:
             base_url=self.settings.deepseek_base_url, max_retries=3, timeout=180,
         )
         model = self.settings.director_model or self.settings.deepseek_model
+        system = SYSTEM.replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
+        tools = TOOLS if self.opts.ai_voice else [t for t in TOOLS if t["function"]["name"] != "tune_voice"]
         messages: list[dict] = [
-            {"role": "system", "content": SYSTEM.replace("{language}", self.opts.language)},
+            {"role": "system", "content": system.replace("{language}", self.opts.language)},
             {"role": "user", "content": self._intro_message()},
         ]
         self.event("action", "Đạo diễn AI bắt đầu: đọc yêu cầu, lên ý tưởng")
@@ -553,7 +618,7 @@ class Director:
         while self.meta is None and self.turn < MAX_TURNS:
             self.turn += 1
             response = client.chat.completions.create(
-                model=model, messages=messages, tools=TOOLS, tool_choice="auto", temperature=0.85,
+                model=model, messages=messages, tools=tools, tool_choice="auto", temperature=0.85,
             )
             msg = response.choices[0].message
             calls = msg.tool_calls or []
@@ -635,10 +700,13 @@ class Director:
         return parse_script({
             "format": "director", "title": meta.get("title") or short_title(self.topic), "intro": "", "outro": "",
             "description": meta.get("description", ""), "hashtags": meta.get("hashtags", []), "steps": steps,
+            "voice_tuning": self.voice_tuning,
         }, default_title=short_title(self.topic))
 
     def _load_base(self, data: dict) -> None:
         """Bản dựng trước (để sửa theo góp ý): mỗi bước thành một cảnh, asset theo id thư viện."""
+        if self.opts.ai_voice:
+            self.voice_tuning = normalize_tuning(data.get("voice_tuning"))
         for step in data.get("steps") or []:
             lines = [l for l in step.get("lines") or [] if isinstance(l, dict) and l.get("text")]
             if not lines or " ".join(l["text"] for l in lines) != (step.get("narration") or "").strip():
@@ -659,6 +727,13 @@ class Director:
             if scene["lines"]:
                 self.scenes.append(scene)
                 self.next_scene += 1
+
+
+def _int(value) -> int:
+    try:
+        return round(float(str(value).strip().removesuffix("Hz").removesuffix("%")))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _runs(items: list[str]):

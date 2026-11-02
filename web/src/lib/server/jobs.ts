@@ -195,6 +195,8 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     rate,
     pitch,
     voiceEffect: raw.voiceEffect && Object.hasOwn(VOICE_EFFECTS, raw.voiceEffect) ? raw.voiceEffect : "none",
+    // Kịch bản sửa tay không gọi AI: giọng giữ đúng như người dùng chỉnh
+    aiVoice: !script && raw.aiVoice === true,
     videoType: raw.videoType && Object.hasOwn(VIDEO_TYPES, raw.videoType) ? raw.videoType : "howto",
     tone: String(raw.tone ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TONE_CHARS),
     length: raw.length && Object.hasOwn(LENGTHS, raw.length) ? raw.length : "medium",
@@ -255,6 +257,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     rate: input.rate ?? null,
     pitch: input.pitch ?? null,
     voice_effect: input.voiceEffect ?? "none",
+    ai_voice: input.aiVoice === true,
     video_type: input.videoType ?? "howto",
     tone: input.tone ?? "",
     length: input.length ?? "medium",
