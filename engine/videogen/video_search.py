@@ -11,6 +11,7 @@ Chỉ lấy video được phép dùng lại, kèm thông tin ghi công (dùng t
 Mỗi clip chỉ lấy một đoạn ngắn (WEB_CLIP_SECONDS), tắt tiếng, thu nhỏ về tối đa 1280px.
 """
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -279,19 +280,32 @@ class _QuietLogger:
     info = warning = error = debug
 
 
+def _js_runtimes() -> dict:
+    """yt-dlp cần một JS runtime để giải mã YouTube; mặc định chỉ bật deno nên bật thêm node/bun nếu có."""
+    return {name: {} for name in ("deno", "node", "bun") if shutil.which(name)} or {"deno": {}}
+
+
 def _download_youtube(cand: VideoCandidate, dest: Path, seconds: float) -> None:
     import yt_dlp
     from yt_dlp.utils import download_range_func
 
     start = _start_offset(cand.duration, seconds)
+    # Cắt đoạn ngay khi tải thì yt-dlp cho ffmpeg đọc URL HTTPS — bản ffmpeg tĩnh của imageio crash (-11) ở đó,
+    # nên chỉ làm vậy với ffmpeg của hệ thống; không có thì tải cả file (giới hạn dung lượng) rồi cắt sau.
+    system_ffmpeg = shutil.which("ffmpeg")
     with tempfile.TemporaryDirectory(prefix="videogen_yt_") as tmp:
         opts = {
             "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True, "logger": _QuietLogger(),
             "format": "bv*[height<=720][ext=mp4]/bv*[height<=720]/b[height<=720]/b",
-            "download_ranges": download_range_func(None, [(start, start + seconds)]),
-            "ffmpeg_location": ffmpeg_exe(),
+            "js_runtimes": _js_runtimes(),
+            "ffmpeg_location": system_ffmpeg or ffmpeg_exe(),
             "outtmpl": str(Path(tmp) / "clip.%(ext)s"),
         }
+        if system_ffmpeg:
+            opts["download_ranges"] = download_range_func(None, [(start, start + seconds)])
+            opts["force_keyframes_at_cuts"] = True  # cắt bằng stream-copy làm clip VP9 ít keyframe chỉ còn <1s
+        else:
+            opts["max_filesize"] = MAX_DOWNLOAD_BYTES
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([cand.url])
@@ -299,10 +313,10 @@ def _download_youtube(cand: VideoCandidate, dest: Path, seconds: float) -> None:
             if re.search(r"Sign in|not a bot|429|Too Many Requests", str(e)):
                 raise ProviderUnavailable("YouTube yêu cầu đăng nhập/xác minh, không tải được từ máy này") from e
             raise
-        files = list(Path(tmp).glob("clip.*"))
+        files = [f for f in Path(tmp).glob("clip.*") if not f.name.endswith(".part")]
         if not files:
             raise RuntimeError("yt-dlp không tạo ra file")
-        _transcode(str(files[0]), dest, 0.0, seconds)
+        _transcode(str(files[0]), dest, 0.0 if system_ffmpeg else start, seconds)
 
 
 def download_clip(cand: VideoCandidate, dest: Path, seconds: float) -> bool:
