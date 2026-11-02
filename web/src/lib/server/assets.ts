@@ -8,7 +8,7 @@ import { db, nowIso } from "./db";
 import { probe } from "./engine";
 import { HttpError, moveFile, removeMedia } from "./files";
 import { MEDIA_DIR, TMP_DIR, mediaPath, mediaUrl } from "./paths";
-import { setTags, tagFilterSql, tagsFor } from "./tags";
+import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
 
 type AssetRow = {
   id: string;
@@ -91,7 +91,7 @@ function where(query: AssetQuery): { sql: string; params: unknown[] } {
   }
   if (query.tag) {
     clauses.push(tagFilterSql("asset", "a"));
-    params.push(query.tag);
+    params.push(tagFilterParam(query.tag));
   }
   if (query.kind) {
     // một loại ("audio") hoặc nhiều loại cách nhau bằng dấu phẩy ("image,video")

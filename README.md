@@ -19,6 +19,21 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
 
 ## Tính năng
 
+- **Đạo diễn AI** (mặc định): AI làm việc như một người dựng phim. Nó không viết kịch bản một lần rồi chạy cứng nhắc
+  mà tự gọi công cụ qua nhiều lượt. **Số bước và số cảnh do AI quyết định.**
+  - Tìm tư liệu: tìm trong Assets (kể cả kho meme nhập từ dataset), tìm và tải clip/ảnh trên mạng, xem kỹ từng asset.
+  - Dựng storyboard: thêm, sửa, xóa, đổi chỗ cảnh. Sau đó **tự duyệt** với bộ nhận xét tự động (dài hay ngắn so với
+    mục tiêu, giọng đều đều, cảnh thiếu hình, hình bị lặp, lạm dụng hiệu ứng, chưa dùng meme...) rồi sửa tiếp tới khi chốt.
+  - **Giọng điệu biến hóa theo từng câu**: mỗi câu thoại có cảm xúc riêng (hào hứng, sốc, kịch tính, thì thầm, cà khịa,
+    tỉnh bơ, liến thoắng...). Engine đổi tốc độ, cao độ và khoảng ngừng cho từng câu rồi ghép lại, phụ đề vẫn khớp từng từ.
+    Có **giọng phụ** khác giới chen ngang hoặc đối đáp, như hai người dẫn.
+  - **Meme**: chữ meme trên/dưới hình ("KHI BẠN..."), sticker meme/reaction bật ra theo câu, chữ nhấn mạnh to giữa khung,
+    âm thanh meme (bùm, ting, đĩa rít, trống dồn, tèn ten, cốp — tự tổng hợp, không vướng bản quyền), zoom giật, rung khung, zoom chậm kịch tính.
+  - Trang job hiện **nhật ký Đạo diễn AI** trực tiếp: từng suy nghĩ, hành động và kết quả.
+  - **Góp ý để AI làm lại**: dưới video đã tạo, viết góp ý (vd "thêm meme khi nói về giá, hook mạnh hơn"). AI mở lại
+    storyboard cũ và sửa theo góp ý.
+  - Cần mô hình hỗ trợ gọi công cụ (function calling). `deepseek-chat` có sẵn khả năng này; đặt mô hình khác bằng `DIRECTOR_MODEL`.
+  - Chế độ **Kịch bản nhanh** (khung cố định: mở đầu, các bước, lời kết) vẫn còn, dùng khi cần nhanh và ít lượt gọi AI.
 - **Tạo video**: gồm khung 16:9, 9:16, 1:1 và **Shorts chia đôi** (nội dung ở trên, video nền như gameplay ở dưới).
   - **Mẫu nhanh**: TikTok/Reels viral, YouTube hướng dẫn, Quảng cáo sản phẩm, Kể chuyện thư giãn, Kiến thức — một lần bấm đặt sẵn khung hình, nhịp dựng, phụ đề, giọng... rồi tinh chỉnh tiếp.
   - **Loại video**: hướng dẫn, top danh sách, mẹo hay, sự thật thú vị, quảng cáo/giới thiệu, kể chuyện. Nhãn trong video đổi theo loại ("Bước 1", "#1"...).
@@ -148,6 +163,8 @@ python -m videogen "5 quán phở ngon Hà Nội" --type listicle --aspect 9:16 
 python -m videogen "giới thiệu quán Mộc" --type promo --tone "thuyết phục" --cta "Gọi ngay 0909 123 456" --logo logo.png --accent "#43a047"
 python -m videogen "chuyện cổ tích Tấm Cám" --type story --voice vi-VN-HoaiMyNeural --voice2 vi-VN-NamMinhNeural --rate=-10% --pitch=-6Hz
 python -m videogen "5 sự thật về mèo" --type facts --voice gtts:vi --rate=+15% --voice-effect cute   # chị Google ngọng nhẹ
+python -m videogen "5 sự thật về mèo" --director --aspect 9:16 --tone "lầy lội" --library-dir meme/ --library-mode auto   # Đạo diễn AI
+python -m videogen "5 sự thật về mèo" --director --base-script output/x/script.json --feedback "thêm meme, hook mạnh hơn"     # sửa theo góp ý
 python -m videogen voice-sample --voice en-US-AvaMultilingualNeural --out mau.mp3   # nghe thử giọng
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
 python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa

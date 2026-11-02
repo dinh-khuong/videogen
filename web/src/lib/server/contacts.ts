@@ -13,7 +13,7 @@ import {
 } from "@/lib/types";
 import { db, nowIso } from "./db";
 import { HttpError } from "./files";
-import { setTags, tagFilterSql, tagsFor } from "./tags";
+import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
 import { toVideoItems } from "./videos";
 
 type ContactRow = {
@@ -72,7 +72,7 @@ export function listContacts(query: ContactQuery = {}): Page<Contact> {
   }
   if (query.tag) {
     clauses.push(tagFilterSql("contact", "c"));
-    params.push(query.tag);
+    params.push(tagFilterParam(query.tag));
   }
   if (query.due) {
     clauses.push("c.follow_up_at IS NOT NULL AND c.follow_up_at <= ?");

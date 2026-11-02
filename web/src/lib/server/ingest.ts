@@ -104,7 +104,8 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     ...script,
     steps: script.steps.map((s, i) => {
       const [first = null, ...extra] = [...new Set(orderedIds(i + 1))];
-      return { ...s, image: null, library_image: first, extra_assets: extra };
+      // Hình Đạo diễn AI tải về đã thành asset: visuals (đường dẫn file tạm) được thay bằng id asset theo đúng thứ tự
+      return { ...s, image: null, visuals: undefined, library_image: first, extra_assets: extra };
     }),
   };
   const video = {

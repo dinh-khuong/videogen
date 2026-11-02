@@ -12,6 +12,11 @@ export function normalizeTag(tag: string): string {
   return tag.replace(/^#+/, "").toLowerCase().replace(/[^\p{L}\p{N}_]/gu, "");
 }
 
+/** Danh sách tag từ chuỗi cách nhau bằng dấu phẩy ("meme,meo") — dạng tham số `tag` của các API lọc. */
+export function splitTags(value: string | null | undefined): string[] {
+  return [...new Set((value ?? "").split(",").map(normalizeTag).filter(Boolean))];
+}
+
 /** Mô tả + dòng hashtag ở cuối (bỏ các tag đã có trong mô tả). */
 export function withHashtags(description: string, tags: string[]): string {
   const existing = new Set(parseHashtags(description));

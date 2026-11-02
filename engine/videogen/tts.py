@@ -49,6 +49,8 @@ class TtsJob:
     text: str
     path: Path
     voice: str
+    rate: str | None = None   # riêng cho câu này (vd theo cảm xúc); None = tốc độ chung
+    pitch: str | None = None
 
 
 def words_path(audio_path: Path) -> Path:
@@ -197,11 +199,12 @@ async def _synthesize_all(
 ) -> None:
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
     fpt_key = load_settings().fpt_api_key
-    tempo = 1 + int(rate.rstrip("%")) / 100
-    # Cao độ theo Hz (edge-tts) đổi thành tỉ lệ cho giọng khác: giọng người ~200 Hz
-    pitch_factor = 1 + int(pitch.rstrip("Hz")) / 200
 
     async def run(job: TtsJob) -> None:
+        job_rate, job_pitch = job.rate or rate, job.pitch or pitch
+        tempo = 1 + int(job_rate.rstrip("%")) / 100
+        # Cao độ theo Hz (edge-tts) đổi thành tỉ lệ cho giọng khác: giọng người ~200 Hz
+        pitch_factor = 1 + int(job_pitch.rstrip("Hz")) / 200
         provider = provider_of(job.voice)
         name = job.voice.partition(":")[2]
         raw = job.path.with_suffix(".raw.mp3")
@@ -210,13 +213,13 @@ async def _synthesize_all(
         made_by = "gtts"
         async with semaphore:
             if provider == "edge":
-                if await _edge_synthesize(job.text, job.voice, rate, pitch, raw):
+                if await _edge_synthesize(job.text, job.voice, job_rate, job_pitch, raw):
                     made_by = "edge"
                 else:
                     print(f"      ⚠️  edge-tts lỗi cho '{job.path.stem}', chuyển sang gTTS.", flush=True)
             elif provider == "fpt":
                 try:
-                    await asyncio.to_thread(_fpt_synthesize, job.text, name, rate, raw, fpt_key)
+                    await asyncio.to_thread(_fpt_synthesize, job.text, name, job_rate, raw, fpt_key)
                     made_by = "fpt"
                 except ConfigError:
                     raise
@@ -261,10 +264,12 @@ def synthesize_many(
     khi edge-tts lỗi — cần khi dùng giọng đa ngôn ngữ (en-US-...Multilingual đọc tiếng Việt).
     effect: hiệu ứng giọng (xem VOICE_EFFECTS).
     """
-    if not RATE_RE.match(rate):
-        raise ValueError(f"Tốc độ đọc không hợp lệ: {rate} (dạng +10% hoặc -5%)")
-    if not PITCH_RE.match(pitch):
-        raise ValueError(f"Cao độ giọng không hợp lệ: {pitch} (dạng +5Hz hoặc -10Hz)")
+    for job in [None, *jobs]:
+        r, p = (rate, pitch) if job is None else (job.rate or rate, job.pitch or pitch)
+        if not RATE_RE.match(r):
+            raise ValueError(f"Tốc độ đọc không hợp lệ: {r} (dạng +10% hoặc -5%)")
+        if not PITCH_RE.match(p):
+            raise ValueError(f"Cao độ giọng không hợp lệ: {p} (dạng +5Hz hoặc -10Hz)")
     if effect not in VOICE_EFFECTS:
         raise ValueError(f"Hiệu ứng giọng không hợp lệ: {effect} (chọn: {', '.join(VOICE_EFFECTS)})")
     pending = [job for job in jobs if not job.path.exists()]

@@ -4,10 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, formatDate, useApi, useDocumentTitle } from "@/lib/client";
-import type { JobDetail, JobItem } from "@/lib/types";
+import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
 import { COLOR_FILTERS, LENGTHS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
-import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx } from "./ui";
+
+function libraryTagsLabel(i: JobDetail["input"]): string {
+  const tags = i.libraryTags?.length ? i.libraryTags : i.libraryTag ? [i.libraryTag] : [];
+  return tags.length ? ` trong ${tags.map((t) => `#${t}`).join(", ")}` : "";
+}
+import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx, inputClass } from "./ui";
 
 const FILTERS = [
   { value: "", label: "Tất cả" },
@@ -65,12 +70,15 @@ export function JobsList() {
 }
 
 const STAGE_ORDER = ["script", "images", "audio", "render", "save"];
+const DIRECTOR_STAGE_ORDER = ["director", "images", "audio", "render", "save"];
 
 function StageSteps({ job }: { job: JobDetail }) {
-  const current = STAGE_ORDER.indexOf(job.stage ?? "");
+  const order = job.input.director ? DIRECTOR_STAGE_ORDER : STAGE_ORDER;
+  // Engine của Đạo diễn AI vẫn báo "script" một thoáng khi chuyển sang lấy hình
+  const current = order.indexOf(job.input.director && job.stage === "script" ? "images" : (job.stage ?? ""));
   return (
     <ol className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-      {STAGE_ORDER.map((stage, i) => {
+      {order.map((stage, i) => {
         const done = job.status === "succeeded" || i < current;
         const active = job.status === "running" && i === current;
         return (
@@ -108,10 +116,14 @@ function LogView({ log }: { log: string }) {
 function describeInput(job: JobDetail): string[] {
   const i = job.input;
   const lines = [
-    i.script ? "Kịch bản: sửa tay (không gọi AI)" : `Số bước: ${i.numSteps ?? "AI tự chọn (5-8)"}`,
+    i.script
+      ? "Kịch bản: sửa tay (không gọi AI)"
+      : i.director
+        ? `Đạo diễn AI${i.feedback ? " · sửa theo góp ý" : ""} · số cảnh: ${i.numSteps ? `khoảng ${i.numSteps}` : "AI quyết định"}`
+        : `Số bước: ${i.numSteps ?? "AI tự chọn (5-8)"}`,
     `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
-    `Assets: ${{ off: "không dùng", auto: `AI tự chọn${i.libraryTag ? ` trong #${i.libraryTag}` : ""}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
+    `Assets: ${{ off: "không dùng", auto: `AI tự chọn${libraryTagsLabel(i)}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
     `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}`,
   ];
   if (i.videoType || i.length) {
@@ -147,6 +159,119 @@ function TopicView({ topic }: { topic: string }) {
       </summary>
       <p className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm text-zinc-700">{topic}</p>
     </details>
+  );
+}
+
+const AGENT_STYLE: Record<AgentEvent["kind"], { dot: string; text: string }> = {
+  thought: { dot: "bg-violet-500", text: "italic text-zinc-800" },
+  action: { dot: "bg-brand-500", text: "font-medium text-zinc-900" },
+  result: { dot: "bg-zinc-300", text: "text-zinc-500" },
+  warn: { dot: "bg-amber-500", text: "text-amber-700" },
+  done: { dot: "bg-emerald-500", text: "font-medium text-emerald-700" },
+};
+
+/** Từng suy nghĩ và hành động của Đạo diễn AI, cập nhật trực tiếp khi job đang chạy. */
+function AgentTimeline({ events, live }: { events: AgentEvent[]; live: boolean }) {
+  const ref = useRef<HTMLOListElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [events.length]);
+  const turns = events.reduce((n, e) => Math.max(n, e.turn), 0);
+  const actions = events.filter((e) => e.kind === "action").length;
+  return (
+    <Card className="p-5">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold text-zinc-900">{live ? "Đạo diễn AI đang làm việc" : "Nhật ký Đạo diễn AI"}</h2>
+        <span className="text-xs tabular-nums text-zinc-500">
+          {turns} lượt suy nghĩ · {actions} hành động
+        </span>
+      </div>
+      <ol
+        ref={ref}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
+        className="scroll-thin max-h-[28rem] space-y-1.5 overflow-auto pr-1 text-sm"
+      >
+        {events.map((e, k) => (
+          <li key={k} className={cx("flex gap-2.5", e.kind === "result" && "pl-4")}>
+            <span className={cx("mt-1.5 size-2 shrink-0 rounded-full", AGENT_STYLE[e.kind]?.dot ?? "bg-zinc-300")} />
+            <span className={cx("min-w-0 whitespace-pre-wrap break-words", AGENT_STYLE[e.kind]?.text)}>{e.text}</span>
+          </li>
+        ))}
+        {live && (
+          <li className="flex gap-2.5 text-zinc-400">
+            <span className="mt-1.5 size-2 shrink-0 animate-pulse rounded-full bg-violet-400" />
+            Đang nghĩ...
+          </li>
+        )}
+      </ol>
+    </Card>
+  );
+}
+
+const FEEDBACK_CHIPS = ["Hài hước hơn", "Thêm meme", "Hook 3 giây đầu mạnh hơn", "Ngắn gọn lại", "Giọng sôi nổi hơn", "Bớt hiệu ứng", "Dùng nhiều clip hơn"];
+
+/** Góp ý cho Đạo diễn AI: tạo job mới sửa lại video này (giữ cài đặt, AI bắt đầu từ storyboard cũ). */
+function FeedbackBox({ job }: { job: JobDetail }) {
+  const router = useRouter();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api<JobItem>("/api/jobs", {
+        method: "POST",
+        json: { ...job.input, topic: job.topic, script: null, sourceVideoId: null, director: true, feedback: text.trim(), baseJobId: job.id },
+      });
+      router.push(`/jobs/${next.id}`);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Card className="p-5">
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <h2 className="font-semibold text-zinc-900">Góp ý để Đạo diễn AI làm lại</h2>
+          <p className="text-sm text-zinc-500">AI đọc góp ý, mở lại storyboard của video này rồi tự sửa từng cảnh (giữ nguyên cài đặt giọng, khung hình...).</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {FEEDBACK_CHIPS.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => setText((t) => (t.trim() ? `${t.trim()}. ${chip}` : chip))}
+              className="rounded-full bg-surface px-3 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50"
+            >
+              + {chip}
+            </button>
+          ))}
+        </div>
+        <textarea
+          className={`${inputClass} min-h-20 resize-y`}
+          rows={3}
+          maxLength={2000}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="VD: Cảnh 2 hơi dài, thêm một meme khi nói về giá, đoạn kết vui hơn..."
+        />
+        <ErrorBox message={error} />
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary" busy={busy} disabled={!text.trim()}>
+            Gửi góp ý và làm lại
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -245,12 +370,24 @@ export function JobDetailView({ id }: { id: string }) {
         )}
         {job.status === "failed" && job.error && <ErrorBox message={job.error} />}
         {!job.input.script && <TopicView topic={job.topic} />}
+        {job.input.feedback && (
+          <p className="rounded-lg bg-violet-50 p-3 text-sm text-violet-900 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-200 dark:ring-violet-500/30">
+            <span className="font-medium">Góp ý:</span> {job.input.feedback}
+            {job.input.baseJobId && (
+              <Link href={`/jobs/${job.input.baseJobId}`} className="ml-2 underline">
+                xem bản trước
+              </Link>
+            )}
+          </p>
+        )}
         <ul className="grid gap-1 text-sm text-zinc-600 sm:grid-cols-2">
           {describeInput(job).map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
       </Card>
+
+      {job.agent.length > 0 && <AgentTimeline events={job.agent} live={active && job.stage === "director"} />}
 
       {job.video && (
         <section>
@@ -260,6 +397,8 @@ export function JobDetailView({ id }: { id: string }) {
           </div>
         </section>
       )}
+
+      {job.video && !active && <FeedbackBox job={job} />}
 
       <section>
         <h2 className="mb-3 font-semibold text-zinc-900">Log của engine</h2>

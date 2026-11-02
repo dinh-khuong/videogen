@@ -384,7 +384,8 @@ def fetch_videos(
                 except ProviderUnavailable as e:
                     pool.disable(name, str(e))
                     break
-                except (subprocess.SubprocessError, OSError, RuntimeError, requests.RequestException) as e:
+                except Exception as e:  # nguồn ngoài lỗi bất thường (vd yt-dlp/ffmpeg crash): thử clip khác
+                    dest.unlink(missing_ok=True)
                     print(f"      ⚠️  Không tải được clip {cand.credit.url}: {type(e).__name__}", flush=True)
     return found
 

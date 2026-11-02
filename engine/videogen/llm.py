@@ -121,6 +121,19 @@ class Step:
     library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
     media: str | None = None  # "video" | "image": loại nội dung nên tìm trên mạng cho bước này
     extra_assets: list[str] = field(default_factory=list)  # id asset thư viện ghép nối tiếp sau library_image
+    # Câu thoại có diễn xuất (Đạo diễn AI): [{"text", "mood", "voice": "main"|"second", "sfx", "camera",
+    # "sticker": {"asset": id} | {"path": ...}, "pop_text"}]. Chỉ dùng khi ghép lại đúng bằng narration.
+    lines: list[dict] = field(default_factory=list)
+    # Hình theo thứ tự: [{"asset": id}] hoặc [{"path", "media", "credit", "query"}] (ảnh/clip AI đã tải về)
+    visuals: list[dict] = field(default_factory=list)
+    meme: dict | None = None  # chữ meme phủ trên hình suốt cảnh: {"top": "...", "bottom": "..."}
+    title_card: bool = False  # hiện tiêu đề video lớn ở cảnh này (thường là cảnh mở đầu)
+
+    def acted_lines(self) -> list[dict]:
+        """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
+        if not self.lines or " ".join(l["text"] for l in self.lines) != self.narration:
+            return []
+        return self.lines
 
 
 @dataclass
@@ -131,6 +144,9 @@ class Script:
     outro: str
     description: str = ""
     hashtags: list[str] = field(default_factory=list)
+    # classic: mở đầu (title card) + các bước có nhãn + lời kết
+    # director: mỗi bước là một cảnh tự do do Đạo diễn AI dựng (hook, meme, nhiều giọng...), không có cảnh phụ
+    format: str = "classic"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -217,24 +233,77 @@ def short_title(text: str, limit: int = 60) -> str:
     return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
 
 
+SFX_NAMES = ("boom", "ding", "whoosh", "pop", "scratch", "drumroll", "tada", "bonk")
+CAMERA_MOVES = ("punch", "shake", "zoom_slow")
+
+
+def _media_ref(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("asset"):
+        return {"asset": str(value["asset"])}
+    if value.get("path"):
+        ref = {"path": str(value["path"]), "media": "video" if value.get("media") == "video" else "image"}
+        for key in ("credit", "query"):
+            if value.get(key):
+                ref[key] = value[key]
+        return ref
+    return None
+
+
+def normalize_line(value) -> dict | None:
+    """Chuẩn hóa một câu thoại (bỏ trường lạ/không hợp lệ)."""
+    from .delivery import mood_of
+
+    if isinstance(value, str):
+        value = {"text": value}
+    if not isinstance(value, dict):
+        return None
+    text = " ".join(str(value.get("text") or "").split())
+    if not text:
+        return None
+    line: dict = {"text": text, "mood": mood_of(value.get("mood"))}
+    if value.get("voice") == "second":
+        line["voice"] = "second"
+    if value.get("sfx") in SFX_NAMES:
+        line["sfx"] = value["sfx"]
+    if value.get("camera") in CAMERA_MOVES:
+        line["camera"] = value["camera"]
+    sticker = _media_ref(value.get("sticker"))
+    if sticker:
+        line["sticker"] = sticker
+    pop = " ".join(str(value.get("pop_text") or "").split())[:40]
+    if pop:
+        line["pop_text"] = pop
+    return line
+
+
 def parse_script(data: dict, default_title: str) -> Script:
     steps = []
     for s in data["steps"]:
         queries = s.get("image_queries") or [s.get("image_query", "")]
+        lines = [l for l in (normalize_line(x) for x in s.get("lines") or []) if l]
+        narration = (s.get("narration") or "").strip() or " ".join(l["text"] for l in lines)
+        meme = s.get("meme") if isinstance(s.get("meme"), dict) else None
+        meme = {k: " ".join(str(meme.get(k) or "").split())[:80] for k in ("top", "bottom")} if meme else None
         steps.append(
             Step(
                 heading=(s.get("heading") or "").strip(),
-                narration=s["narration"].strip(),
+                narration=narration,
                 image_queries=[q.strip() for q in queries if q and q.strip()],
                 image=s.get("image") or None,
                 hashtags=normalize_hashtags(s.get("hashtags")),
                 media=s.get("media") if s.get("media") in ("video", "image") else None,
                 extra_assets=[str(x) for x in s.get("extra_assets") or [] if x],
                 library_image=(str(s["library_image"]).strip() or None) if s.get("library_image") else None,
+                lines=lines,
+                visuals=[r for r in (_media_ref(v) for v in s.get("visuals") or []) if r],
+                meme=meme if meme and (meme["top"] or meme["bottom"]) else None,
+                title_card=bool(s.get("title_card")),
             )
         )
-    if not steps:
-        raise ValueError("Kịch bản không có bước nào.")
+    if not steps or any(not st.narration for st in steps):
+        raise ValueError("Kịch bản không có bước nào." if not steps else "Có bước không có lời bình.")
     return Script(
         title=(data.get("title") or default_title).strip(),
         intro=(data.get("intro") or "").strip(),
@@ -242,6 +311,7 @@ def parse_script(data: dict, default_title: str) -> Script:
         outro=(data.get("outro") or "").strip(),
         description=(data.get("description") or "").strip(),
         hashtags=normalize_hashtags(data.get("hashtags")),
+        format="director" if data.get("format") == "director" else "classic",
     )
 
 

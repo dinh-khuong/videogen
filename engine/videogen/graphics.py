@@ -537,3 +537,84 @@ def logo_layer(path: Path, frame_size: tuple[int, int]) -> Layer | None:
     img.putalpha(alpha)
     margin = round(min(w, h) * 0.04)
     return Layer(img, (w - img.width - margin, margin))
+
+
+# ===== Lớp meme (Đạo diễn AI) =====
+
+
+def meme_caption_layers(top: str, bottom: str, size: tuple[int, int], fonts: Fonts, start: float = 0.0) -> list[Layer]:
+    """Chữ meme kinh điển: IN HOA, trắng viền đen dày, dòng trên rơi xuống, dòng dưới trồi lên."""
+    w, h = size
+    font = fonts.get("bold", max(28, round(min(w, h) * 0.075)))
+    stroke = max(2, round(font.size * 0.11))
+    line_h = round(font.size * 1.12)
+    margin = round(min(w, h) * 0.06)
+    layers: list[Layer] = []
+    for text, at_top in ((top, True), (bottom, False)):
+        if not text:
+            continue
+        lines = wrap_balanced(text.upper(), font, int(w * 0.9))[:3]
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        # Dòng trên chừa chỗ cho nhãn ở góc trên; dòng dưới nằm trên vùng phụ đề
+        y = margin * 2.2 if at_top else h * 0.68 - line_h * len(lines)
+        for line in lines:
+            draw.text((w / 2, y), line, font=font, fill="white", anchor="ma", stroke_width=stroke, stroke_fill="black")
+            y += line_h
+        layer = Layer.from_canvas(canvas, start=start + (0.0 if at_top else 0.25), enter="drop" if at_top else "rise",
+                                  enter_dur=0.35)
+        if layer:
+            layers.append(layer)
+    return layers
+
+
+STICKER_SLOTS = ("br", "bl", "tr", "tl", "center")
+
+
+def sticker_layer(path: Path, size: tuple[int, int], slot: str, start: float, end: float | None) -> Layer | None:
+    """Ảnh meme/reaction bật ra ở góc khung (viền trắng, đổ bóng, hơi nghiêng) trong một đoạn ngắn."""
+    try:
+        img = ImageOps.exif_transpose(Image.open(path)).convert("RGBA")
+    except OSError as e:
+        print(f"      ⚠️  Không đọc được sticker {path}: {e}", flush=True)
+        return None
+    w, h = size
+    side = round(min(w, h) * (0.5 if slot == "center" else 0.36))
+    img.thumbnail((side, side), Image.LANCZOS)
+    border = max(3, side // 40)
+    framed = Image.new("RGBA", (img.width + border * 2, img.height + border * 2), (255, 255, 255, 255))
+    framed.alpha_composite(img, (border, border))
+    shadow = Image.new("RGBA", (framed.width + border * 6, framed.height + border * 6), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rectangle((border * 3, border * 4, border * 3 + framed.width, border * 4 + framed.height),
+                                     fill=(0, 0, 0, 120))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(border * 1.5))
+    shadow.alpha_composite(framed, (border * 3, border * 3))
+    tilt = {"br": -6, "bl": 6, "tr": 5, "tl": -5, "center": 0}.get(slot, 0)
+    sticker = shadow.rotate(tilt, resample=Image.BICUBIC, expand=True) if tilt else shadow
+    margin = round(min(w, h) * 0.04)
+    sw, sh = sticker.size
+    x = {"bl": margin, "tl": margin, "br": w - sw - margin, "tr": w - sw - margin}.get(slot, (w - sw) // 2)
+    # Góc dưới đặt cao hơn vùng phụ đề
+    y = {"tl": margin * 3, "tr": margin * 3, "bl": round(h * 0.7) - sh, "br": round(h * 0.7) - sh}.get(slot, (h - sh) // 2)
+    return Layer(sticker, (x, max(0, y)), start=start, end=end, enter="pop", enter_dur=0.3)
+
+
+def pop_text_layer(text: str, size: tuple[int, int], fonts: Fonts, accent: tuple[int, int, int] = DEFAULT_ACCENT,
+                   start: float = 0.0, end: float | None = None) -> Layer | None:
+    """Chữ nhấn mạnh to giữa khung (vd "SAI BÉT!", "x10 LẦN"): màu chủ đạo, viền đen, nghiêng nhẹ, bật ra."""
+    w, h = size
+    font = fonts.get("bold", max(34, round(min(w, h) * 0.12)))
+    lines = wrap_balanced(text.upper(), font, int(w * 0.8))[:2]
+    stroke = max(3, round(font.size * 0.1))
+    line_h = round(font.size * 1.1)
+    box_w = int(max(font.getlength(line) for line in lines) + stroke * 4)
+    box_h = line_h * len(lines) + stroke * 4
+    canvas = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    fill = accent if sum(accent) > 160 else (255, 214, 0)
+    for k, line in enumerate(lines):
+        draw.text((box_w / 2, stroke * 2 + k * line_h), line, font=font, fill=(*fill, 255), anchor="ma",
+                  stroke_width=stroke, stroke_fill="black")
+    canvas = canvas.rotate(-4, resample=Image.BICUBIC, expand=True)
+    pos = ((w - canvas.width) // 2, round(h * 0.4 - canvas.height / 2))
+    return Layer(canvas, pos, start=start, end=end, enter="pop", enter_dur=0.28)

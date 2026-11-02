@@ -1,5 +1,5 @@
 import "server-only";
-import { normalizeTag } from "@/lib/hashtags";
+import { normalizeTag, splitTags } from "@/lib/hashtags";
 import type { TagCount } from "@/lib/types";
 import { db } from "./db";
 
@@ -38,10 +38,16 @@ export function tagsFor(entity: TagEntity, ids: string[]): Map<string, string[]>
   return result;
 }
 
-/** Điều kiện SQL lọc bản ghi có tag (dùng với tham số là tên tag). */
+/** Điều kiện SQL lọc bản ghi có ít nhất một trong các tag; tham số đi kèm là tagFilterParam(...). */
 export function tagFilterSql(entity: TagEntity, alias: string): string {
   const { table, column } = LINKS[entity];
-  return `EXISTS (SELECT 1 FROM ${table} l JOIN tags t ON t.id = l.tag_id WHERE l.${column} = ${alias}.id AND t.name = ?)`;
+  return `EXISTS (SELECT 1 FROM ${table} l JOIN tags t ON t.id = l.tag_id WHERE l.${column} = ${alias}.id
+    AND t.name IN (SELECT value FROM json_each(?)))`;
+}
+
+/** Tham số cho tagFilterSql từ chuỗi một hoặc nhiều tag cách nhau bằng dấu phẩy. */
+export function tagFilterParam(tags: string): string {
+  return JSON.stringify(splitTags(tags));
 }
 
 export function listTags(): TagCount[] {

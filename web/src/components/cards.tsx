@@ -39,6 +39,7 @@ export function VideoCard({ video, action }: { video: VideoItem; action?: React.
 }
 
 const STAGES: Record<string, string> = {
+  director: "Đạo diễn AI",
   script: "Viết kịch bản",
   images: "Lấy ảnh",
   audio: "Giọng đọc",

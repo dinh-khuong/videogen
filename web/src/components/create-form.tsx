@@ -26,6 +26,7 @@ import {
   type VoiceSettings,
 } from "@/lib/video-options";
 import { AssetPicker, MusicPicker } from "./assets-library";
+import { TagPicker } from "./library-filters";
 import { Button, Card, Choice, ErrorBox, Field, Loading, PageHeader, Segmented, Toggle, cx, inputClass } from "./ui";
 import { StyleFields, VoiceFields } from "./video-style-fields";
 
@@ -43,6 +44,7 @@ type WebMedia = NonNullable<JobInput["webMedia"]>;
 
 /** Cài đặt được nhớ cho lần tạo sau (không gồm chủ đề, khách hàng, asset đã chọn). */
 type Settings = {
+  director: boolean;
   voice: VoiceSettings;
   style: VideoStyle;
   videoType: VideoType;
@@ -56,13 +58,15 @@ type Settings = {
   webMedia: WebMedia;
   clipsPerStep: number;
   libraryMode: JobInput["libraryMode"];
-  libraryTag: string;
+  libraryTags: string[];
   music: { musicId: string; volume: number };
 };
 
 type FormState = Settings & { topic: string; batch: boolean; assetIds: string[]; contactId: string };
 
 const DEFAULTS: Settings = {
+  // Đạo diễn AI cho video sinh động hơn hẳn (meme, giọng biến hóa, tự duyệt): mặc định bật
+  director: true,
   voice: DEFAULT_VOICE,
   style: DEFAULT_STYLE,
   videoType: "howto",
@@ -77,7 +81,7 @@ const DEFAULTS: Settings = {
   webMedia: "video",
   clipsPerStep: 3,
   libraryMode: "auto",
-  libraryTag: "",
+  libraryTags: [],
   music: { musicId: "", volume: 0.12 },
 };
 
@@ -87,6 +91,7 @@ function sanitize(p: Partial<Settings>): Settings {
   const voiceOk = (v: unknown): v is string => typeof v === "string" && VOICE_RE.test(v);
   const pick = <T,>(value: unknown, ok: (v: unknown) => boolean, fallback: T): T => (ok(value) ? (value as T) : fallback);
   return {
+    director: typeof p.director === "boolean" ? p.director : DEFAULTS.director,
     voice: {
       language: lang.value,
       voice: voiceOk(p.voice?.voice) ? p.voice.voice : lang.voices[0].value,
@@ -107,7 +112,12 @@ function sanitize(p: Partial<Settings>): Settings {
     webMedia: pick(p.webMedia, (v) => v === "image" || v === "video" || v === "auto", DEFAULTS.webMedia),
     clipsPerStep: pick(p.clipsPerStep, (v) => typeof v === "number" && v >= 1 && v <= 6, DEFAULTS.clipsPerStep),
     libraryMode: pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode),
-    libraryTag: typeof p.libraryTag === "string" ? p.libraryTag : "",
+    libraryTags: Array.isArray(p.libraryTags)
+      ? p.libraryTags.filter((t): t is string => typeof t === "string").slice(0, 20)
+      : // cài đặt lưu từ bản cũ (một tag)
+        typeof (p as { libraryTag?: unknown }).libraryTag === "string" && (p as { libraryTag: string }).libraryTag
+        ? [(p as { libraryTag: string }).libraryTag]
+        : [],
     music: {
       musicId: typeof p.music?.musicId === "string" ? p.music.musicId : "",
       volume: typeof p.music?.volume === "number" ? Math.min(Math.max(p.music.volume, 0.02), 0.5) : DEFAULTS.music.volume,
@@ -146,6 +156,7 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
   const layoutIndex = input.layout === "split" ? 3 : Math.max(0, LAYOUTS.findIndex((l) => l.aspect === input.aspect && l.layout === "normal"));
   const lang = LANGUAGES.find((l) => l.value === input.language) ?? languageOf(undefined);
   return {
+    director: !!input.director,
     voice: {
       language: lang.value,
       voice: input.voice || lang.voices[0].value,
@@ -166,7 +177,7 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
     webMedia: input.webMedia,
     clipsPerStep: input.clipsPerStep,
     libraryMode: input.libraryMode,
-    libraryTag: input.libraryTag ?? "",
+    libraryTags: input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [],
     music: { musicId: input.musicId ?? "", volume: input.musicVolume ?? DEFAULTS.music.volume },
   };
 }
@@ -262,6 +273,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
     setBusy(true);
     setError(null);
     const common: Omit<Partial<JobInput>, "topic"> = {
+      director: s.director,
       numSteps: s.numSteps ? Number(s.numSteps) : null,
       language: s.voice.language,
       voice: s.voice.voice,
@@ -281,7 +293,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       webMedia: s.webMedia,
       clipsPerStep: s.clipsPerStep,
       libraryMode: s.libraryMode,
-      libraryTag: s.libraryMode === "auto" ? s.libraryTag || null : null,
+      libraryTags: s.libraryMode === "auto" ? s.libraryTags : [],
       assetIds: s.libraryMode === "selected" ? s.assetIds : [],
       contactId: s.contactId || null,
       musicId: s.music.musicId || null,
@@ -308,7 +320,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         subtitle={
           fromJob
             ? "Đã điền sẵn cài đặt của job cũ. Sửa chủ đề hoặc tùy chọn rồi tạo video."
-            : "AI viết kịch bản, chọn ảnh/clip, đọc lời bình và dựng video. Cài đặt của lần tạo trước được nhớ sẵn."
+            : "AI lên kịch bản, chọn ảnh/clip/meme, đọc lời bình và dựng video. Cài đặt của lần tạo trước được nhớ sẵn."
         }
         actions={
           <Button variant="ghost" onClick={reset}>
@@ -316,6 +328,22 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
           </Button>
         }
       />
+
+      <Card className="space-y-3 p-5">
+        <div>
+          <h2 className="font-semibold text-zinc-900">Cách AI làm video</h2>
+          <p className="text-sm text-zinc-500">Đạo diễn AI làm nhiều bước như người dựng phim thật; bạn xem được từng quyết định của AI ở trang job.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Choice active={s.director} onClick={() => set("director", true)} title="Đạo diễn AI (sinh động)">
+            AI tự lên ý tưởng, tìm meme, ảnh và clip, dựng từng cảnh rồi tự duyệt và sửa. Số cảnh do AI quyết định, giọng đọc đổi cảm xúc
+            theo từng câu, có giọng phụ chen ngang, âm thanh meme, zoom giật, sticker.
+          </Choice>
+          <Choice active={!s.director} onClick={() => set("director", false)} title="Kịch bản nhanh">
+            AI viết kịch bản một lần theo khung cố định: mở đầu, các bước có nhãn, lời kết. Nhanh và tốn ít lượt gọi AI hơn.
+          </Choice>
+        </div>
+      </Card>
 
       <Card className="space-y-3 p-5">
         <div>
@@ -411,8 +439,16 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
               options={(Object.keys(LENGTHS) as VideoLength[]).map((k) => ({ value: k, label: LENGTHS[k].label, hint: LENGTHS[k].hint }))}
             />
           </div>
-          <Field label="Số phần">
-            <input className={inputClass} type="number" min={1} max={15} value={s.numSteps} onChange={(e) => set("numSteps", e.target.value)} placeholder="Tự động" />
+          <Field label={s.director ? "Số cảnh (gợi ý)" : "Số phần"}>
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              max={15}
+              value={s.numSteps}
+              onChange={(e) => set("numSteps", e.target.value)}
+              placeholder={s.director ? "AI quyết định" : "Tự động"}
+            />
           </Field>
         </div>
       </Card>
@@ -482,18 +518,18 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         </div>
 
         {s.libraryMode === "auto" && (
-          <Field label="Giới hạn trong tag (tùy chọn)" hint="AI chỉ xem các asset có tag này. Để trống: cả thư viện (AI lọc theo chủ đề).">
-            <select className={`${inputClass} max-w-xs`} value={s.libraryTag} onChange={(e) => set("libraryTag", e.target.value)}>
-              <option value="">Toàn bộ thư viện</option>
-              {tags.data
-                ?.filter((t) => t.assets > 0)
-                .map((t) => (
-                  <option key={t.name} value={t.name}>
-                    #{t.name} ({t.assets} asset)
-                  </option>
-                ))}
-            </select>
-          </Field>
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-zinc-700">Giới hạn trong tag (tùy chọn)</p>
+            <TagPicker
+              placeholder="Toàn bộ thư viện"
+              options={(tags.data ?? []).filter((t) => t.assets > 0).map((t) => ({ name: t.name, count: t.assets }))}
+              value={s.libraryTags}
+              onChange={(v) => set("libraryTags", v)}
+            />
+            <p className="mt-1 text-xs text-zinc-500">
+              AI chỉ xem các asset có ít nhất một tag đã chọn (vd #meme + #meo). Để trống: cả thư viện (AI lọc theo chủ đề).
+            </p>
+          </div>
         )}
         {s.libraryMode === "selected" && (
           <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">

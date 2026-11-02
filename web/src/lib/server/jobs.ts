@@ -3,13 +3,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
+import { normalizeTag } from "@/lib/hashtags";
+import type { AgentEvent, JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
 import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, VIDEO_TYPES, VOICE_EFFECTS, VOICE_RE, normalizeStyle } from "@/lib/video-options";
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
 import { JOBS_DIR } from "./paths";
-import { getVideo } from "./videos";
+import { getVideo, getVideoDetail } from "./videos";
 
 export type JobRow = {
   id: string;
@@ -83,6 +84,27 @@ function tailFile(file: string, maxBytes = 24_000): string {
   }
 }
 
+const MAX_AGENT_EVENTS = 400;
+
+/** Nhật ký của Đạo diễn AI (engine ghi mỗi dòng một sự kiện JSON). */
+function readAgentEvents(id: string): AgentEvent[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(jobDir(id), "director.jsonl"), "utf8");
+  } catch {
+    return [];
+  }
+  const events: AgentEvent[] = [];
+  for (const line of text.split("\n").slice(-MAX_AGENT_EVENTS)) {
+    try {
+      if (line.trim()) events.push(JSON.parse(line) as AgentEvent);
+    } catch {
+      // dòng đang ghi dở
+    }
+  }
+  return events;
+}
+
 export function getJobDetail(id: string): JobDetail | null {
   const row = getJobRow(id);
   if (!row) return null;
@@ -90,6 +112,7 @@ export function getJobDetail(id: string): JobDetail | null {
     ...toItem(row),
     log: tailFile(path.join(jobDir(id), "log.txt")),
     video: row.video_id ? getVideo(row.video_id) : null,
+    agent: readAgentEvents(id),
   };
 }
 
@@ -99,6 +122,9 @@ const VISUAL_KINDS = "image,video";
 const DEFAULT_MUSIC_VOLUME = 0.12;
 /** Chủ đề là prompt cho AI nên cho phép rất dài; giới hạn này chỉ để tránh vô tình dán cả tài liệu khổng lồ. */
 export const MAX_TOPIC_CHARS = 30_000;
+export const MAX_FEEDBACK_CHARS = 2000;
+/** Đạo diễn AI tự tìm trong thư viện bằng công cụ (không đưa cả thư viện vào prompt) nên nhận được nhiều asset hơn. */
+const DIRECTOR_LIBRARY_LIMIT = 3000;
 
 function validScript(script: unknown): script is Script {
   const s = script as Script;
@@ -156,6 +182,10 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
   if (contactId && !db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(contactId)) {
     throw new HttpError(400, "Không tìm thấy khách hàng");
   }
+  const feedback = String(raw.feedback ?? "").trim().slice(0, MAX_FEEDBACK_CHARS) || null;
+  const baseJobId = feedback ? raw.baseJobId || null : null;
+  if (baseJobId && !baseScript(baseJobId)) throw new HttpError(400, "Video của job gốc không còn để sửa theo góp ý");
+  const director = !script && (raw.director === true || !!baseJobId);
   return {
     topic,
     numSteps: script ? null : numSteps,
@@ -177,14 +207,31 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     webMedia: raw.webMedia === "video" || raw.webMedia === "auto" ? raw.webMedia : "image",
     clipsPerStep: Math.min(Math.max(Math.round(Number(raw.clipsPerStep) || 3), 1), 6),
     libraryMode: script ? "off" : libraryMode,
-    libraryTag: libraryMode === "auto" ? raw.libraryTag?.trim() || null : null,
+    libraryTags: libraryMode === "auto" ? libraryTagsOf(raw) : [],
     assetIds: libraryMode === "selected" && !script ? assetIds : [],
     musicId,
     musicVolume: musicId ? musicVolume : undefined,
     contactId,
     script,
     sourceVideoId: raw.sourceVideoId || null,
+    director,
+    feedback: director ? feedback : null,
+    baseJobId: director ? baseJobId : null,
   };
+}
+
+const MAX_LIBRARY_TAGS = 20;
+
+/** Tag giới hạn thư viện của job (job cũ lưu một tag ở libraryTag). */
+export function libraryTagsOf(input: Partial<JobInput>): string[] {
+  const raw = input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [];
+  return [...new Set(raw.map((t) => normalizeTag(String(t))).filter(Boolean))].slice(0, MAX_LIBRARY_TAGS);
+}
+
+/** Kịch bản (kèm id asset từng bước) của video do job tạo ra, dùng làm bản gốc khi sửa theo góp ý. */
+function baseScript(jobId: string): Script | null {
+  const row = getJobRow(jobId);
+  return row?.video_id ? (getVideoDetail(row.video_id)?.script ?? null) : null;
 }
 
 export function createJob(input: JobInput): JobItem {
@@ -247,9 +294,19 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     spec.music = music;
     spec.music_volume = input.musicVolume ?? DEFAULT_MUSIC_VOLUME;
   }
+  if (input.director) {
+    spec.director = true;
+    const base = input.baseJobId ? baseScript(input.baseJobId) : null;
+    if (base && input.feedback) {
+      spec.feedback = input.feedback;
+      spec.base_script = base;
+    }
+  }
   if (input.script) {
-    // Render lại: asset từng bước lấy theo library_image (id asset thư viện)
-    const ids = input.script.steps.flatMap((s) => [s.library_image, ...(s.extra_assets ?? [])]).filter((x): x is string => !!x);
+    // Render lại: asset từng bước lấy theo library_image (id asset thư viện), sticker meme của câu thoại
+    const ids = input.script.steps
+      .flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...stickerIds(s.lines)])
+      .filter((x): x is string => !!x);
     spec.script = { ...input.script, steps: input.script.steps.map((s) => ({ ...s, image: null })) };
     spec.library = assetsForEngine({ ids, kind: VISUAL_KINDS, limit: ids.length || 1 });
     spec.library_mode = "auto";
@@ -260,11 +317,24 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     spec.library = assets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   } else if (input.libraryMode === "auto") {
     // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
-    spec.library = assetsForEngine({ tag: input.libraryTag ?? undefined, kind: VISUAL_KINDS, limit: 300 }).filter(
+    const limit = input.director ? DIRECTOR_LIBRARY_LIMIT : 300;
+    spec.library = assetsForEngine({ tag: libraryTagsOf(input).join(",") || undefined, kind: VISUAL_KINDS, limit }).filter(
       (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
+  const base = spec.base_script as Script | undefined;
+  if (base) {
+    // Bản gốc khi sửa theo góp ý có thể dùng asset ngoài phạm vi thư viện của lần này
+    const library = spec.library as ReturnType<typeof assetsForEngine>;
+    const baseIds = base.steps.flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...stickerIds(s.lines)]);
+    const missing = [...new Set(baseIds.filter((x): x is string => !!x && !library.some((a) => a.id === x)))];
+    if (missing.length) library.push(...assetsForEngine({ ids: missing, kind: VISUAL_KINDS, limit: missing.length }));
+  }
   return spec;
+}
+
+function stickerIds(lines: Script["steps"][number]["lines"]): string[] {
+  return (lines ?? []).flatMap((l) => (l.sticker && "asset" in l.sticker ? [l.sticker.asset] : []));
 }
 
 function selectedAssetIds(input: JobInput): string[] {
@@ -280,7 +350,7 @@ export function waitsForAnalysis(row: JobRow): boolean {
   const input = JSON.parse(row.input) as JobInput;
   if (input.script) return false;
   if (input.libraryMode === "selected") return countUnanalyzed({ ids: selectedAssetIds(input) }) > 0;
-  if (input.libraryMode === "auto") return countUnanalyzed({ tag: input.libraryTag }) > 0;
+  if (input.libraryMode === "auto") return countUnanalyzed({ tag: libraryTagsOf(input).join(",") || null }) > 0;
   return false;
 }
 

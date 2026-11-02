@@ -35,6 +35,8 @@ class Settings:
         self.deepseek_api_key = _get("DEEPSEEK_API_KEY")
         self.deepseek_base_url = _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         self.deepseek_model = _get("DEEPSEEK_MODEL", "deepseek-chat")
+        # Mô hình cho Đạo diễn AI (cần hỗ trợ gọi công cụ/function calling); mặc định dùng DEEPSEEK_MODEL
+        self.director_model = _get("DIRECTOR_MODEL")
 
         self.google_api_key = _get("GOOGLE_API_KEY")
         self.google_cse_id = _get("GOOGLE_CSE_ID")

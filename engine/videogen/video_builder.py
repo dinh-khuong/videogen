@@ -20,8 +20,8 @@ from PIL import Image, ImageDraw
 
 from . import sfx
 from .effects import (
-    MOTIONS, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, make_motion, motion_box,
-    pick_transitions,
+    MOTIONS, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, in_out_cubic, make_motion, motion_box,
+    out_cubic, pick_transitions, zoom_crop,
 )
 from .graphics import Fonts, framed_backdrop, logo_layer, prepare_background, resolve_fonts
 from .probe import ffmpeg_exe, video_info
@@ -58,6 +58,9 @@ class Scene:
     overlays: list[Layer] = field(default_factory=list)  # nhãn bước, title card, lời kêu gọi... (có hoạt ảnh)
     words: list[dict] | None = None  # thời điểm từng từ của giọng đọc (edge-tts), để phụ đề khớp tiếng
     pops: list[float] = field(default_factory=list)  # thời điểm (giây trong scene) phát tiếng "tách"
+    # Hiệu ứng theo câu thoại (Đạo diễn AI), thời điểm tính theo giọng đọc (chưa cộng khoảng lặng đầu cảnh)
+    camera: list[tuple[float, str]] = field(default_factory=list)  # (giây, punch | shake | zoom_slow)
+    sounds: list[tuple[float, str]] = field(default_factory=list)  # (giây, tên âm thanh trong sfx.named)
 
 
 @dataclass
@@ -67,6 +70,44 @@ class SceneRender:
     speech: np.ndarray | None
     sources: list
     pops: list[float]
+    sounds: list[tuple[float, str]] = field(default_factory=list)  # thời điểm đã tính trong scene
+
+
+PUNCH_ZOOM, PUNCH_HOLD = 1.18, 0.9
+SHAKE_LEN = 0.45
+
+
+def _camera_fn(events: list[tuple[float, str]], seed: int) -> Callable[[float], tuple[float, float, float]] | None:
+    """t -> (độ phóng, tâm x, tâm y) cho zoom giật (punch), rung khung (shake) và zoom chậm kịch tính."""
+    if not events:
+        return None
+    rng = np.random.default_rng(seed)
+    jitter = rng.uniform(-1, 1, size=(64, 2))
+
+    def at(t: float) -> tuple[float, float, float]:
+        scale, cx, cy = 1.0, 0.5, 0.5
+        for start, kind in events:
+            local = t - start
+            if local < 0:
+                continue
+            if kind == "punch":
+                if local < 0.07:
+                    k = out_cubic(local / 0.07)
+                elif local < PUNCH_HOLD:
+                    k = 1.0
+                else:
+                    k = 1 - in_out_cubic((local - PUNCH_HOLD) / 0.25)
+                scale = max(scale, 1 + (PUNCH_ZOOM - 1) * max(0.0, k))
+            elif kind == "zoom_slow":
+                scale = max(scale, 1 + 0.16 * in_out_cubic(local / 2.6))
+            elif kind == "shake" and local < SHAKE_LEN:
+                amp = 0.03 * (1 - local / SHAKE_LEN)
+                dx, dy = jitter[int(local * 60) % len(jitter)]
+                scale = max(scale, 1.08)
+                cx, cy = 0.5 + dx * amp, 0.5 + dy * amp
+        return scale, cx, cy
+
+    return at
 
 
 def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
@@ -260,18 +301,23 @@ def _build_scene(
         cues = build_cues(scene.narration, scene.words, speech, kind, size)
         subtitles = SubtitleTrack(cues, kind, size, fonts, style.accent, offset=pacing.head)
     grade = color_filter(style.color_filter)
+    camera = _camera_fn([(pacing.head + t, kind) for t, kind in scene.camera], index)
 
     def frame(t: float) -> Image.Image:
         img = base(t)
         if grade:
             img = grade(img)
+        if camera:
+            scale, cx, cy = camera(t)
+            img = zoom_crop(img, scale, cx, cy)
         for layer in scene.overlays:
             draw_layer(img, layer, t)
         if subtitles:
             subtitles.draw(img, t)
         return img
 
-    return SceneRender(frame, duration, speech_samples, sources, scene.pops)
+    sounds = [(pacing.head + t, name) for t, name in scene.sounds]
+    return SceneRender(frame, duration, speech_samples, sources, scene.pops, sounds)
 
 
 def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
@@ -384,6 +430,12 @@ def build_video(
             effects.append((starts[i + 1] + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN))
         for start, render in zip(starts, renders):
             effects.extend((start + p, sfx.pop(), POP_GAIN) for p in render.pops)
+    # Âm thanh meme do Đạo diễn AI đặt theo câu thoại: luôn phát (AI đã chủ động chọn)
+    for start, render in zip(starts, renders):
+        for t, name in render.sounds:
+            sound = sfx.named(name)
+            if sound:
+                effects.append((start + t, sound[0], sound[1]))
 
     audio = _build_audio(
         [r.speech for r in renders], [s + pacing.head for s in starts], total, music_path, music_volume, effects

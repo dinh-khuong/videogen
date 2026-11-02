@@ -8,6 +8,7 @@ Ví dụ (chạy trong thư mục engine/):
     python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/   # Shorts chia đôi với gameplay
     python -m videogen "giới thiệu menu quán" --library-dir anh_mon/       # ảnh/video của bạn làm nội dung chính
     python -m videogen analyze menu.jpg demo.mp4  # đọc chữ (OCR) + AI tóm tắt nội dung asset
+    python -m videogen "5 sự thật về mèo" --director --aspect 9:16   # Đạo diễn AI: meme, giọng biến hóa, tự quyết số cảnh
 
 Lệnh dành cho web app:
     python -m videogen job spec.json      # chạy job, phát sự kiện JSON trên stdout
@@ -137,6 +138,11 @@ def cmd_make(argv: list[str]) -> int:
                              "auto (AI chọn ảnh hay clip cho từng bước)")
     parser.add_argument("--clips-per-step", type=int, default=3, choices=range(1, 7), metavar="1-6",
                         help="Số clip mạng ghép nối tiếp trong một bước dùng video (mặc định 3)")
+    parser.add_argument("--director", action="store_true",
+                        help="Đạo diễn AI: AI tự lên kịch bản qua nhiều lượt (tìm asset/meme/clip, dựng và tự duyệt cảnh), "
+                             "giọng đọc đổi cảm xúc theo từng câu, hiệu ứng meme. Số cảnh do AI quyết định")
+    parser.add_argument("--feedback", default="", help="Góp ý để Đạo diễn AI sửa lại kịch bản trong --base-script")
+    parser.add_argument("--base-script", type=Path, help="script.json của bản trước (đi kèm --feedback)")
     args = parser.parse_args(argv)
 
     if not args.topic and not args.script:
@@ -178,6 +184,9 @@ def cmd_make(argv: list[str]) -> int:
         clips_per_step=args.clips_per_step,
         library=library,
         library_mode=args.library_mode if library else "off",
+        director=args.director or bool(args.base_script),
+        feedback=args.feedback,
+        base_script=json.loads(args.base_script.read_text(encoding="utf-8")) if args.base_script else None,
     )
     try:
         run(args.topic, args.output, args.script, opts)

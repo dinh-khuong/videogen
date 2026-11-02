@@ -27,6 +27,9 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "web_media": "image",                     # image | video (clip CC/stock) | auto (LLM chọn từng bước)
   "clips_per_step": 3,                      # số clip ghép nối tiếp trong một bước dùng video
   "library_mode": "off",                    # off | auto | selected
+  "director": false,                        # Đạo diễn AI: tự lên kịch bản qua nhiều lượt gọi công cụ, meme, giọng biến hóa
+  "feedback": "",                           # góp ý của người dùng để Đạo diễn AI sửa bản trước
+  "base_script": {...},                     # kịch bản của bản trước (đi kèm feedback)
   "library": [{"id": "...", "path": "/abs/anh.jpg", "kind": "image",   # asset ảnh/video của người dùng
                "description": "...", "tags": ["..."],
                "summary": "tóm tắt AI", "ocr_text": "chữ trong asset", "duration": null}]
@@ -39,7 +42,7 @@ import traceback
 from pathlib import Path
 
 from .config import ConfigError
-from .events import JsonReporter
+from .events import DIRECTOR_STAGES, JsonReporter
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
@@ -125,6 +128,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         library_mode=library_mode,
         work_dir=Path(spec["work_dir"]),
         reporter=reporter,
+        director=bool(spec.get("director")) and not spec.get("script"),
+        feedback=" ".join(str(spec.get("feedback") or "").split())[:2000],
+        base_script=spec.get("base_script") if isinstance(spec.get("base_script"), dict) else None,
     )
 
 
@@ -137,6 +143,8 @@ def run_job(spec_path: Path) -> int:
         if not spec.get("topic") and not spec.get("script"):
             raise ValueError("Spec cần topic hoặc script")
         opts = _options(spec, reporter)
+        if opts.director:
+            reporter.stages = DIRECTOR_STAGES
         work_dir = opts.work_dir
         result = run(
             spec.get("topic"),

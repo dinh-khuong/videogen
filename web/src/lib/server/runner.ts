@@ -266,6 +266,10 @@ const globalForRunner = globalThis as unknown as { __videogenRunner?: JobRunner 
 
 export function runner(): JobRunner {
   if (!globalForRunner.__videogenRunner) globalForRunner.__videogenRunner = new JobRunner();
+  // Khi dev hot-reload, hàng đợi cũ (giữ job đang chạy) được giữ lại nhưng phải dùng code mới (vd buildSpec mới)
+  if (Object.getPrototypeOf(globalForRunner.__videogenRunner) !== JobRunner.prototype) {
+    Object.setPrototypeOf(globalForRunner.__videogenRunner, JobRunner.prototype);
+  }
   globalForRunner.__videogenRunner.start();
   return globalForRunner.__videogenRunner;
 }

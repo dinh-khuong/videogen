@@ -7,7 +7,7 @@ import { getAsset } from "./assets";
 import { db, nowIso } from "./db";
 import { moveFile, removeMedia } from "./files";
 import { MEDIA_DIR, mediaUrl } from "./paths";
-import { setTags, tagFilterSql, tagsFor } from "./tags";
+import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
 
 type VideoRow = {
   id: string;
@@ -55,7 +55,7 @@ export function listVideos(query: VideoQuery = {}): Page<VideoItem> {
   }
   if (query.tag) {
     clauses.push(tagFilterSql("video", "v"));
-    params.push(query.tag);
+    params.push(tagFilterParam(query.tag));
   }
   const sql = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = Math.min(Math.max(query.limit ?? 48, 1), 500);

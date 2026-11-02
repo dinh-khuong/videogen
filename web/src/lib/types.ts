@@ -59,9 +59,28 @@ export type ScriptStep = {
   /** asset ghép nối tiếp sau library_image (vd thêm clip video) */
   extra_assets?: string[];
   media?: "video" | "image" | null;
+  /** Câu thoại có diễn xuất (Đạo diễn AI): mỗi câu một cảm xúc, giọng, hiệu ứng meme. Chỉ dùng khi ghép lại bằng narration. */
+  lines?: ScriptLine[];
+  /** Hình do Đạo diễn AI chọn (asset thư viện hoặc file đã tải về), theo thứ tự */
+  visuals?: ({ asset: string } | { path: string; media?: "image" | "video" })[];
+  /** Chữ meme phủ trên hình suốt cảnh */
+  meme?: { top: string; bottom: string } | null;
+  title_card?: boolean;
+};
+
+export type ScriptLine = {
+  text: string;
+  mood: string;
+  voice?: "second";
+  sfx?: string;
+  camera?: string;
+  sticker?: { asset: string } | { path: string };
+  pop_text?: string;
 };
 
 export type Script = {
+  /** director: các cảnh tự do do Đạo diễn AI dựng (không có cảnh mở đầu/kết riêng) */
+  format?: "classic" | "director";
   title: string;
   description?: string;
   hashtags?: string[];
@@ -108,6 +127,9 @@ export type JobInput = {
   /** số clip video ghép nối tiếp trong một bước (1-6) */
   clipsPerStep?: number;
   libraryMode: "off" | "auto" | "selected";
+  /** AI chỉ xem asset có ít nhất một trong các tag này (chế độ "auto"); trống = cả thư viện */
+  libraryTags?: string[];
+  /** tên cũ của libraryTags (job tạo khi mới chọn được một tag) */
   libraryTag?: string | null;
   /** asset chọn làm nội dung chính (chế độ "selected"), theo thứ tự */
   assetIds?: string[];
@@ -121,6 +143,19 @@ export type JobInput = {
   script?: Script | null;
   /** id video gốc khi render lại từ kịch bản đã sửa */
   sourceVideoId?: string | null;
+  /** Đạo diễn AI: AI tự lên kịch bản qua nhiều lượt (tìm asset/meme/clip, dựng cảnh, tự duyệt), giọng đổi cảm xúc từng câu */
+  director?: boolean;
+  /** góp ý của người dùng để Đạo diễn AI sửa lại video của job baseJobId */
+  feedback?: string | null;
+  baseJobId?: string | null;
+};
+
+/** Một bước suy nghĩ/hành động của Đạo diễn AI (engine ghi vào director.jsonl). */
+export type AgentEvent = {
+  t: number;
+  turn: number;
+  kind: "thought" | "action" | "result" | "warn" | "done";
+  text: string;
 };
 
 export type JobItem = {
@@ -139,7 +174,7 @@ export type JobItem = {
   finishedAt: string | null;
 };
 
-export type JobDetail = JobItem & { log: string; video: VideoItem | null };
+export type JobDetail = JobItem & { log: string; video: VideoItem | null; agent: AgentEvent[] };
 
 export const CONTACT_STATUSES = {
   lead: "Tiềm năng",

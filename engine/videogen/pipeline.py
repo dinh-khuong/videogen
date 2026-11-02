@@ -10,15 +10,19 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .config import Settings, load_settings
+from .delivery import assemble, load_line_times, prosody
 from .events import Reporter
 from .effects import Layer
-from .graphics import Fonts, cta_layer, make_placeholder, render_step_badge, resolve_fonts, title_layers
+from .graphics import (
+    STICKER_SLOTS, Fonts, cta_layer, make_placeholder, meme_caption_layers, pop_text_layer, render_step_badge,
+    resolve_fonts, sticker_layer, title_layers,
+)
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
 from .video_search import VideoProviderPool, fetch_videos
-from .llm import LibraryAsset, Script, generate_script, parse_script, short_title
+from .llm import LibraryAsset, Script, Step, generate_script, parse_script, short_title
 from .probe import VIDEO_EXTS
 from .style import Style, language_for, step_label, tagline
-from .tts import TtsJob, load_words, synthesize_many
+from .tts import TtsJob, load_words, provider_of, synthesize_many
 from .video_builder import ASPECTS, Scene, Segment, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
@@ -55,6 +59,10 @@ class Options:
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
     reporter: Reporter = field(default_factory=Reporter)
+    # Đạo diễn AI: AI tự lên kịch bản qua nhiều lượt gọi công cụ (tìm asset/meme/clip, thêm/sửa cảnh, tự duyệt)
+    director: bool = False
+    feedback: str = ""  # góp ý của người dùng để AI sửa lại bản dựng trước (base_script)
+    base_script: dict | None = None
 
 
 @dataclass
@@ -108,6 +116,15 @@ class RunResult:
         }
 
 
+def contrast_voice(voice: str, lang_code: str) -> str:
+    """Giọng phụ tương phản với giọng chính (nam <-> nữ) cho câu thoại "second" khi người dùng chưa chọn."""
+    if provider_of(voice) == "gtts":
+        return "gtts:vi" if voice.endswith("-male") else "gtts:vi-male"
+    if lang_code == "vi":
+        return "vi-VN-HoaiMyNeural" if "NamMinh" in voice else "vi-VN-NamMinhNeural"
+    return "en-US-AvaMultilingualNeural" if "Andrew" in voice or "Brian" in voice else "en-US-AndrewMultilingualNeural"
+
+
 def pick_background(path: Path) -> Path:
     if path.is_dir():
         videos = [p for p in path.iterdir() if p.suffix.lower() in VIDEO_EXTS]
@@ -128,6 +145,7 @@ def _hash(*parts: str) -> str:
 
 
 ORIENTATIONS = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
+TITLE_CARD_SECONDS = 2.4  # thời gian tiêu đề lớn hiện ở cảnh Đạo diễn AI chọn (thường là hook)
 
 
 def _write_credits(images: list[StepImage], work_dir: Path) -> None:
@@ -204,9 +222,30 @@ def _prepare_images(
         print(f"      ✓ Bước {n}: {len(clips)} clip — {query} ({', '.join(sorted({c.credit.source for c in clips}))})", flush=True)
         return clips
 
+    def from_visuals(i: int) -> list[StepImage]:
+        """Hình do Đạo diễn AI chọn sẵn: asset thư viện hoặc ảnh/clip đã tải về, theo đúng thứ tự."""
+        out = []
+        for ref in script.steps[i].visuals:
+            if ref.get("asset"):
+                lib = library.get(ref["asset"])
+                if lib and Path(lib.path).exists():
+                    out.append(StepImage(i + 1, Path(lib.path), "library", library_id=lib.id, media=lib.kind, position=len(out)))
+            elif ref.get("path") and Path(ref["path"]).exists():
+                credit = ref.get("credit")
+                out.append(StepImage(
+                    i + 1, Path(ref["path"]), "web", credit=Credit(**credit) if isinstance(credit, dict) else None,
+                    query=ref.get("query"), media=ref.get("media") or "image", position=len(out),
+                ))
+        return out
+
     def find(i: int) -> list[StepImage]:
         step = script.steps[i]
         n = i + 1
+        if step.visuals:
+            chosen = from_visuals(i)
+            if chosen:
+                return chosen
+            print(f"      ⚠️  Hình AI chọn cho bước {n} không còn, chuyển sang nguồn khác.", flush=True)
         lib = library.get(step.library_image or "")
         if lib and step.extra_assets and Path(lib.path).exists():
             # Render lại: bước đã có nhiều asset nối tiếp
@@ -280,33 +319,54 @@ def _prepare_images(
 
 def _prepare_audio(
     script: Script, work_dir: Path, voices: tuple[str, str | None], rate: str, pitch: str, reporter: Reporter,
-    fallback_lang: str, effect: str = "none",
+    fallback_lang: str, effect: str = "none", alternate: bool = True,
 ) -> dict[str, Path]:
-    """Giọng đọc cho mở đầu, từng bước và lời kết. Có giọng thứ hai thì các bước chẵn dùng giọng đó (đọc xen kẽ)."""
+    """Giọng đọc cho mở đầu, từng bước và lời kết.
+
+    alternate: có giọng thứ hai thì các bước chẵn dùng giọng đó (đọc xen kẽ). Bước có câu thoại diễn xuất (lines):
+    mỗi câu đọc riêng với cảm xúc (tốc độ/cao độ) và giọng của nó, rồi ghép thành một file cho bước.
+    """
     audio_dir = work_dir / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     main, second = voices
-    texts: dict[str, tuple[str, str]] = {"intro": (script.intro, main), "outro": (script.outro, main)}
-    for i, s in enumerate(script.steps):
-        texts[f"step_{i + 1:02d}"] = (s.narration, second if second and i % 2 == 1 else main)
-    jobs: dict[str, TtsJob] = {}
-    for key, (text, voice) in texts.items():
-        if not text:
-            continue
+
+    def job_for(key: str, text: str, voice: str, r: str = rate, p: str = pitch) -> TtsJob:
         # Giữ khóa cache cũ khi không đổi cao độ (render lại không phải tạo lại giọng)
-        parts = (text, voice, rate) if pitch == "+0Hz" else (text, voice, rate, pitch)
+        parts = (text, voice, r) if p == "+0Hz" else (text, voice, r, p)
         if effect != "none":
             parts += (effect,)
-        jobs[key] = TtsJob(text, audio_dir / f"{key}_{_hash(*parts)}.mp3", voice)
+        return TtsJob(text, audio_dir / f"{key}_{_hash(*parts)}.mp3", voice, rate=r, pitch=p)
+
+    texts: dict[str, tuple[str, str]] = {"intro": (script.intro, main), "outro": (script.outro, main)}
+    acted: dict[str, list[tuple[TtsJob, dict]]] = {}
+    for i, s in enumerate(script.steps):
+        key = f"step_{i + 1:02d}"
+        lines = s.acted_lines()
+        if lines:
+            acted[key] = []
+            for j, line in enumerate(lines):
+                voice = second if line.get("voice") == "second" and second else main
+                r, p = prosody(rate, pitch, line["mood"])
+                acted[key].append((job_for(f"{key}_l{j + 1:02d}", line["text"], voice, r, p), line))
+        else:
+            texts[key] = (s.narration, second if alternate and second and i % 2 == 1 else main)
+    jobs: dict[str, TtsJob] = {key: job_for(key, text, voice) for key, (text, voice) in texts.items() if text}
+    all_jobs = list(jobs.values()) + [job for parts in acted.values() for job, _ in parts]
     synthesize_many(
-        list(jobs.values()),
+        all_jobs,
         rate,
         pitch,
         on_progress=lambda d, t: reporter.stage("audio", f"Giọng đọc {d}/{t}", d / t),
         fallback_lang=fallback_lang,
         effect=effect,
     )
-    return {key: job.path for key, job in jobs.items()}
+    paths = {key: job.path for key, job in jobs.items()}
+    for key, parts in acted.items():
+        out = audio_dir / f"{key}_{_hash(*(str(job.path.name) for job, _ in parts))}.acted.wav"
+        if not out.exists():
+            assemble([(job.path, line["text"], line["mood"]) for job, line in parts], out)
+        paths[key] = out
+    return paths
 
 
 def _style_for(image: StepImage, opts: Options) -> str:
@@ -341,6 +401,15 @@ def run(
         size, orientation, layout = ASPECTS[opts.aspect], ORIENTATIONS[opts.aspect], opts.aspect
         frame_size = size
 
+    director_dir = None
+    if opts.director and script_data is None and not script_path:
+        from .director import direct
+
+        # Thư mục làm việc có trước kịch bản: AI tải ảnh/clip vào đó trong lúc lên kịch bản
+        director_dir = opts.work_dir or OUTPUT_ROOT / slugify(short_title(topic or "video"))
+        director_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[1/4] Đạo diễn AI đang lên kịch bản cho: {short_title(topic, 80)!r} ...", flush=True)
+        script_data = direct(topic, settings, opts, director_dir, orientation).to_dict()
     reporter.stage("script", "Đang chuẩn bị kịch bản")
     if script_path and script_data is None:
         # Kịch bản người dùng tự sửa: đọc tại chỗ, không ghi đè
@@ -361,7 +430,7 @@ def run(
                 topic, settings, opts.num_steps, opts.language, library, opts.library_mode, opts.web_media,
                 video_type=opts.video_type, tone=opts.tone, length=opts.length,
             )
-        work_dir = opts.work_dir or OUTPUT_ROOT / slugify(script.title)
+        work_dir = opts.work_dir or director_dir or OUTPUT_ROOT / slugify(script.title)
         work_dir.mkdir(parents=True, exist_ok=True)
         script_file = work_dir / "script.json"
         script.save(script_file)
@@ -379,11 +448,16 @@ def run(
     steps = _prepare_images(script, work_dir, settings, size, orientation, opts, fonts)
     result.images = [img for seg in steps for img in seg]
 
-    voice_label = f"{voice} + {voice2} xen kẽ" if voice2 else voice
+    director = script.format == "director"
+    if director and not voice2 and any(l.get("voice") == "second" for st in script.steps for l in st.acted_lines()):
+        voice2 = contrast_voice(voice, lang.code)
+    voice_label = (f"{voice} + {voice2} xen kẽ" if not director else f"{voice}, giọng phụ {voice2}") if voice2 else voice
     effect_label = f", hiệu ứng {opts.voice_effect}" if opts.voice_effect != "none" else ""
     print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}{effect_label}) ...", flush=True)
     reporter.stage("audio", "Đang tạo giọng đọc")
-    audio = _prepare_audio(script, work_dir, (voice, voice2), rate, pitch, reporter, lang.code, opts.voice_effect)
+    audio = _prepare_audio(
+        script, work_dir, (voice, voice2), rate, pitch, reporter, lang.code, opts.voice_effect, alternate=not director,
+    )
 
     def segments(images: list[StepImage]) -> list[Segment]:
         return [Segment(img.path, img.media, _style_for(img, opts)) for img in images]
@@ -404,24 +478,79 @@ def run(
         canvas = render_step_badge(label, heading, size, fonts, style.accent, reserve_right=reserve)
         return Layer.from_canvas(canvas, start=0.2, enter="slide_left", enter_dur=0.45)
 
-    def scene(images: list[StepImage], key: str, narration: str, overlays: list[Layer | None], pop: bool) -> Scene:
+    library = {a.id: a for a in opts.library}
+    head = style.timing.head
+
+    def sticker_path(ref: dict) -> Path | None:
+        lib = library.get(ref.get("asset") or "")
+        path = Path(lib.path) if lib and lib.kind == "image" else Path(ref["path"]) if ref.get("path") else None
+        return path if path and path.exists() and path.suffix.lower() not in VIDEO_EXTS else None
+
+    def acting(step: Step, path: Path | None, not_before: float = 0.0) -> tuple[list[Layer | None], list, list]:
+        """Hiệu ứng theo từng câu thoại: sticker meme, chữ nhấn mạnh, zoom giật/rung, âm thanh meme.
+
+        not_before: lớp hình (sticker, chữ nhấn mạnh) chờ tới thời điểm này (vd sau khi tiêu đề lớn biến mất).
+        """
+        lines = step.acted_lines()
+        times = load_line_times(path) if path and lines else None
+        if not times or len(times) != len(lines):
+            return [], [], []
+        overlays, camera, sounds = [], [], []
+        slots = iter(STICKER_SLOTS[:4] * 8)
+        for line, span in zip(lines, times):
+            start, end = span["start"], span["end"]
+            if line.get("camera"):
+                camera.append((start, line["camera"]))
+            if line.get("sfx"):
+                sounds.append((max(0.0, start - 0.05), line["sfx"]))
+            show = max(head + start, not_before)
+            if line.get("sticker") and (sticker := sticker_path(line["sticker"])) and head + end + 0.5 - show > 0.8:
+                overlays.append(sticker_layer(sticker, size, next(slots), show, head + end + 0.5))
+            pop_end = head + max(end, start + 1.2)
+            if line.get("pop_text"):  # luôn hiện đủ 1,2 giây, kể cả khi phải chờ tiêu đề
+                overlays.append(pop_text_layer(line["pop_text"], size, fonts, style.accent, show, max(pop_end, show + 1.2)))
+        return overlays, camera, sounds
+
+    def scene(images: list[StepImage], key: str, narration: str, overlays: list[Layer | None], pop: bool,
+              step: Step | None = None, not_before: float = 0.0) -> Scene:
         path = audio.get(key)
         layers = [o for o in overlays if o]
+        extra, camera, sounds = acting(step, path, not_before) if step else ([], [], [])
         return Scene(
-            segments=segments(images), audio_path=path, narration=narration, overlays=layers,
-            words=load_words(path) if path else None, pops=[0.2] if pop and layers else [],
+            segments=segments(images), audio_path=path, narration=narration, overlays=layers + [o for o in extra if o],
+            words=load_words(path) if path else None, pops=[0.2] if pop and layers else [], camera=camera, sounds=sounds,
         )
 
-    subtitle = tagline(lang, opts.video_type, len(script.steps))
-    scenes = [scene(intro_imgs, "intro", script.intro, title_layers(script.title, subtitle, size, fonts, style.accent), False)]
-    for i, step in enumerate(script.steps):
-        label = step_label(lang, opts.video_type, i + 1)
-        scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, [badge(label, step.heading)], True))
-    if script.outro or style.cta:
-        outro = [badge(lang.done, "")]
-        if style.cta:
-            outro.append(cta_layer(style.cta, size, fonts, style.accent))
-        scenes.append(scene(outro_imgs, "outro", script.outro, outro, True))
+    if director:
+        # Mỗi bước là một cảnh tự do: tiêu đề lớn chỉ hiện vài giây ở cảnh AI chọn, nhãn chỉ khi AI đặt tên cảnh
+        scenes = []
+        for i, step in enumerate(script.steps):
+            overlays: list[Layer | None] = []
+            # Tiêu đề lớn chiếm giữa khung vài giây đầu: chữ meme, sticker, chữ nhấn mạnh hiện sau đó để không chồng nhau
+            clear_at = TITLE_CARD_SECONDS if step.title_card else 0.0
+            if step.title_card:
+                for layer in title_layers(script.title, "", size, fonts, style.accent):
+                    layer.end = TITLE_CARD_SECONDS
+                    overlays.append(layer)
+            elif step.heading:
+                overlays.append(badge("", step.heading))
+            if step.meme:
+                overlays += meme_caption_layers(step.meme.get("top", ""), step.meme.get("bottom", ""), size, fonts,
+                                                max(0.1, clear_at))
+            if i == len(script.steps) - 1 and style.cta:
+                overlays.append(cta_layer(style.cta, size, fonts, style.accent, start=1.0))
+            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, overlays, bool(step.heading), step, clear_at))
+    else:
+        subtitle = tagline(lang, opts.video_type, len(script.steps))
+        scenes = [scene(intro_imgs, "intro", script.intro, title_layers(script.title, subtitle, size, fonts, style.accent), False)]
+        for i, step in enumerate(script.steps):
+            label = step_label(lang, opts.video_type, i + 1)
+            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, [badge(label, step.heading)], True, step))
+        if script.outro or style.cta:
+            outro = [badge(lang.done, "")]
+            if style.cta:
+                outro.append(cta_layer(style.cta, size, fonts, style.accent))
+            scenes.append(scene(outro_imgs, "outro", script.outro, outro, True))
     clip_count = sum(1 for img in result.images if img.media == "video")
     if clip_count:
         print(f"      Ghép {clip_count} clip video từ {sum(1 for s in steps if any(i.media == 'video' for i in s))} bước", flush=True)
