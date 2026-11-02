@@ -35,8 +35,8 @@ function Brand() {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    // data-theme do THEME_SCRIPT đặt trước khi vẽ trang nên khác bản render ở server: bỏ qua cảnh báo hydrate
-    <html lang="vi" data-theme="light" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
+    // data-theme không khai báo ở đây (để React không ghi đè lại khi hydrate): THEME_SCRIPT đặt trước khi vẽ trang
+    <html lang="vi" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

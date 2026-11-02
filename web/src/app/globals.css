@@ -31,9 +31,9 @@
  * Giao diện tối: thay vì thêm dark: vào từng lớp, thang màu xám (zinc) được đảo ngược — zinc-50 là nền nổi nhẹ,
  * zinc-900 là chữ sáng — và các màu trạng thái nhạt (red-50, emerald-50...) thành nền màu trong suốt trên nền tối.
  * Vì vậy: dùng bg-surface cho nền thẻ; phần luôn tối ở cả hai giao diện (khung log, nền video) dùng neutral-*
- * hoặc black (không bị đảo).
+ * hoặc black (không bị đảo). Dùng :root[...] để ưu tiên cao hơn :root, không phụ thuộc thứ tự nạp CSS.
  */
-[data-theme="dark"] {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --background: #0e0e11;
   --foreground: #ececef;

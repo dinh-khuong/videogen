@@ -24,9 +24,12 @@ function readPref(): ThemePref {
   }
 }
 
+function currentTheme(pref: ThemePref): "dark" | "light" {
+  return pref === "dark" || (pref === "system" && window.matchMedia(DARK_QUERY).matches) ? "dark" : "light";
+}
+
 function applyTheme(pref: ThemePref): void {
-  const dark = pref === "dark" || (pref === "system" && window.matchMedia(DARK_QUERY).matches);
-  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", currentTheme(pref));
 }
 
 function subscribe(onChange: () => void): () => void {
@@ -62,11 +65,19 @@ export function ThemeToggle({ compact }: { compact?: boolean }) {
   // Áp dụng lại sau khi React dựng lại <html> (dev) và theo dõi hệ điều hành đổi sáng/tối khi chọn "Theo hệ thống"
   useLayoutEffect(() => {
     applyTheme(pref);
-    if (pref !== "system") return;
+    // Phòng khi framework dựng lại <html> và làm mất thuộc tính data-theme
+    const observer = new MutationObserver(() => {
+      const latest = readPref(); // đọc lại: lựa chọn có thể vừa đổi trước khi React render lại
+      if (document.documentElement.getAttribute("data-theme") !== currentTheme(latest)) applyTheme(latest);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     const media = window.matchMedia(DARK_QUERY);
-    const onChange = () => applyTheme("system");
+    const onChange = () => pref === "system" && applyTheme("system");
     media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    return () => {
+      observer.disconnect();
+      media.removeEventListener("change", onChange);
+    };
   }, [pref]);
 
   return (
