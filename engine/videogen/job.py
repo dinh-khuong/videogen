@@ -8,6 +8,8 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "num_steps": 5, "language": "tiếng Việt", "voice": null, "rate": null,
   "voice2": null,                           # giọng thứ hai đọc xen kẽ các bước chẵn
   "pitch": "+0Hz",                          # cao độ giọng, vd "+5Hz" / "-8Hz"
+  "voice_effect": "none",                   # none | cute | chipmunk | deep | robot | radio | echo
+                                            # voice có thể là "gtts:vi" (chị Google) hoặc "fpt:banmaiace" (FPT.AI)
   "video_type": "howto",                    # howto | listicle | tips | facts | promo | story
   "tone": "hài hước",                       # giọng văn (tùy ý)
   "length": "medium",                       # short | medium | long
@@ -41,6 +43,7 @@ from .events import JsonReporter
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
+from .tts import VOICE_EFFECTS
 from .video_builder import ASPECTS
 
 
@@ -70,6 +73,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     video_type = spec.get("video_type") or "howto"
     if video_type not in VIDEO_TYPES:
         raise ValueError(f"video_type không hợp lệ: {video_type}")
+    voice_effect = spec.get("voice_effect") or "none"
+    if voice_effect not in VOICE_EFFECTS:
+        raise ValueError(f"voice_effect không hợp lệ: {voice_effect}")
     style_spec = spec.get("style") or {}
     style = Style(
         pacing=style_spec.get("pacing") or "normal",
@@ -91,6 +97,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         voice2=spec.get("voice2") or None,
         rate=spec.get("rate") or None,
         pitch=spec.get("pitch") or None,
+        voice_effect=voice_effect,
         video_type=video_type,
         tone=spec.get("tone") or "",
         length=spec.get("length") if spec.get("length") in ("short", "medium", "long") else "medium",

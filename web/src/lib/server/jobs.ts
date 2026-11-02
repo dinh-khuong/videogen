@@ -4,7 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
-import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, VIDEO_TYPES, normalizeStyle } from "@/lib/video-options";
+import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, VIDEO_TYPES, VOICE_EFFECTS, VOICE_RE, normalizeStyle } from "@/lib/video-options";
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
@@ -94,7 +94,6 @@ export function getJobDetail(id: string): JobDetail | null {
 }
 
 const ASPECTS = ["16:9", "9:16", "1:1"];
-const VOICE_RE = /^[a-z]{2,3}-[A-Z]{2,3}-\w+$/;
 /** Asset dùng làm hình trong từng bước (audio chỉ dùng làm nhạc nền) */
 const VISUAL_KINDS = "image,video";
 const DEFAULT_MUSIC_VOLUME = 0.12;
@@ -165,6 +164,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     voice2: voice2 && voice2 !== voice ? voice2 : null,
     rate,
     pitch,
+    voiceEffect: raw.voiceEffect && Object.hasOwn(VOICE_EFFECTS, raw.voiceEffect) ? raw.voiceEffect : "none",
     videoType: raw.videoType && Object.hasOwn(VIDEO_TYPES, raw.videoType) ? raw.videoType : "howto",
     tone: String(raw.tone ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TONE_CHARS),
     length: raw.length && Object.hasOwn(LENGTHS, raw.length) ? raw.length : "medium",
@@ -207,6 +207,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     voice2: input.voice2 ?? null,
     rate: input.rate ?? null,
     pitch: input.pitch ?? null,
+    voice_effect: input.voiceEffect ?? "none",
     video_type: input.videoType ?? "howto",
     tone: input.tone ?? "",
     length: input.length ?? "medium",

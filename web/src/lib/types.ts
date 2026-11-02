@@ -1,4 +1,4 @@
-import type { VideoLength, VideoStyle, VideoType } from "./video-options";
+import type { VideoLength, VideoStyle, VideoType, VoiceEffect } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
@@ -88,6 +88,8 @@ export type JobInput = {
   rate?: string;
   /** cao độ giọng, vd "+6Hz" */
   pitch?: string;
+  /** hiệu ứng giọng: dễ thương, sóc chuột, trầm, robot, radio, vang */
+  voiceEffect?: VoiceEffect;
   /** loại video: hướng dẫn, top danh sách, mẹo, sự thật, quảng cáo, kể chuyện */
   videoType?: VideoType;
   /** giọng văn mong muốn của kịch bản */
@@ -197,6 +199,8 @@ export type EngineHealth = {
   image_providers?: string[];
   video_providers?: string[];
   voice?: string;
+  /** có FPT_AI_API_KEY (giọng FPT.AI) */
+  fpt_tts?: boolean;
   font?: string | null;
   moviepy?: string;
 };

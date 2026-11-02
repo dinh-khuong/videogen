@@ -36,6 +36,7 @@ class Options:
     voice2: str | None = None  # giọng thứ hai: đọc xen kẽ các bước chẵn (như hai người dẫn)
     rate: str | None = None
     pitch: str | None = None  # cao độ giọng, vd "+5Hz" (trong trẻo hơn) hoặc "-8Hz" (trầm hơn)
+    voice_effect: str = "none"  # hiệu ứng giọng: cute | chipmunk | deep | robot | radio | echo (xem tts.VOICE_EFFECTS)
     video_type: str = "howto"  # howto | listicle | tips | facts | promo | story
     tone: str = ""  # giọng văn mong muốn (vd "hài hước, dí dỏm")
     length: str = "medium"  # short | medium | long
@@ -279,7 +280,7 @@ def _prepare_images(
 
 def _prepare_audio(
     script: Script, work_dir: Path, voices: tuple[str, str | None], rate: str, pitch: str, reporter: Reporter,
-    fallback_lang: str,
+    fallback_lang: str, effect: str = "none",
 ) -> dict[str, Path]:
     """Giọng đọc cho mở đầu, từng bước và lời kết. Có giọng thứ hai thì các bước chẵn dùng giọng đó (đọc xen kẽ)."""
     audio_dir = work_dir / "audio"
@@ -294,6 +295,8 @@ def _prepare_audio(
             continue
         # Giữ khóa cache cũ khi không đổi cao độ (render lại không phải tạo lại giọng)
         parts = (text, voice, rate) if pitch == "+0Hz" else (text, voice, rate, pitch)
+        if effect != "none":
+            parts += (effect,)
         jobs[key] = TtsJob(text, audio_dir / f"{key}_{_hash(*parts)}.mp3", voice)
     synthesize_many(
         list(jobs.values()),
@@ -301,6 +304,7 @@ def _prepare_audio(
         pitch,
         on_progress=lambda d, t: reporter.stage("audio", f"Giọng đọc {d}/{t}", d / t),
         fallback_lang=fallback_lang,
+        effect=effect,
     )
     return {key: job.path for key, job in jobs.items()}
 
@@ -376,9 +380,10 @@ def run(
     result.images = [img for seg in steps for img in seg]
 
     voice_label = f"{voice} + {voice2} xen kẽ" if voice2 else voice
-    print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}) ...", flush=True)
+    effect_label = f", hiệu ứng {opts.voice_effect}" if opts.voice_effect != "none" else ""
+    print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}{effect_label}) ...", flush=True)
     reporter.stage("audio", "Đang tạo giọng đọc")
-    audio = _prepare_audio(script, work_dir, (voice, voice2), rate, pitch, reporter, lang.code)
+    audio = _prepare_audio(script, work_dir, (voice, voice2), rate, pitch, reporter, lang.code, opts.voice_effect)
 
     def segments(images: list[StepImage]) -> list[Segment]:
         return [Segment(img.path, img.media, _style_for(img, opts)) for img in images]

@@ -81,6 +81,7 @@ def cmd_make(argv: list[str]) -> int:
     from .config import ConfigError
     from .pipeline import IMAGE_STYLES, Options, run
     from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
+    from .tts import VOICE_EFFECTS
     from .video_builder import ASPECTS
 
     parser = argparse.ArgumentParser(prog="videogen", description="Tạo video hướng dẫn (how-to) từ một chủ đề.")
@@ -92,10 +93,13 @@ def cmd_make(argv: list[str]) -> int:
     parser.add_argument("--aspect", choices=list(ASPECTS), default="16:9",
                         help="Tỉ lệ khung hình: 16:9 (YouTube), 9:16 (TikTok/Shorts), 1:1")
     parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ lời bình (mặc định: tiếng Việt)")
-    parser.add_argument("--voice", help="Giọng edge-tts, vd vi-VN-NamMinhNeural (ghi đè TTS_VOICE)")
+    parser.add_argument("--voice", help="Giọng đọc: edge-tts (vd vi-VN-NamMinhNeural), gtts:vi (chị Google) "
+                                        "hoặc fpt:banmaiace (FPT.AI, cần FPT_AI_API_KEY). Ghi đè TTS_VOICE")
     parser.add_argument("--rate", help="Tốc độ đọc, vd --rate=+10%% hoặc --rate=-5%% (ghi đè TTS_RATE)")
     parser.add_argument("--pitch", help="Cao độ giọng, vd --pitch=+5Hz (trong hơn) hoặc --pitch=-8Hz (trầm hơn)")
     parser.add_argument("--voice2", help="Giọng thứ hai đọc xen kẽ các bước chẵn, vd vi-VN-NamMinhNeural")
+    parser.add_argument("--voice-effect", choices=VOICE_EFFECTS, default="none",
+                        help="Hiệu ứng giọng: cute (dễ thương), chipmunk (sóc chuột), deep (trầm), robot, radio, echo (vang)")
     parser.add_argument("--type", dest="video_type", choices=VIDEO_TYPES, default="howto",
                         help="Loại video: howto (hướng dẫn), listicle (top danh sách), tips (mẹo), facts (sự thật thú vị), "
                              "promo (giới thiệu/quảng cáo), story (kể chuyện)")
@@ -155,6 +159,7 @@ def cmd_make(argv: list[str]) -> int:
         voice2=args.voice2,
         rate=args.rate,
         pitch=args.pitch,
+        voice_effect=args.voice_effect,
         video_type=args.video_type,
         tone=args.tone,
         length=args.length,
@@ -237,20 +242,21 @@ def cmd_analyze(argv: list[str]) -> int:
 def cmd_voice_sample(argv: list[str]) -> int:
     """Tạo file nghe thử giọng đọc (web app dùng cho nút "Nghe thử")."""
     from .style import language_for
-    from .tts import voice_sample
+    from .tts import VOICE_EFFECTS, voice_sample
 
     parser = argparse.ArgumentParser(prog="videogen voice-sample", description="Tạo file mp3 nghe thử một giọng đọc.")
     parser.add_argument("--voice", required=True)
     parser.add_argument("--rate", default="+0%")
     parser.add_argument("--pitch", default="+0Hz")
     parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ của câu mẫu (dùng cho gTTS dự phòng)")
+    parser.add_argument("--effect", choices=VOICE_EFFECTS, default="none", help="Hiệu ứng giọng")
     parser.add_argument("--text", help="Câu đọc thử (mặc định: câu mẫu theo ngôn ngữ)")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     lang = language_for(args.language)
     text = args.text or SAMPLE_TEXT.get(lang.code, SAMPLE_TEXT["en"])
     try:
-        voice_sample(text, args.voice, args.out, args.rate, args.pitch, fallback_lang=lang.code)
+        voice_sample(text, args.voice, args.out, args.rate, args.pitch, fallback_lang=lang.code, effect=args.effect)
     except Exception as e:
         print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False))
         return 1
@@ -299,6 +305,7 @@ def cmd_doctor(argv: list[str]) -> int:
 
         report["video_providers"] = active_video_providers(settings)
         report["voice"] = settings.tts_voice
+        report["fpt_tts"] = bool(settings.fpt_api_key)
         from .analyze import ocr_available
 
         report["ocr"] = ocr_available(settings)

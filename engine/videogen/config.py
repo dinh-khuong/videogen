@@ -62,6 +62,8 @@ class Settings:
 
         self.tts_voice = _get("TTS_VOICE", "vi-VN-HoaiMyNeural")
         self.tts_rate = _get("TTS_RATE", "+0%")
+        # FPT.AI Text to Speech (giọng Việt tự nhiên): https://console.fpt.ai
+        self.fpt_api_key = _get("FPT_AI_API_KEY")
 
         self.font_path = _get("FONT_PATH")
 
