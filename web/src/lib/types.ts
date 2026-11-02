@@ -1,4 +1,4 @@
-import type { VideoLength, VideoStyle, VideoType, VoiceEffect } from "./video-options";
+import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceEffect } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
@@ -143,6 +143,8 @@ export type JobInput = {
   webMedia?: "image" | "video" | "auto";
   /** số clip video ghép nối tiếp trong một bước (1-6) */
   clipsPerStep?: number;
+  /** công cụ tìm ảnh ưu tiên (Brave, Google...); nguồn khác làm dự phòng. Job cũ: auto */
+  searchEngine?: SearchEngine;
   libraryMode: "off" | "auto" | "selected";
   /** AI chỉ xem asset có ít nhất một trong các tag này (chế độ "auto"); trống = cả thư viện */
   libraryTags?: string[];
@@ -249,6 +251,8 @@ export type EngineHealth = {
   python?: string;
   deepseek?: boolean;
   image_providers?: string[];
+  /** mọi công cụ tìm ảnh và đã có key chưa */
+  search_engines?: Partial<Record<SearchEngine, boolean>>;
   video_providers?: string[];
   voice?: string;
   /** có FPT_AI_API_KEY (giọng FPT.AI) */

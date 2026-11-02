@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
-import type { AssetItem, Contact, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
+import type { AssetItem, Contact, EngineHealth, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
 import {
   DEFAULT_STYLE,
   DEFAULT_VOICE,
@@ -13,6 +13,7 @@ import {
   LENGTHS,
   MAX_TONE_CHARS,
   PRESETS,
+  SEARCH_ENGINES,
   TONES,
   VIDEO_TYPES,
   VOICE_EFFECTS,
@@ -20,6 +21,7 @@ import {
   languageOf,
   normalizeStyle,
   type Preset,
+  type SearchEngine,
   type VideoLength,
   type VideoStyle,
   type VideoType,
@@ -57,6 +59,7 @@ type Settings = {
   webImages: boolean;
   webMedia: WebMedia;
   clipsPerStep: number;
+  searchEngine: SearchEngine;
   libraryMode: JobInput["libraryMode"];
   libraryTags: string[];
   music: { musicId: string; volume: number };
@@ -80,6 +83,7 @@ const DEFAULTS: Settings = {
   // Clip quay thật làm video sinh động hơn ảnh tĩnh: mặc định ưu tiên clip
   webMedia: "video",
   clipsPerStep: 3,
+  searchEngine: "auto",
   libraryMode: "auto",
   libraryTags: [],
   music: { musicId: "", volume: 0.12 },
@@ -112,6 +116,7 @@ function sanitize(p: Partial<Settings>): Settings {
     webImages: typeof p.webImages === "boolean" ? p.webImages : DEFAULTS.webImages,
     webMedia: pick(p.webMedia, (v) => v === "image" || v === "video" || v === "auto", DEFAULTS.webMedia),
     clipsPerStep: pick(p.clipsPerStep, (v) => typeof v === "number" && v >= 1 && v <= 6, DEFAULTS.clipsPerStep),
+    searchEngine: pick(p.searchEngine, (v) => typeof v === "string" && Object.hasOwn(SEARCH_ENGINES, v), DEFAULTS.searchEngine),
     libraryMode: pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode),
     libraryTags: Array.isArray(p.libraryTags)
       ? p.libraryTags.filter((t): t is string => typeof t === "string").slice(0, 20)
@@ -179,6 +184,7 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
     webImages: input.webImages,
     webMedia: input.webMedia,
     clipsPerStep: input.clipsPerStep,
+    searchEngine: input.searchEngine ?? "auto",
     libraryMode: input.libraryMode,
     libraryTags: input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [],
     music: { musicId: input.musicId ?? "", volume: input.musicVolume ?? DEFAULTS.music.volume },
@@ -235,6 +241,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const bgVideos = useApi<Page<AssetItem>>(layout.layout === "split" ? "/api/assets?kind=video&limit=200" : null);
   const tags = useApi<TagCount[]>(s.libraryMode === "auto" ? "/api/tags" : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
+  const health = useApi<EngineHealth>(s.webImages ? "/api/health" : null);
+  const engineReady = health.data?.search_engines;
 
   const topics = s.batch
     ? s.topic
@@ -296,6 +304,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       webImages: s.webImages,
       webMedia: s.webMedia,
       clipsPerStep: s.clipsPerStep,
+      searchEngine: s.searchEngine,
       libraryMode: s.libraryMode,
       libraryTags: s.libraryMode === "auto" ? s.libraryTags : [],
       assetIds: s.libraryMode === "selected" ? s.assetIds : [],
@@ -580,6 +589,25 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
               <option value="off">Không tìm (bước thiếu asset dùng nền chữ)</option>
             </select>
           </Field>
+          {s.webImages && (
+            <Field
+              label="Công cụ tìm ảnh"
+              hint={
+                s.searchEngine !== "auto" && engineReady && engineReady[s.searchEngine] === false
+                  ? `Chưa có key cho ${SEARCH_ENGINES[s.searchEngine].label}: điền ${SEARCH_ENGINES[s.searchEngine].env} trong engine/.env (tạm thời sẽ dùng nguồn khác).`
+                  : "Công cụ đã chọn được tìm trước; nếu lỗi hoặc không có kết quả thì tự chuyển sang nguồn khác. Cũng dùng khi bước dùng video thiếu clip."
+              }
+            >
+              <select className={inputClass} value={s.searchEngine} onChange={(e) => set("searchEngine", e.target.value as SearchEngine)}>
+                {(Object.keys(SEARCH_ENGINES) as SearchEngine[]).map((key) => (
+                  <option key={key} value={key}>
+                    {SEARCH_ENGINES[key].label} — {SEARCH_ENGINES[key].hint}
+                    {engineReady && engineReady[key] === false ? " (chưa có key)" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           {s.webImages && s.webMedia !== "image" && (
             <Field label="Số clip ghép trong mỗi bước" hint="Nhiều clip nối nhau làm video sinh động hơn; mở đầu và kết thúc tự ghép từ các clip.">
               <select className={inputClass} value={s.clipsPerStep} onChange={(e) => set("clipsPerStep", Number(e.target.value))}>

@@ -26,6 +26,8 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "image_style": "auto",                    # auto | cover | frame
   "web_images": true,                      # tìm nội dung trên mạng cho bước chưa có asset
   "web_media": "image",                     # image | video (clip CC/stock) | auto (LLM chọn từng bước)
+  "search_engine": "auto",                  # công cụ tìm ảnh ưu tiên: auto | duckduckgo | google | brave | serper
+                                            #   | pexels | pixabay (nguồn khác làm dự phòng)
   "clips_per_step": 3,                      # số clip ghép nối tiếp trong một bước dùng video
   "library_mode": "off",                    # off | auto | selected
   "director": false,                        # Đạo diễn AI: tự lên kịch bản qua nhiều lượt gọi công cụ, meme, giọng biến hóa
@@ -44,6 +46,7 @@ from pathlib import Path
 
 from .config import ConfigError
 from .events import DIRECTOR_STAGES, JsonReporter
+from .image_search import SEARCH_ENGINES
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
@@ -61,6 +64,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     web_media = spec.get("web_media") or "image"
     if web_media not in WEB_MEDIA:
         raise ValueError(f"web_media không hợp lệ: {web_media}")
+    search_engine = spec.get("search_engine") or "auto"
+    if search_engine not in SEARCH_ENGINES:
+        raise ValueError(f"search_engine không hợp lệ: {search_engine}")
     library_mode = spec.get("library_mode") or "off"
     if library_mode not in LIBRARY_MODES:
         raise ValueError(f"library_mode không hợp lệ: {library_mode}")
@@ -113,6 +119,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         image_style=image_style,
         web_images=bool(spec.get("web_images", True)),
         web_media=web_media,
+        search_engine=search_engine,
         clips_per_step=min(max(int(spec.get("clips_per_step") or 3), 1), 6),
         library=[
             LibraryAsset(

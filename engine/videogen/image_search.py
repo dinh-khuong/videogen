@@ -4,7 +4,12 @@ Nguồn ảnh (dùng theo thứ tự IMAGE_PROVIDERS, bỏ qua nguồn chưa có
 - duckduckgo: DuckDuckGo Images, không cần key (endpoint không chính thức)
 - google: Google Custom Search JSON API (GOOGLE_API_KEY + GOOGLE_CSE_ID)
 - serper: Google Images qua Serper.dev (SERPER_API_KEY)
+- brave: Brave Search Images API (BRAVE_API_KEY)
 - pexels: kho ảnh Pexels, được dùng thương mại (PEXELS_API_KEY)
+- pixabay: kho ảnh Pixabay, được dùng thương mại (PIXABAY_API_KEY)
+
+Mỗi job có thể chọn một công cụ ưu tiên (Options.search_engine): công cụ đó được gọi trước,
+các nguồn còn lại làm dự phòng khi nó lỗi hoặc không có kết quả.
 """
 import io
 import re
@@ -225,6 +230,60 @@ def _search_serper(query: str, orientation: str, settings: Settings) -> list[Can
     )
 
 
+def _search_brave(query: str, orientation: str, settings: Settings) -> list[Candidate]:
+    params = {"q": query[:400], "count": 50, "safesearch": "strict", "spellcheck": 0}
+    if settings.brave_country:
+        params["country"] = settings.brave_country
+    resp = _request(
+        "GET",
+        "https://api.search.brave.com/res/v1/images/search",
+        headers={"Accept": "application/json", "X-Subscription-Token": settings.brave_api_key},
+        params=params,
+    )
+    results = []
+    for it in resp.json().get("results", []):
+        props = it.get("properties") or {}
+        image_url = props.get("url")
+        if not image_url:
+            continue
+        page_url = it.get("url") or image_url
+        results.append(
+            Candidate(
+                image_url=image_url,
+                width=int(props.get("width") or 0),
+                height=int(props.get("height") or 0),
+                credit=Credit(source=it.get("source") or urlparse(page_url).netloc, url=page_url),
+            )
+        )
+    # Brave thường không trả kích thước: giữ thứ tự liên quan của Brave cho các ảnh đó
+    return _rank(results, orientation) if any(c.width for c in results) else results
+
+
+PIXABAY_ORIENTATION = {"landscape": "horizontal", "portrait": "vertical", "square": "all"}
+
+
+def _search_pixabay(query: str, orientation: str, settings: Settings) -> list[Candidate]:
+    resp = _request(
+        "GET",
+        "https://pixabay.com/api/",
+        params={
+            "key": settings.pixabay_api_key, "q": query[:100], "image_type": "photo",
+            "orientation": PIXABAY_ORIENTATION[orientation], "per_page": 20, "safesearch": "true",
+        },
+    )
+    return [
+        Candidate(
+            image_url=h["largeImageURL"],
+            width=h.get("imageWidth", 0),
+            height=h.get("imageHeight", 0),
+            credit=Credit(source="Pixabay", url=h.get("pageURL", ""), author=h.get("user", ""),
+                          license="Pixabay Content License"),
+        )
+        for h in resp.json().get("hits", [])
+        if h.get("largeImageURL")
+    ]
+
+
 def _search_pexels(query: str, orientation: str, settings: Settings) -> list[Candidate]:
     resp = _request(
         "GET",
@@ -248,16 +307,34 @@ PROVIDERS = {
     "duckduckgo": (_search_duckduckgo, lambda s: True),
     "google": (_search_google, lambda s: bool(s.google_api_key and s.google_cse_id)),
     "serper": (_search_serper, lambda s: bool(s.serper_api_key)),
+    "brave": (_search_brave, lambda s: bool(s.brave_api_key)),
     "pexels": (_search_pexels, lambda s: bool(s.pexels_api_key)),
+    "pixabay": (_search_pixabay, lambda s: bool(s.pixabay_api_key)),
 }
+# Giá trị hợp lệ của Options.search_engine: "auto" = theo thứ tự IMAGE_PROVIDERS trong .env
+SEARCH_ENGINES = ("auto", *PROVIDERS)
 
 
-def active_providers(settings: Settings) -> list[str]:
-    names = [n for n in settings.image_providers if n in PROVIDERS and PROVIDERS[n][1](settings)]
+def engine_status(settings: Settings) -> dict[str, bool]:
+    """Mọi công cụ tìm ảnh đã biết và đã dùng được chưa (có đủ key)."""
+    return {name: bool(ready(settings)) for name, (_, ready) in PROVIDERS.items()}
+
+
+def active_providers(settings: Settings, preferred: str | None = None) -> list[str]:
+    """Thứ tự nguồn ảnh dùng được; công cụ ưu tiên (nếu có) đứng đầu, các nguồn khác làm dự phòng."""
+    order = list(settings.image_providers)
+    if preferred and preferred != "auto":
+        if preferred not in PROVIDERS:
+            raise ConfigError(f"Công cụ tìm ảnh không hợp lệ: {preferred}")
+        if not PROVIDERS[preferred][1](settings):
+            print(f"      ⚠️  Công cụ tìm ảnh '{preferred}' chưa có key trong .env, dùng nguồn khác.", flush=True)
+        # công cụ đã chọn được dùng kể cả khi không nằm trong IMAGE_PROVIDERS
+        order = [preferred, *(n for n in order if n != preferred)]
+    names = [n for n in order if n in PROVIDERS and PROVIDERS[n][1](settings)]
     if not names:
         raise ConfigError(
-            "Chưa có key nguồn ảnh nào. Điền GOOGLE_API_KEY + GOOGLE_CSE_ID, "
-            "hoặc SERPER_API_KEY, hoặc PEXELS_API_KEY trong .env."
+            "Chưa có key nguồn ảnh nào. Điền GOOGLE_API_KEY + GOOGLE_CSE_ID, hoặc BRAVE_API_KEY, "
+            "hoặc SERPER_API_KEY, hoặc PEXELS_API_KEY, hoặc PIXABAY_API_KEY trong .env."
         )
     return names
 
@@ -265,9 +342,9 @@ def active_providers(settings: Settings) -> list[str]:
 class ProviderPool:
     """Gọi các nguồn ảnh theo thứ tự; nguồn nào bị từ chối quyền (401/403) thì bỏ qua cho các lần sau."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, preferred: str | None = None) -> None:
         self.settings = settings
-        self.names = active_providers(settings)
+        self.names = active_providers(settings, preferred)
         self._disabled: set[str] = set()
         self._lock = threading.Lock()
 

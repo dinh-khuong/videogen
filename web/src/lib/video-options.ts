@@ -282,6 +282,18 @@ export const LENGTHS = {
 } as const;
 export type VideoLength = keyof typeof LENGTHS;
 
+/** Công cụ tìm ảnh trên mạng (khớp engine/videogen/image_search.py PROVIDERS). */
+export const SEARCH_ENGINES = {
+  auto: { label: "Tự động", hint: "theo thứ tự IMAGE_PROVIDERS trong engine/.env", env: "" },
+  duckduckgo: { label: "DuckDuckGo", hint: "không cần key", env: "" },
+  google: { label: "Google", hint: "Google Custom Search", env: "GOOGLE_API_KEY + GOOGLE_CSE_ID" },
+  brave: { label: "Brave", hint: "Brave Search API", env: "BRAVE_API_KEY" },
+  serper: { label: "Google qua Serper", hint: "kết quả Google Images qua Serper.dev", env: "SERPER_API_KEY" },
+  pexels: { label: "Pexels", hint: "ảnh stock dùng thương mại", env: "PEXELS_API_KEY" },
+  pixabay: { label: "Pixabay", hint: "ảnh stock dùng thương mại", env: "PIXABAY_API_KEY" },
+} as const;
+export type SearchEngine = keyof typeof SEARCH_ENGINES;
+
 export const PACINGS = {
   slow: { label: "Chậm rãi", hint: "Cảnh dài, chuyển mềm" },
   normal: { label: "Vừa", hint: "Cân bằng" },

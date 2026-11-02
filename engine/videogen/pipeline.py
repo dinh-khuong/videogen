@@ -56,6 +56,8 @@ class Options:
     web_images: bool = True  # cho phép tìm ảnh/clip trên mạng khi bước không có asset thư viện
     # Loại nội dung tìm trên mạng: image | video (clip, thiếu thì dùng ảnh) | auto (LLM chọn cho từng bước)
     web_media: str = "image"
+    # Công cụ tìm ảnh ưu tiên: auto (thứ tự IMAGE_PROVIDERS) | duckduckgo | google | brave | serper | pexels | pixabay
+    search_engine: str = "auto"
     clips_per_step: int = 3  # số clip mạng ghép nối tiếp trong một bước dùng video
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
@@ -186,7 +188,7 @@ def _prepare_images(
         # Tạo khi cần, để render từ ảnh có sẵn/cache không đòi key
         with lock:
             if not providers:
-                providers.append(ProviderPool(settings))
+                providers.append(ProviderPool(settings, opts.search_engine))
                 print(f"      Nguồn ảnh: {' → '.join(providers[0].names)}", flush=True)
             return providers[0]
 
