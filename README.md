@@ -2,7 +2,7 @@
 
 Ứng dụng web (Next.js) để tạo video hướng dẫn tự động và quản lý assets (ảnh, video nguồn, audio), video đã tạo và khách hàng (CRM). Việc dựng video do một **engine Python** chạy ở tiến trình riêng đảm nhận. Engine này cũng dùng độc lập được như một CLI.
 
-Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản và tự chọn ảnh/video từ Assets (bước nào không có asset phù hợp thì tìm ảnh trên mạng) → edge-tts đọc lời bình → dựng video có phụ đề, nhãn bước, hiệu ứng Ken Burns, chuyển cảnh.
+Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (hướng dẫn, top danh sách, mẹo, sự thật thú vị, quảng cáo, kể chuyện) và tự chọn ảnh/video từ Assets (bước nào không có asset phù hợp thì tìm clip/ảnh trên mạng) → edge-tts đọc lời bình (hơn 50 giọng, 10 ngôn ngữ) → dựng video có phụ đề karaoke khớp từng từ, nhãn bước động, chuyển cảnh đa dạng, hiệu ứng âm thanh.
 
 ```
 ┌──────────── web/ (Next.js) ────────────┐        ┌──────── engine/ (Python) ────────┐
@@ -19,7 +19,26 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản v
 
 ## Tính năng
 
-- **Tạo video**: gồm khung 16:9, 9:16, 1:1 và **Shorts chia đôi** (nội dung ở trên, video nền như gameplay ở dưới). Có thể chọn giọng đọc, tốc độ đọc, ngôn ngữ và số bước.
+- **Tạo video**: gồm khung 16:9, 9:16, 1:1 và **Shorts chia đôi** (nội dung ở trên, video nền như gameplay ở dưới).
+  - **Mẫu nhanh**: TikTok/Reels viral, YouTube hướng dẫn, Quảng cáo sản phẩm, Kể chuyện thư giãn, Kiến thức — một lần bấm đặt sẵn khung hình, nhịp dựng, phụ đề, giọng... rồi tinh chỉnh tiếp.
+  - **Loại video**: hướng dẫn, top danh sách, mẹo hay, sự thật thú vị, quảng cáo/giới thiệu, kể chuyện. Nhãn trong video đổi theo loại ("Bước 1", "#1"...).
+  - **Giọng văn** (thân thiện, hài hước, chuyên nghiệp, bán hàng, Gen Z... hoặc tự nhập) và **độ dài** (ngắn < 45 giây, vừa, dài).
+  - **Tạo hàng loạt**: mỗi dòng một chủ đề, tạo tối đa 20 video cùng cài đặt.
+  - Form **nhớ cài đặt của lần tạo trước**; trang job có nút **"Tạo video tương tự"** để điền sẵn cài đặt của job đó.
+- **Giọng đọc**:
+  - 10 ngôn ngữ (Việt, Anh, Trung, Nhật, Hàn, Pháp, Tây Ban Nha, Đức, Thái, Indonesia), hơn 50 giọng; giọng **đa ngôn ngữ** (Ava, Andrew, Emma, Brian...) đọc được cả tiếng Việt.
+  - **Nghe thử** giọng ngay trong form; **sắc thái giọng** (trầm ấm, kể chuyện, trẻ trung, quảng cáo sôi nổi, tin tức) đặt nhanh tốc độ + cao độ.
+  - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn.
+- **Hiệu ứng làm video sinh động**:
+  - **Nhịp dựng** chậm / vừa / nhanh: độ dài mỗi cảnh, tốc độ chuyển, biên độ zoom.
+  - **Chuyển cảnh** đa dạng: trượt đẩy, lia máy nhanh (có nhòe chuyển động), zoom xuyên cảnh, quét ngang, mở vòng tròn, lóe sáng, mờ chồng; mặc định tự luân phiên.
+  - Ảnh có nhiều kiểu chuyển động Ken Burns (zoom vào/ra, lia ngang/dọc); clip video zoom chậm vào giữa.
+  - **Phụ đề khớp từng từ** với giọng đọc (dùng mốc thời gian của edge-tts): kiểu karaoke tô màu từ đang đọc, chữ to viền đen, hoặc chữ trong khung tối.
+  - Title card và nhãn bước có hoạt ảnh (trồi lên, trượt vào, bật ra); **màu chủ đạo** tùy chọn.
+  - **Màu phim**: rực rỡ, ấm áp, mát lạnh, điện ảnh, hoài cổ, đen trắng.
+  - **Thanh tiến độ**, **hiệu ứng âm thanh** tự tổng hợp ("vút" khi chuyển cảnh, "tách" khi hiện nhãn — không dùng file mẫu nên không lo bản quyền).
+  - **Logo** (ảnh trong Assets) ở góc trên phải và **lời kêu gọi cuối video** (vd số điện thoại, ưu đãi) dạng nút nổi bật.
+- **Giao diện sáng / tối / theo hệ thống** (nút chuyển ở thanh bên).
 - **Assets: ảnh và video là nội dung chính, không chỉ làm nền**:
   - Asset là ảnh hoặc clip video (sản phẩm, menu, ảnh chụp màn hình, clip quay thao tác...) dùng để ghép vào video.
   - *AI tự chọn từ Assets* (mặc định): AI đọc mô tả, tóm tắt và chữ trong từng asset rồi tự gán asset phù hợp cho từng bước. Bước nào không có asset khớp thì tìm ảnh trên mạng.
@@ -48,7 +67,7 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản v
   - Video nền cho bố cục Shorts chia đôi cũng là một asset (video).
   - **Audio** (mp3, m4a, aac, wav, ogg, flac, opus) nằm chung trang Assets, có ảnh sóng âm và tóm tắt AI (từ tên + mô tả, vd thể loại, tâm trạng). Khi tạo video (hoặc tạo lại từ kịch bản đã sửa), chọn một audio làm **nhạc nền**: nhạc lặp suốt video, chỉnh được âm lượng, mờ dần ở cuối.
   - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép.
-  - Bạn có thể **sửa kịch bản, đổi ảnh/video từng bước rồi tạo lại video**.
+  - Bạn có thể **sửa kịch bản, đổi ảnh/video từng bước rồi tạo lại video**, kể cả đổi giọng đọc và hiệu ứng (không cần AI viết lại).
 - **CRM khách hàng**:
   - Lưu trạng thái (tiềm năng → khách hàng), số điện thoại, email, nguồn, ghi chú có hashtag và ngày hẹn chăm sóc.
   - Nhật ký chăm sóc (ghi chú, gọi điện, email, gặp mặt).
@@ -102,6 +121,10 @@ python -m videogen "mẹo học tiếng Anh" --steps 4 --bg-video gameplay/     
 python -m videogen "giới thiệu menu quán" --library-dir anh_mon/ --analyze-library   # ảnh/video của bạn làm nội dung chính
 python -m videogen analyze menu.jpg clip.mp4                                     # đọc chữ + AI tóm tắt, in JSON
 python -m videogen "cách pha cà phê drip" --web-media auto --clips-per-step 3   # nhiều clip mạng cho mỗi bước
+python -m videogen "5 quán phở ngon Hà Nội" --type listicle --aspect 9:16 --pacing fast --subtitles karaoke --sfx --progress-bar
+python -m videogen "giới thiệu quán Mộc" --type promo --tone "thuyết phục" --cta "Gọi ngay 0909 123 456" --logo logo.png --accent "#43a047"
+python -m videogen "chuyện cổ tích Tấm Cám" --type story --voice vi-VN-HoaiMyNeural --voice2 vi-VN-NamMinhNeural --rate=-10% --pitch=-6Hz
+python -m videogen voice-sample --voice en-US-AvaMultilingualNeural --out mau.mp3   # nghe thử giọng
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
 python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa
 python main.py ...                                                               # cách gọi cũ vẫn dùng được
@@ -110,6 +133,8 @@ python main.py ...                                                              
 - `--library-dir`: thư mục ảnh/video. Mô tả của `pho.jpg` đặt trong file `pho.txt` cạnh nó; nếu không có file mô tả thì dùng tên file. Thêm `--library-mode auto` để AI tự chọn file phù hợp thay vì dùng tất cả.
 - `--analyze-library`: đọc chữ + AI tóm tắt từng file trước khi viết kịch bản (kết quả cache trong `.videogen-analysis.json` của thư mục).
 - `--image-style cover|frame|auto`: ảnh phủ kín khung, ảnh hiển thị trọn vẹn, hoặc tự động.
+- Giá trị âm cho tốc độ/cao độ cần viết liền bằng dấu `=` (`--rate=-10%`, `--pitch=-6Hz`), nếu không argparse hiểu nhầm là một tùy chọn.
+- Phong cách: `--pacing slow|normal|fast`, `--transition mix|slide|whip|zoom|wipe|circle|flash|fade`, `--subtitles auto|karaoke|outline|box|none`, `--filter none|vivid|warm|cool|cinematic|vintage|bw`, `--accent "#e95420"`, `--progress-bar`, `--sfx`, `--logo`, `--cta`.
 
 Xem tất cả tùy chọn: `python -m videogen -h`
 
@@ -120,6 +145,7 @@ Xem tất cả tùy chọn: `python -m videogen -h`
 | `python -m videogen job spec.json` | Chạy một job. Mỗi sự kiện tiến độ là một dòng `@@videogen {json}` trên stdout; kết quả ghi vào `<work_dir>/result.json` |
 | `python -m videogen probe file... --thumbnail-dir dir` | In mảng JSON gồm kích thước/thời lượng của từng file và tạo thumbnail |
 | `python -m videogen analyze --spec spec.json` | Phân tích asset (OCR + AI tóm tắt); mỗi asset xong là một sự kiện `{"type": "asset", ...}` |
+| `python -m videogen voice-sample --voice=... --rate=... --pitch=... --out=file.mp3` | Tạo file nghe thử giọng đọc (nút "Nghe thử" trong form) |
 | `python -m videogen doctor` | Kiểm tra cấu hình (API key, nguồn ảnh, font, OCR, thư viện) và in JSON |
 
 Cấu trúc spec và kết quả được mô tả trong [engine/videogen/job.py](engine/videogen/job.py).
@@ -151,7 +177,9 @@ Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,
 - Tùy chọn: mô hình thị giác (Gemini, OpenAI, hoặc Ollama chạy local) để mô tả ảnh không có chữ. Đặt `VISION_BASE_URL`, `VISION_MODEL`, `VISION_API_KEY`.
 
 ### 5. Giọng đọc — **không cần key**
-- edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS.
+- edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS (khi đó phụ đề chia theo độ dài câu thay vì khớp từng từ).
+- Danh sách đầy đủ: `edge-tts --list-voices`. Giọng có chữ `Multilingual` đọc được nhiều ngôn ngữ, kể cả tiếng Việt.
+- Video tiếng Trung/Nhật/Hàn/Thái cần font hỗ trợ chữ đó, vd `sudo apt install fonts-noto-cjk fonts-noto-core` (hoặc đặt `FONT_PATH`).
 
 ## Cấu trúc code
 
@@ -166,13 +194,18 @@ engine/                      # Python: tạo video (process riêng, CLI)
     analyze.py               # phân tích asset: OCR (Tesseract) + AI tóm tắt
     image_search.py          # DuckDuckGo / Google / Serper / Pexels
     video_search.py          # clip được phép dùng lại: Pexels / Pixabay / Wikimedia / YouTube CC
-    tts.py                   # edge-tts (+ gTTS dự phòng)
-    graphics.py              # Pillow: phụ đề, nhãn bước, khung ảnh nội dung
-    video_builder.py         # moviepy: Ken Burns, clip video, crossfade, chia đôi màn hình
+    tts.py                   # edge-tts (+ gTTS dự phòng), mốc thời gian từng từ, giọng mẫu
+    style.py                 # phong cách dựng (nhịp, chuyển cảnh, phụ đề, màu...) + nhãn theo ngôn ngữ
+    effects.py               # chuyển cảnh, bộ lọc màu, chuyển động Ken Burns, hoạt ảnh lớp chữ
+    subtitles.py             # chia phụ đề + căn thời điểm từng từ (karaoke)
+    sfx.py                   # hiệu ứng âm thanh tổng hợp bằng numpy
+    graphics.py              # Pillow: font theo ngôn ngữ, phụ đề, nhãn bước, title card, lời kêu gọi, logo
+    video_builder.py         # ghép từng khung hình theo timeline, chia đôi màn hình, trộn âm thanh
     probe.py                 # đọc thông tin ảnh/video, tạo thumbnail
 web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
-  src/components/            # giao diện
+  src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)
+  src/lib/video-options.ts   # danh sách giọng, ngôn ngữ, loại video, phong cách, mẫu nhanh (dùng chung client/server)
   src/lib/server/            # db (SQLite + migration), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, repo
 data/                        # dữ liệu local (tự tạo khi chạy)
 ```

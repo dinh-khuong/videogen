@@ -2,23 +2,30 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
-import type { AssetItem, Contact, JobInput, JobItem, Page, TagCount } from "@/lib/types";
+import type { AssetItem, Contact, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
+import {
+  DEFAULT_STYLE,
+  DEFAULT_VOICE,
+  LANGUAGES,
+  LEGACY_STYLE,
+  LENGTHS,
+  MAX_TONE_CHARS,
+  PRESETS,
+  TONES,
+  VIDEO_TYPES,
+  languageOf,
+  normalizeStyle,
+  type Preset,
+  type VideoLength,
+  type VideoStyle,
+  type VideoType,
+  type VoiceSettings,
+} from "@/lib/video-options";
 import { AssetPicker, MusicPicker } from "./assets-library";
-import { Button, Card, ErrorBox, Field, PageHeader, cx, inputClass } from "./ui";
-
-const VOICES: Record<string, { value: string; label: string }[]> = {
-  "tiếng Việt": [
-    { value: "vi-VN-HoaiMyNeural", label: "Hoài My (nữ)" },
-    { value: "vi-VN-NamMinhNeural", label: "Nam Minh (nam)" },
-  ],
-  English: [
-    { value: "en-US-JennyNeural", label: "Jenny (female, US)" },
-    { value: "en-US-GuyNeural", label: "Guy (male, US)" },
-    { value: "en-GB-SoniaNeural", label: "Sonia (female, UK)" },
-  ],
-};
+import { Button, Card, Choice, ErrorBox, Field, Loading, PageHeader, Segmented, Toggle, cx, inputClass } from "./ui";
+import { StyleFields, VoiceFields } from "./video-style-fields";
 
 const LAYOUTS = [
   { aspect: "16:9", layout: "normal", label: "16:9 ngang", hint: "YouTube", box: "w-10 h-6" },
@@ -27,96 +34,313 @@ const LAYOUTS = [
   { aspect: "9:16", layout: "split", label: "Shorts chia đôi", hint: "Nội dung trên, video nền dưới", box: "w-5 h-9" },
 ] as const;
 
-function Choice({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children?: React.ReactNode }) {
+const STORAGE_KEY = "videogen:create-settings";
+const MAX_BATCH = 20;
+
+type WebMedia = NonNullable<JobInput["webMedia"]>;
+
+/** Cài đặt được nhớ cho lần tạo sau (không gồm chủ đề, khách hàng, asset đã chọn). */
+type Settings = {
+  voice: VoiceSettings;
+  style: VideoStyle;
+  videoType: VideoType;
+  tone: string;
+  length: VideoLength;
+  numSteps: string;
+  layoutIndex: number;
+  bgVideoId: string;
+  imageStyle: JobInput["imageStyle"];
+  webImages: boolean;
+  webMedia: WebMedia;
+  clipsPerStep: number;
+  libraryMode: JobInput["libraryMode"];
+  libraryTag: string;
+  music: { musicId: string; volume: number };
+};
+
+type FormState = Settings & { topic: string; batch: boolean; assetIds: string[]; contactId: string };
+
+const DEFAULTS: Settings = {
+  voice: DEFAULT_VOICE,
+  style: DEFAULT_STYLE,
+  videoType: "howto",
+  tone: "",
+  length: "medium",
+  numSteps: "",
+  layoutIndex: 0,
+  bgVideoId: "",
+  imageStyle: "auto",
+  webImages: true,
+  // Clip quay thật làm video sinh động hơn ảnh tĩnh: mặc định ưu tiên clip
+  webMedia: "video",
+  clipsPerStep: 3,
+  libraryMode: "auto",
+  libraryTag: "",
+  music: { musicId: "", volume: 0.12 },
+};
+
+/** Ghép cài đặt (lưu trong trình duyệt hoặc từ job cũ) vào mặc định, bỏ giá trị không hợp lệ. */
+function sanitize(p: Partial<Settings>): Settings {
+  const lang = languageOf(p.voice?.language);
+  const voiceOk = (v: unknown): v is string => typeof v === "string" && /^[a-z]{2,3}-[A-Z]{2,3}-\w+$/.test(v);
+  const pick = <T,>(value: unknown, ok: (v: unknown) => boolean, fallback: T): T => (ok(value) ? (value as T) : fallback);
+  return {
+    voice: {
+      language: lang.value,
+      voice: voiceOk(p.voice?.voice) ? p.voice.voice : lang.voices[0].value,
+      voice2: voiceOk(p.voice?.voice2) ? p.voice.voice2 : "",
+      rate: pick(p.voice?.rate, (v) => typeof v === "string" && /^[+-]\d{1,3}%$/.test(v), DEFAULTS.voice.rate),
+      pitch: pick(p.voice?.pitch, (v) => typeof v === "string" && /^[+-]\d{1,3}Hz$/.test(v), DEFAULTS.voice.pitch),
+    },
+    style: p.style ? normalizeStyle(p.style) : DEFAULTS.style,
+    videoType: pick(p.videoType, (v) => typeof v === "string" && Object.hasOwn(VIDEO_TYPES, v), DEFAULTS.videoType),
+    tone: typeof p.tone === "string" ? p.tone.slice(0, MAX_TONE_CHARS) : "",
+    length: pick(p.length, (v) => typeof v === "string" && Object.hasOwn(LENGTHS, v), DEFAULTS.length),
+    numSteps: typeof p.numSteps === "string" && /^\d{0,2}$/.test(p.numSteps) ? p.numSteps : "",
+    layoutIndex: pick(p.layoutIndex, (v) => typeof v === "number" && v >= 0 && v < LAYOUTS.length, 0),
+    bgVideoId: typeof p.bgVideoId === "string" ? p.bgVideoId : "",
+    imageStyle: pick(p.imageStyle, (v) => v === "auto" || v === "cover" || v === "frame", DEFAULTS.imageStyle),
+    webImages: typeof p.webImages === "boolean" ? p.webImages : DEFAULTS.webImages,
+    webMedia: pick(p.webMedia, (v) => v === "image" || v === "video" || v === "auto", DEFAULTS.webMedia),
+    clipsPerStep: pick(p.clipsPerStep, (v) => typeof v === "number" && v >= 1 && v <= 6, DEFAULTS.clipsPerStep),
+    libraryMode: pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode),
+    libraryTag: typeof p.libraryTag === "string" ? p.libraryTag : "",
+    music: {
+      musicId: typeof p.music?.musicId === "string" ? p.music.musicId : "",
+      volume: typeof p.music?.volume === "number" ? Math.min(Math.max(p.music.volume, 0.02), 0.5) : DEFAULTS.music.volume,
+    },
+  };
+}
+
+function readSavedRaw(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEY) ?? "";
+  } catch {
+    return ""; // trình duyệt chặn localStorage
+  }
+}
+
+function parseSaved(raw: string): Partial<Settings> {
+  try {
+    const data: unknown = JSON.parse(raw || "{}");
+    return data && typeof data === "object" ? (data as Partial<Settings>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(s: FormState): void {
+  const settings = Object.fromEntries((Object.keys(DEFAULTS) as (keyof Settings)[]).map((k) => [k, s[k]])) as Settings;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // trình duyệt chặn localStorage: bỏ qua
+  }
+}
+
+/** Cài đặt của một job cũ (nút "Tạo video tương tự"). */
+function settingsFromJob(input: JobInput): Partial<Settings> {
+  const layoutIndex = input.layout === "split" ? 3 : Math.max(0, LAYOUTS.findIndex((l) => l.aspect === input.aspect && l.layout === "normal"));
+  const lang = LANGUAGES.find((l) => l.value === input.language) ?? languageOf(undefined);
+  return {
+    voice: {
+      language: lang.value,
+      voice: input.voice || lang.voices[0].value,
+      voice2: input.voice2 || "",
+      rate: input.rate || "+0%",
+      pitch: input.pitch || "+0Hz",
+    },
+    style: input.style ?? LEGACY_STYLE,
+    videoType: input.videoType,
+    tone: input.tone,
+    length: input.length,
+    numSteps: input.numSteps ? String(input.numSteps) : "",
+    layoutIndex,
+    bgVideoId: input.bgVideoId ?? "",
+    imageStyle: input.imageStyle,
+    webImages: input.webImages,
+    webMedia: input.webMedia,
+    clipsPerStep: input.clipsPerStep,
+    libraryMode: input.libraryMode,
+    libraryTag: input.libraryTag ?? "",
+    music: { musicId: input.musicId ?? "", volume: input.musicVolume ?? DEFAULTS.music.volume },
+  };
+}
+
+const noSubscribe = () => () => {};
+
+/** Trang tạo video: nạp cài đặt đã nhớ (hoặc của job cũ khi có ?from=) rồi hiện form. */
+export function CreateVideoForm() {
+  const params = useSearchParams();
+  const from = params.get("from");
+  // Đọc localStorage không cần effect; lần render ở server/hydrate dùng null rồi render lại với giá trị thật
+  const saved = useSyncExternalStore(noSubscribe, readSavedRaw, () => null);
+  const job = useApi<JobDetail>(from ? `/api/jobs/${encodeURIComponent(from)}` : null);
+  if (saved === null || (from && !job.data && !job.error)) return <Loading />;
+
+  const base = job.data ? settingsFromJob(job.data.input) : parseSaved(saved);
+  const initial: FormState = {
+    ...sanitize(base),
+    topic: job.data && !job.data.input.script ? job.data.input.topic : "",
+    batch: false,
+    assetIds: job.data?.input.assetIds ?? [],
+    contactId: params.get("contact") ?? job.data?.input.contactId ?? "",
+  };
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "rounded-xl p-3 text-left ring-1 transition-colors",
-        active ? "bg-brand-50 ring-2 ring-brand-500" : "bg-white ring-zinc-200 hover:ring-zinc-300",
-      )}
-    >
-      <p className={cx("text-sm font-medium", active ? "text-brand-700" : "text-zinc-800")}>{title}</p>
-      {children && <div className="mt-0.5 text-xs text-zinc-500">{children}</div>}
-    </button>
+    <>
+      {from && job.error && <ErrorBox message={`Không nạp được cài đặt của job: ${job.error}`} />}
+      <Form key={`${from ?? "new"}-${job.data ? "job" : "saved"}`} initial={initial} fromJob={!!job.data} />
+    </>
   );
 }
 
-export function CreateVideoForm() {
+function matchesPreset(s: FormState, p: Preset): boolean {
+  return (
+    s.layoutIndex === p.layoutIndex &&
+    s.videoType === p.videoType &&
+    s.length === p.length &&
+    s.voice.rate === p.voice.rate &&
+    s.voice.pitch === p.voice.pitch &&
+    (Object.keys(p.style) as (keyof Preset["style"])[]).every((k) => s.style[k] === p.style[k])
+  );
+}
+
+function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const router = useRouter();
-  const params = useSearchParams();
-  const [topic, setTopic] = useState("");
-  const [numSteps, setNumSteps] = useState("");
-  const [language, setLanguage] = useState("tiếng Việt");
-  const [voice, setVoice] = useState(VOICES["tiếng Việt"][0].value);
-  const [rate, setRate] = useState("+0%");
-  const [layoutIndex, setLayoutIndex] = useState(0);
-  const [bgVideoId, setBgVideoId] = useState("");
-  const [libraryMode, setLibraryMode] = useState<JobInput["libraryMode"]>("auto");
-  const [libraryTag, setLibraryTag] = useState("");
-  const [assetIds, setAssetIds] = useState<string[]>([]);
-  const [webImages, setWebImages] = useState(true);
-  const [webMedia, setWebMedia] = useState<NonNullable<JobInput["webMedia"]>>("auto");
-  const [clipsPerStep, setClipsPerStep] = useState(3);
-  const [imageStyle, setImageStyle] = useState<JobInput["imageStyle"]>("auto");
-  const [contactId, setContactId] = useState(params.get("contact") ?? "");
-  const [music, setMusic] = useState({ musicId: "", volume: 0.12 });
+  const [s, setS] = useState<FormState>(initial);
+  const [editingTone, setEditingTone] = useState(() => !TONES.some((t) => t.value === initial.tone));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setS((prev) => ({ ...prev, [key]: value }));
 
-  const layout = LAYOUTS[layoutIndex];
+  const layout = LAYOUTS[s.layoutIndex];
   const bgVideos = useApi<Page<AssetItem>>(layout.layout === "split" ? "/api/assets?kind=video&limit=200" : null);
-  const tags = useApi<TagCount[]>(libraryMode === "auto" ? "/api/tags" : null);
+  const tags = useApi<TagCount[]>(s.libraryMode === "auto" ? "/api/tags" : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
+
+  const topics = s.batch
+    ? s.topic
+        .split("\n")
+        .map((t) => t.trim())
+        .filter(Boolean)
+    : [s.topic.trim()].filter(Boolean);
+  const tooMany = topics.length > MAX_BATCH;
+
+  const applyPreset = (p: Preset) => {
+    setS((prev) => ({
+      ...prev,
+      layoutIndex: p.layoutIndex,
+      videoType: p.videoType,
+      length: p.length,
+      tone: p.tone,
+      webImages: true,
+      webMedia: p.webMedia,
+      clipsPerStep: p.clipsPerStep,
+      voice: { ...prev.voice, ...p.voice },
+      style: { ...prev.style, ...p.style },
+    }));
+    setEditingTone(false);
+  };
+
+  const reset = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // bỏ qua
+    }
+    setS((prev) => ({ ...DEFAULTS, topic: prev.topic, batch: prev.batch, assetIds: prev.assetIds, contactId: prev.contactId }));
+    setEditingTone(false);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!topics.length || tooMany) return;
     setBusy(true);
     setError(null);
+    const common: Omit<Partial<JobInput>, "topic"> = {
+      numSteps: s.numSteps ? Number(s.numSteps) : null,
+      language: s.voice.language,
+      voice: s.voice.voice,
+      voice2: s.voice.voice2 || null,
+      rate: s.voice.rate,
+      pitch: s.voice.pitch,
+      videoType: s.videoType,
+      tone: s.tone.trim(),
+      length: s.length,
+      style: s.style,
+      aspect: layout.aspect,
+      layout: layout.layout,
+      bgVideoId: layout.layout === "split" ? s.bgVideoId : null,
+      imageStyle: s.imageStyle,
+      webImages: s.webImages,
+      webMedia: s.webMedia,
+      clipsPerStep: s.clipsPerStep,
+      libraryMode: s.libraryMode,
+      libraryTag: s.libraryMode === "auto" ? s.libraryTag || null : null,
+      assetIds: s.libraryMode === "selected" ? s.assetIds : [],
+      contactId: s.contactId || null,
+      musicId: s.music.musicId || null,
+      musicVolume: s.music.volume,
+    };
+    let created: JobItem[] = [];
     try {
-      const input: Partial<JobInput> = {
-        topic,
-        numSteps: numSteps ? Number(numSteps) : null,
-        language,
-        voice,
-        rate,
-        aspect: layout.aspect,
-        layout: layout.layout,
-        bgVideoId: layout.layout === "split" ? bgVideoId : null,
-        imageStyle,
-        webImages,
-        webMedia,
-        clipsPerStep,
-        libraryMode,
-        libraryTag: libraryMode === "auto" ? libraryTag || null : null,
-        assetIds: libraryMode === "selected" ? assetIds : [],
-        contactId: contactId || null,
-        musicId: music.musicId || null,
-        musicVolume: music.volume,
-      };
-      const job = await api<JobItem>("/api/jobs", { method: "POST", json: input });
-      router.push(`/jobs/${job.id}`);
+      for (const topic of topics) {
+        created = [...created, await api<JobItem>("/api/jobs", { method: "POST", json: { ...common, topic } })];
+      }
+      saveSettings(s);
+      router.push(created.length === 1 ? `/jobs/${created[0].id}` : "/jobs");
     } catch (err) {
-      setError((err as Error).message);
+      const done = created.length ? `Đã tạo ${created.length}/${topics.length} video. ` : "";
+      setError(done + (err as Error).message);
       setBusy(false);
     }
   };
 
   return (
     <form onSubmit={submit} className="space-y-6">
-      <PageHeader title="Tạo video mới" subtitle="AI viết kịch bản, chọn ảnh/video từ Assets (hoặc tìm ảnh trên mạng), đọc lời bình và dựng video." />
+      <PageHeader
+        title="Tạo video mới"
+        subtitle={
+          fromJob
+            ? "Đã điền sẵn cài đặt của job cũ. Sửa chủ đề hoặc tùy chọn rồi tạo video."
+            : "AI viết kịch bản, chọn ảnh/clip, đọc lời bình và dựng video. Cài đặt của lần tạo trước được nhớ sẵn."
+        }
+        actions={
+          <Button variant="ghost" onClick={reset}>
+            Đặt lại mặc định
+          </Button>
+        }
+      />
+
+      <Card className="space-y-3 p-5">
+        <div>
+          <h2 className="font-semibold text-zinc-900">Mẫu nhanh</h2>
+          <p className="text-sm text-zinc-500">Chọn một phong cách có sẵn rồi tinh chỉnh bên dưới.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          {PRESETS.map((p) => (
+            <Choice key={p.id} active={matchesPreset(s, p)} onClick={() => applyPreset(p)} title={p.label}>
+              {p.hint}
+            </Choice>
+          ))}
+        </div>
+      </Card>
 
       <Card className="space-y-4 p-5">
         <Field
-          label="Chủ đề / yêu cầu cho AI"
+          label={s.batch ? "Danh sách chủ đề (mỗi dòng một video)" : "Chủ đề / yêu cầu cho AI"}
           hint={
             <span className="flex justify-between gap-3">
               <span>
-                Viết ngắn (“cách pha cà phê phin”) hoặc chi tiết như một prompt: nội dung cần nói, đối tượng xem, giọng văn, thông tin
-                sản phẩm, giá...
+                {s.batch
+                  ? `Mỗi dòng tạo một video với cùng cài đặt (tối đa ${MAX_BATCH}).`
+                  : "Viết ngắn (“cách pha cà phê phin”) hoặc chi tiết như một prompt: nội dung cần nói, đối tượng xem, thông tin sản phẩm, giá..."}
               </span>
-              {topic.length > 0 && <span className="shrink-0 tabular-nums">{topic.length.toLocaleString("vi-VN")} ký tự</span>}
+              {s.batch ? (
+                <span className={cx("shrink-0 tabular-nums", tooMany && "font-medium text-red-600")}>{topics.length} video</span>
+              ) : (
+                s.topic.length > 0 && <span className="shrink-0 tabular-nums">{s.topic.length.toLocaleString("vi-VN")} ký tự</span>
+              )}
             </span>
           }
         >
@@ -124,55 +348,83 @@ export function CreateVideoForm() {
             className={`${inputClass} min-h-28 resize-y`}
             rows={5}
             required
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder={"Bạn muốn làm video hướng dẫn về gì?\nVí dụ: Video giới thiệu quán cà phê Mộc cho dân văn phòng, giọng trẻ trung, nhấn mạnh combo sáng 35.000đ và chỗ ngồi làm việc yên tĩnh."}
+            value={s.topic}
+            onChange={(e) => set("topic", e.target.value)}
+            placeholder={
+              s.batch
+                ? "Cách pha cà phê phin\nCách làm bánh flan\n5 mẹo giữ rau tươi lâu"
+                : "Bạn muốn làm video về gì?\nVí dụ: Video giới thiệu quán cà phê Mộc cho dân văn phòng, nhấn mạnh combo sáng 35.000đ và chỗ ngồi làm việc yên tĩnh."
+            }
           />
         </Field>
-        <div className="grid gap-4 sm:grid-cols-4">
-          <Field label="Số bước">
-            <input className={inputClass} type="number" min={1} max={15} value={numSteps} onChange={(e) => setNumSteps(e.target.value)} placeholder="Tự động" />
-          </Field>
-          <Field label="Ngôn ngữ">
+        <Toggle checked={s.batch} onChange={(v) => set("batch", v)} label="Tạo hàng loạt" hint="Mỗi dòng là một chủ đề, tạo nhiều video cùng lúc (xếp hàng chạy lần lượt)." />
+
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-zinc-700">Loại video</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {(Object.keys(VIDEO_TYPES) as VideoType[]).map((k) => (
+              <Choice key={k} active={s.videoType === k} onClick={() => set("videoType", k)} title={VIDEO_TYPES[k].label}>
+                {VIDEO_TYPES[k].hint}
+              </Choice>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_8rem]">
+          <Field label="Giọng văn">
             <select
               className={inputClass}
-              value={language}
+              value={editingTone ? "__custom" : s.tone}
               onChange={(e) => {
-                setLanguage(e.target.value);
-                setVoice(VOICES[e.target.value][0].value);
+                if (e.target.value === "__custom") return setEditingTone(true);
+                setEditingTone(false);
+                set("tone", e.target.value);
               }}
             >
-              {Object.keys(VOICES).map((l) => (
-                <option key={l}>{l}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Giọng đọc">
-            <select className={inputClass} value={voice} onChange={(e) => setVoice(e.target.value)}>
-              {VOICES[language].map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label}
+              {TONES.map((t) => (
+                <option key={t.label} value={t.value}>
+                  {t.label}
                 </option>
               ))}
+              <option value="__custom">Tự nhập...</option>
             </select>
+            {editingTone && (
+              <input
+                className={`${inputClass} mt-2`}
+                maxLength={MAX_TONE_CHARS}
+                value={s.tone}
+                onChange={(e) => set("tone", e.target.value)}
+                placeholder="VD: như một đầu bếp vui tính, hay pha trò"
+              />
+            )}
           </Field>
-          <Field label="Tốc độ đọc">
-            <select className={inputClass} value={rate} onChange={(e) => setRate(e.target.value)}>
-              {["-10%", "+0%", "+10%", "+20%"].map((r) => (
-                <option key={r} value={r}>
-                  {r === "+0%" ? "Bình thường" : r}
-                </option>
-              ))}
-            </select>
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-zinc-700">Độ dài</p>
+            <Segmented<VideoLength>
+              value={s.length}
+              onChange={(v) => set("length", v)}
+              options={(Object.keys(LENGTHS) as VideoLength[]).map((k) => ({ value: k, label: LENGTHS[k].label, hint: LENGTHS[k].hint }))}
+            />
+          </div>
+          <Field label="Số phần">
+            <input className={inputClass} type="number" min={1} max={15} value={s.numSteps} onChange={(e) => set("numSteps", e.target.value)} placeholder="Tự động" />
           </Field>
         </div>
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <div>
+          <h2 className="font-semibold text-zinc-900">Giọng đọc</h2>
+          <p className="text-sm text-zinc-500">Hơn 50 giọng ở 10 ngôn ngữ; giọng đa ngôn ngữ đọc được cả tiếng Việt. Bấm “Nghe thử” trước khi chọn.</p>
+        </div>
+        <VoiceFields value={s.voice} onChange={(v) => set("voice", v)} />
       </Card>
 
       <Card className="space-y-4 p-5">
         <h2 className="font-semibold text-zinc-900">Khung hình</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {LAYOUTS.map((l, i) => (
-            <Choice key={l.label} active={layoutIndex === i} onClick={() => setLayoutIndex(i)} title={l.label}>
+            <Choice key={l.label} active={s.layoutIndex === i} onClick={() => set("layoutIndex", i)} title={l.label}>
               <span className="mt-2 flex items-center gap-2">
                 <span className={cx("inline-block rounded-sm border-2 border-current", l.box, l.layout === "split" && "border-dashed")} />
                 {l.hint}
@@ -182,8 +434,11 @@ export function CreateVideoForm() {
         </div>
         {layout.layout === "split" && (
           <Field label="Video nền (nửa dưới, tắt tiếng)" hint={<>Tải video nền ở trang <Link href="/assets" className="text-brand-600 underline">Assets</Link>. Nên tự quay màn hình khi chơi game để tránh vi phạm bản quyền.</>}>
-            <select className={inputClass} value={bgVideoId} onChange={(e) => setBgVideoId(e.target.value)} required>
+            <select className={inputClass} value={s.bgVideoId} onChange={(e) => set("bgVideoId", e.target.value)} required>
               <option value="">Chọn video nền...</option>
+              {s.bgVideoId && bgVideos.data && !bgVideos.data.items.some((v) => v.id === s.bgVideoId) && (
+                <option value={s.bgVideoId}>(Video đã bị xóa — chọn lại)</option>
+              )}
               {bgVideos.data?.items.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.title} ({formatDuration(v.duration)})
@@ -196,26 +451,34 @@ export function CreateVideoForm() {
 
       <Card className="space-y-4 p-5">
         <div>
+          <h2 className="font-semibold text-zinc-900">Hiệu ứng & phong cách</h2>
+          <p className="text-sm text-zinc-500">Chuyển cảnh, chuyển động, phụ đề động và màu sắc làm video sinh động hơn.</p>
+        </div>
+        <StyleFields value={s.style} onChange={(v) => set("style", v)} />
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <div>
           <h2 className="font-semibold text-zinc-900">Ảnh & video trong video</h2>
           <p className="text-sm text-zinc-500">
             Asset có thể là nền minh họa hoặc là nội dung chính (ảnh sản phẩm, menu, ảnh chụp màn hình, clip quay sản phẩm...).
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
-          <Choice active={libraryMode === "auto"} onClick={() => setLibraryMode("auto")} title="AI tự chọn từ Assets">
+          <Choice active={s.libraryMode === "auto"} onClick={() => set("libraryMode", "auto")} title="AI tự chọn từ Assets">
             AI đọc tóm tắt và chữ trong từng asset, tự chọn ảnh/video khớp với từng bước.
           </Choice>
-          <Choice active={libraryMode === "selected"} onClick={() => setLibraryMode("selected")} title="Dùng asset tôi chọn">
+          <Choice active={s.libraryMode === "selected"} onClick={() => set("libraryMode", "selected")} title="Dùng asset tôi chọn">
             Ảnh/video bạn chọn là nội dung chính, AI viết lời bình dựa trên nội dung và chữ trong chúng.
           </Choice>
-          <Choice active={libraryMode === "off"} onClick={() => setLibraryMode("off")} title="Chỉ tìm ảnh trên mạng">
-            Không dùng Assets; AI tự đặt từ khóa và tìm ảnh cho từng bước.
+          <Choice active={s.libraryMode === "off"} onClick={() => set("libraryMode", "off")} title="Chỉ tìm trên mạng">
+            Không dùng Assets; AI tự đặt từ khóa và tìm clip/ảnh cho từng bước.
           </Choice>
         </div>
 
-        {libraryMode === "auto" && (
+        {s.libraryMode === "auto" && (
           <Field label="Giới hạn trong tag (tùy chọn)" hint="AI chỉ xem các asset có tag này. Để trống: cả thư viện (AI lọc theo chủ đề).">
-            <select className={`${inputClass} max-w-xs`} value={libraryTag} onChange={(e) => setLibraryTag(e.target.value)}>
+            <select className={`${inputClass} max-w-xs`} value={s.libraryTag} onChange={(e) => set("libraryTag", e.target.value)}>
               <option value="">Toàn bộ thư viện</option>
               {tags.data
                 ?.filter((t) => t.assets > 0)
@@ -227,19 +490,19 @@ export function CreateVideoForm() {
             </select>
           </Field>
         )}
-        {libraryMode === "selected" && (
+        {s.libraryMode === "selected" && (
           <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
             <p className="mb-3 text-sm text-zinc-600">
-              Bấm vào asset để chọn theo thứ tự xuất hiện mong muốn. Đã chọn <b>{assetIds.length}</b> asset. AI dùng mô tả, tóm tắt và
+              Bấm vào asset để chọn theo thứ tự xuất hiện mong muốn. Đã chọn <b>{s.assetIds.length}</b> asset. AI dùng mô tả, tóm tắt và
               chữ đọc được trong từng asset để viết lời bình.
             </p>
-            <AssetPicker selected={assetIds} onChange={setAssetIds} />
+            <AssetPicker selected={s.assetIds} onChange={(ids) => set("assetIds", ids)} />
           </div>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Cách hiển thị ảnh/video">
-            <select className={inputClass} value={imageStyle} onChange={(e) => setImageStyle(e.target.value as JobInput["imageStyle"])}>
+            <select className={inputClass} value={s.imageStyle} onChange={(e) => set("imageStyle", e.target.value as JobInput["imageStyle"])}>
               <option value="auto">Tự động: asset của bạn hiện trọn vẹn, ảnh trên mạng phủ kín</option>
               <option value="frame">Luôn hiện trọn vẹn trong khung (asset là nội dung chính)</option>
               <option value="cover">Luôn phủ kín khung hình (làm nền)</option>
@@ -251,21 +514,21 @@ export function CreateVideoForm() {
           >
             <select
               className={inputClass}
-              value={webImages ? webMedia : "off"}
+              value={s.webImages ? s.webMedia : "off"}
               onChange={(e) => {
-                setWebImages(e.target.value !== "off");
-                if (e.target.value !== "off") setWebMedia(e.target.value as NonNullable<JobInput["webMedia"]>);
+                const v = e.target.value;
+                setS((prev) => ({ ...prev, webImages: v !== "off", webMedia: v === "off" ? prev.webMedia : (v as WebMedia) }));
               }}
             >
+              <option value="video">Ưu tiên clip video (thiếu thì dùng ảnh) — sinh động nhất</option>
               <option value="auto">AI tự chọn ảnh hay clip video cho từng bước</option>
-              <option value="video">Ưu tiên clip video (thiếu thì dùng ảnh)</option>
               <option value="image">Chỉ ảnh</option>
               <option value="off">Không tìm (bước thiếu asset dùng nền chữ)</option>
             </select>
           </Field>
-          {webImages && webMedia !== "image" && (
+          {s.webImages && s.webMedia !== "image" && (
             <Field label="Số clip ghép trong mỗi bước" hint="Nhiều clip nối nhau làm video sinh động hơn; mở đầu và kết thúc tự ghép từ các clip.">
-              <select className={inputClass} value={clipsPerStep} onChange={(e) => setClipsPerStep(Number(e.target.value))}>
+              <select className={inputClass} value={s.clipsPerStep} onChange={(e) => set("clipsPerStep", Number(e.target.value))}>
                 {[1, 2, 3, 4, 5, 6].map((n) => (
                   <option key={n} value={n}>
                     {n} clip{n === 3 ? " (mặc định)" : ""}
@@ -280,12 +543,12 @@ export function CreateVideoForm() {
       <Card className="space-y-2 p-5">
         <h2 className="font-semibold text-zinc-900">Nhạc nền</h2>
         <p className="text-sm text-zinc-500">Nhạc lặp lại suốt video, nhỏ hơn giọng đọc và mờ dần ở cuối.</p>
-        <MusicPicker musicId={music.musicId} volume={music.volume} onChange={setMusic} />
+        <MusicPicker musicId={s.music.musicId} volume={s.music.volume} onChange={(m) => set("music", m)} />
       </Card>
 
       <Card className="p-5">
         <Field label="Làm cho khách hàng (tùy chọn)" hint="Video sẽ được gắn vào hồ sơ khách hàng trong CRM.">
-          <select className={`${inputClass} max-w-md`} value={contactId} onChange={(e) => setContactId(e.target.value)}>
+          <select className={`${inputClass} max-w-md`} value={s.contactId} onChange={(e) => set("contactId", e.target.value)}>
             <option value="">Không gắn</option>
             {contacts.data?.items.map((c) => (
               <option key={c.id} value={c.id}>
@@ -298,9 +561,10 @@ export function CreateVideoForm() {
       </Card>
 
       <ErrorBox message={error} />
-      <div className="flex justify-end">
-        <Button type="submit" variant="primary" busy={busy} disabled={!topic.trim()} className="px-6">
-          Tạo video
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {tooMany && <p className="text-sm text-red-600">Tối đa {MAX_BATCH} video mỗi lần.</p>}
+        <Button type="submit" variant="primary" busy={busy} disabled={!topics.length || tooMany} className="px-6">
+          {topics.length > 1 ? `Tạo ${topics.length} video` : "Tạo video"}
         </Button>
       </div>
     </form>

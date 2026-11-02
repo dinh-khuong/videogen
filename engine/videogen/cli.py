@@ -13,6 +13,7 @@ Lệnh dành cho web app:
     python -m videogen job spec.json      # chạy job, phát sự kiện JSON trên stdout
     python -m videogen probe file... [--thumbnail-dir dir]
     python -m videogen analyze --spec spec.json   # phân tích asset, phát sự kiện JSON trên stdout
+    python -m videogen voice-sample --voice vi-VN-NamMinhNeural --out mau.mp3   # nghe thử giọng
     python -m videogen doctor             # kiểm tra cấu hình, in JSON
 """
 import argparse
@@ -20,7 +21,7 @@ import json
 import sys
 from pathlib import Path
 
-SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor"}
+SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor", "voice-sample"}
 
 
 ANALYSIS_CACHE = ".videogen-analysis.json"
@@ -78,6 +79,7 @@ def _library_from_dir(folder: Path, analyze: bool = False):
 def cmd_make(argv: list[str]) -> int:
     from .config import ConfigError
     from .pipeline import IMAGE_STYLES, Options, run
+    from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
     from .video_builder import ASPECTS
 
     parser = argparse.ArgumentParser(prog="videogen", description="Tạo video hướng dẫn (how-to) từ một chủ đề.")
@@ -90,7 +92,26 @@ def cmd_make(argv: list[str]) -> int:
                         help="Tỉ lệ khung hình: 16:9 (YouTube), 9:16 (TikTok/Shorts), 1:1")
     parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ lời bình (mặc định: tiếng Việt)")
     parser.add_argument("--voice", help="Giọng edge-tts, vd vi-VN-NamMinhNeural (ghi đè TTS_VOICE)")
-    parser.add_argument("--rate", help="Tốc độ đọc, vd '+10%%' hoặc '-5%%' (ghi đè TTS_RATE)")
+    parser.add_argument("--rate", help="Tốc độ đọc, vd --rate=+10%% hoặc --rate=-5%% (ghi đè TTS_RATE)")
+    parser.add_argument("--pitch", help="Cao độ giọng, vd --pitch=+5Hz (trong hơn) hoặc --pitch=-8Hz (trầm hơn)")
+    parser.add_argument("--voice2", help="Giọng thứ hai đọc xen kẽ các bước chẵn, vd vi-VN-NamMinhNeural")
+    parser.add_argument("--type", dest="video_type", choices=VIDEO_TYPES, default="howto",
+                        help="Loại video: howto (hướng dẫn), listicle (top danh sách), tips (mẹo), facts (sự thật thú vị), "
+                             "promo (giới thiệu/quảng cáo), story (kể chuyện)")
+    parser.add_argument("--tone", default="", help="Giọng văn, vd 'hài hước, dí dỏm' hoặc 'chuyên nghiệp'")
+    parser.add_argument("--length", choices=("short", "medium", "long"), default="medium",
+                        help="Độ dài: short (<45 giây), medium, long")
+    parser.add_argument("--pacing", choices=PACINGS, default="normal", help="Nhịp dựng: slow | normal | fast")
+    parser.add_argument("--transition", choices=TRANSITIONS, default="mix",
+                        help="Chuyển cảnh: mix (luân phiên nhiều kiểu) hoặc một kiểu cố định")
+    parser.add_argument("--subtitles", choices=SUBTITLE_STYLES, default="auto",
+                        help="Phụ đề: auto | box (khung tối) | karaoke (tô từ đang đọc) | outline (viền đen) | none")
+    parser.add_argument("--filter", dest="color_filter", choices=COLOR_FILTERS, default="none", help="Bộ lọc màu")
+    parser.add_argument("--accent", default="#e95420", help="Màu chủ đạo (hex) của nhãn, thanh tiến độ, chữ karaoke")
+    parser.add_argument("--progress-bar", action="store_true", help="Thanh tiến độ ở mép trên video")
+    parser.add_argument("--sfx", action="store_true", help="Hiệu ứng âm thanh khi chuyển cảnh và hiện nhãn")
+    parser.add_argument("--logo", type=Path, help="Ảnh logo đặt ở góc trên phải")
+    parser.add_argument("--cta", default="", help="Lời kêu gọi hiện nổi bật ở cuối video, vd 'Gọi ngay 0909 123 456'")
     parser.add_argument("--music", type=Path, help="File nhạc nền (mp3/wav), tự lặp và giảm âm lượng")
     parser.add_argument("--music-volume", type=float, default=0.12, help="Âm lượng nhạc nền 0-1 (mặc định 0.12)")
     parser.add_argument("--bg-video", type=Path,
@@ -119,6 +140,8 @@ def cmd_make(argv: list[str]) -> int:
         parser.error(f"Không tìm thấy file nhạc: {args.music}")
     if args.bg_video and not args.bg_video.exists():
         parser.error(f"Không tìm thấy video nền: {args.bg_video}")
+    if args.logo and not args.logo.exists():
+        parser.error(f"Không tìm thấy logo: {args.logo}")
     if args.library_dir and not args.library_dir.is_dir():
         parser.error(f"Không tìm thấy thư mục ảnh: {args.library_dir}")
 
@@ -128,7 +151,17 @@ def cmd_make(argv: list[str]) -> int:
         num_steps=args.steps,
         language=args.language,
         voice=args.voice,
+        voice2=args.voice2,
         rate=args.rate,
+        pitch=args.pitch,
+        video_type=args.video_type,
+        tone=args.tone,
+        length=args.length,
+        style=Style(
+            pacing=args.pacing, transition=args.transition, subtitle_style=args.subtitles,
+            color_filter=args.color_filter, accent=args.accent, progress_bar=args.progress_bar,
+            sfx=args.sfx, logo=args.logo, cta=args.cta,
+        ),
         music=args.music,
         music_volume=args.music_volume,
         script_only=args.script_only,
@@ -200,6 +233,44 @@ def cmd_analyze(argv: list[str]) -> int:
     return 0 if all(r.status == "done" for r in results) else 1
 
 
+def cmd_voice_sample(argv: list[str]) -> int:
+    """Tạo file nghe thử giọng đọc (web app dùng cho nút "Nghe thử")."""
+    from .style import language_for
+    from .tts import voice_sample
+
+    parser = argparse.ArgumentParser(prog="videogen voice-sample", description="Tạo file mp3 nghe thử một giọng đọc.")
+    parser.add_argument("--voice", required=True)
+    parser.add_argument("--rate", default="+0%")
+    parser.add_argument("--pitch", default="+0Hz")
+    parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ của câu mẫu (dùng cho gTTS dự phòng)")
+    parser.add_argument("--text", help="Câu đọc thử (mặc định: câu mẫu theo ngôn ngữ)")
+    parser.add_argument("--out", type=Path, required=True)
+    args = parser.parse_args(argv)
+    lang = language_for(args.language)
+    text = args.text or SAMPLE_TEXT.get(lang.code, SAMPLE_TEXT["en"])
+    try:
+        voice_sample(text, args.voice, args.out, args.rate, args.pitch, fallback_lang=lang.code)
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "path": str(args.out)}, ensure_ascii=False))
+    return 0
+
+
+SAMPLE_TEXT = {
+    "vi": "Xin chào! Đây là giọng đọc cho video của bạn. Hôm nay mình sẽ hướng dẫn bạn từng bước thật dễ hiểu.",
+    "en": "Hi there! This is the voice for your video. Today I'll walk you through it step by step.",
+    "zh": "大家好！这是你视频的配音。今天我来一步一步教你。",
+    "ja": "こんにちは！これはあなたの動画のナレーションです。今日は一歩ずつ説明します。",
+    "ko": "안녕하세요! 영상의 내레이션 목소리입니다. 오늘은 차근차근 알려드릴게요.",
+    "fr": "Bonjour ! Voici la voix de votre vidéo. Aujourd'hui, je vous explique tout étape par étape.",
+    "es": "¡Hola! Esta es la voz de tu video. Hoy te explico todo paso a paso.",
+    "de": "Hallo! Das ist die Stimme für dein Video. Heute zeige ich dir alles Schritt für Schritt.",
+    "th": "สวัสดีครับ นี่คือเสียงพากย์สำหรับวิดีโอของคุณ วันนี้จะสอนทีละขั้นตอน",
+    "id": "Halo! Ini suara untuk videomu. Hari ini aku akan memandumu langkah demi langkah.",
+}
+
+
 def cmd_doctor(argv: list[str]) -> int:
     """Kiểm tra môi trường: thư viện, API key, nguồn ảnh, font, ffmpeg."""
     report: dict = {"python": sys.version.split()[0], "problems": [], "warnings": []}
@@ -252,5 +323,8 @@ def main(argv: list[str] | None = None) -> None:
     command = argv[0] if argv and argv[0] in SUBCOMMANDS else "make"
     if argv and argv[0] == command:
         argv = argv[1:]
-    handler = {"make": cmd_make, "job": cmd_job, "probe": cmd_probe, "analyze": cmd_analyze, "doctor": cmd_doctor}[command]
+    handler = {
+        "make": cmd_make, "job": cmd_job, "probe": cmd_probe, "analyze": cmd_analyze, "doctor": cmd_doctor,
+        "voice-sample": cmd_voice_sample,
+    }[command]
     sys.exit(handler(argv))

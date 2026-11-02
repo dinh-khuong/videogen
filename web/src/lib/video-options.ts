@@ -1,0 +1,409 @@
+// Các lựa chọn khi tạo video: dùng chung cho form (client) và kiểm tra dữ liệu (server).
+// Giá trị phải khớp với engine (engine/videogen/style.py, llm.py).
+
+export type Voice = { value: string; label: string };
+
+/** Giọng "Multilingual" của Microsoft đọc được nhiều ngôn ngữ (kể cả tiếng Việt), thêm vào mọi ngôn ngữ. */
+export const MULTILINGUAL_VOICES: Voice[] = [
+  { value: "en-US-AvaMultilingualNeural", label: "Ava (nữ, truyền cảm)" },
+  { value: "en-US-EmmaMultilingualNeural", label: "Emma (nữ, tươi vui)" },
+  { value: "fr-FR-VivienneMultilingualNeural", label: "Vivienne (nữ, nhẹ nhàng)" },
+  { value: "de-DE-SeraphinaMultilingualNeural", label: "Seraphina (nữ, điềm tĩnh)" },
+  { value: "pt-BR-ThalitaMultilingualNeural", label: "Thalita (nữ, trẻ trung)" },
+  { value: "en-US-AndrewMultilingualNeural", label: "Andrew (nam, ấm áp)" },
+  { value: "en-US-BrianMultilingualNeural", label: "Brian (nam, thân thiện)" },
+  { value: "fr-FR-RemyMultilingualNeural", label: "Rémy (nam, trầm)" },
+  { value: "de-DE-FlorianMultilingualNeural", label: "Florian (nam, rõ ràng)" },
+  { value: "it-IT-GiuseppeMultilingualNeural", label: "Giuseppe (nam, sôi nổi)" },
+  { value: "ko-KR-HyunsuMultilingualNeural", label: "Hyunsu (nam, trẻ)" },
+];
+
+export type Language = { value: string; label: string; voices: Voice[] };
+
+/** value = tên ngôn ngữ gửi cho AI viết kịch bản và engine (nhãn "Bước", font chữ...). */
+export const LANGUAGES: Language[] = [
+  {
+    value: "tiếng Việt",
+    label: "Tiếng Việt",
+    voices: [
+      { value: "vi-VN-HoaiMyNeural", label: "Hoài My (nữ, miền Bắc)" },
+      { value: "vi-VN-NamMinhNeural", label: "Nam Minh (nam, miền Bắc)" },
+    ],
+  },
+  {
+    value: "English",
+    label: "Tiếng Anh (English)",
+    voices: [
+      { value: "en-US-JennyNeural", label: "Jenny (female, US)" },
+      { value: "en-US-AriaNeural", label: "Aria (female, US)" },
+      { value: "en-US-MichelleNeural", label: "Michelle (female, US)" },
+      { value: "en-US-AnaNeural", label: "Ana (girl, US)" },
+      { value: "en-US-GuyNeural", label: "Guy (male, US)" },
+      { value: "en-US-ChristopherNeural", label: "Christopher (male, US)" },
+      { value: "en-US-EricNeural", label: "Eric (male, US)" },
+      { value: "en-US-RogerNeural", label: "Roger (male, US)" },
+      { value: "en-US-SteffanNeural", label: "Steffan (male, US)" },
+      { value: "en-GB-SoniaNeural", label: "Sonia (female, UK)" },
+      { value: "en-GB-LibbyNeural", label: "Libby (female, UK)" },
+      { value: "en-GB-RyanNeural", label: "Ryan (male, UK)" },
+      { value: "en-GB-ThomasNeural", label: "Thomas (male, UK)" },
+      { value: "en-AU-NatashaNeural", label: "Natasha (female, AU)" },
+      { value: "en-AU-WilliamNeural", label: "William (male, AU)" },
+      { value: "en-IN-NeerjaNeural", label: "Neerja (female, IN)" },
+      { value: "en-IN-PrabhatNeural", label: "Prabhat (male, IN)" },
+    ],
+  },
+  {
+    value: "中文",
+    label: "Tiếng Trung (中文)",
+    voices: [
+      { value: "zh-CN-XiaoxiaoNeural", label: "晓晓 Xiaoxiao (nữ)" },
+      { value: "zh-CN-XiaoyiNeural", label: "晓伊 Xiaoyi (nữ)" },
+      { value: "zh-CN-YunxiNeural", label: "云希 Yunxi (nam)" },
+      { value: "zh-CN-YunjianNeural", label: "云健 Yunjian (nam)" },
+      { value: "zh-CN-YunyangNeural", label: "云扬 Yunyang (nam, tin tức)" },
+      { value: "zh-CN-YunxiaNeural", label: "云夏 Yunxia (bé trai)" },
+      { value: "zh-TW-HsiaoChenNeural", label: "曉臻 HsiaoChen (nữ, Đài Loan)" },
+    ],
+  },
+  {
+    value: "日本語",
+    label: "Tiếng Nhật (日本語)",
+    voices: [
+      { value: "ja-JP-NanamiNeural", label: "七海 Nanami (nữ)" },
+      { value: "ja-JP-KeitaNeural", label: "圭太 Keita (nam)" },
+    ],
+  },
+  {
+    value: "한국어",
+    label: "Tiếng Hàn (한국어)",
+    voices: [
+      { value: "ko-KR-SunHiNeural", label: "선히 SunHi (nữ)" },
+      { value: "ko-KR-InJoonNeural", label: "인준 InJoon (nam)" },
+    ],
+  },
+  {
+    value: "Français",
+    label: "Tiếng Pháp (Français)",
+    voices: [
+      { value: "fr-FR-DeniseNeural", label: "Denise (femme)" },
+      { value: "fr-FR-EloiseNeural", label: "Eloise (fille)" },
+      { value: "fr-FR-HenriNeural", label: "Henri (homme)" },
+    ],
+  },
+  {
+    value: "Español",
+    label: "Tiếng Tây Ban Nha (Español)",
+    voices: [
+      { value: "es-ES-ElviraNeural", label: "Elvira (mujer, España)" },
+      { value: "es-ES-AlvaroNeural", label: "Álvaro (hombre, España)" },
+      { value: "es-MX-DaliaNeural", label: "Dalia (mujer, México)" },
+      { value: "es-MX-JorgeNeural", label: "Jorge (hombre, México)" },
+    ],
+  },
+  {
+    value: "Deutsch",
+    label: "Tiếng Đức (Deutsch)",
+    voices: [
+      { value: "de-DE-KatjaNeural", label: "Katja (Frau)" },
+      { value: "de-DE-AmalaNeural", label: "Amala (Frau)" },
+      { value: "de-DE-ConradNeural", label: "Conrad (Mann)" },
+      { value: "de-DE-KillianNeural", label: "Killian (Mann)" },
+    ],
+  },
+  {
+    value: "ไทย",
+    label: "Tiếng Thái (ไทย)",
+    voices: [
+      { value: "th-TH-PremwadeeNeural", label: "Premwadee (nữ)" },
+      { value: "th-TH-NiwatNeural", label: "Niwat (nam)" },
+    ],
+  },
+  {
+    value: "Bahasa Indonesia",
+    label: "Tiếng Indonesia",
+    voices: [
+      { value: "id-ID-GadisNeural", label: "Gadis (nữ)" },
+      { value: "id-ID-ArdiNeural", label: "Ardi (nam)" },
+    ],
+  },
+];
+
+export function languageOf(value: string | undefined): Language {
+  return LANGUAGES.find((l) => l.value === value) ?? LANGUAGES[0];
+}
+
+export function voiceLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  for (const v of [...LANGUAGES.flatMap((l) => l.voices), ...MULTILINGUAL_VOICES]) if (v.value === value) return v.label;
+  return value;
+}
+
+export const RATES = [
+  { value: "-20%", label: "Rất chậm (-20%)" },
+  { value: "-10%", label: "Chậm (-10%)" },
+  { value: "+0%", label: "Bình thường" },
+  { value: "+10%", label: "Nhanh (+10%)" },
+  { value: "+20%", label: "Rất nhanh (+20%)" },
+  { value: "+30%", label: "Siêu nhanh (+30%)" },
+];
+
+export const PITCHES = [
+  { value: "-12Hz", label: "Rất trầm" },
+  { value: "-6Hz", label: "Trầm ấm" },
+  { value: "+0Hz", label: "Tự nhiên" },
+  { value: "+6Hz", label: "Trong trẻo" },
+  { value: "+12Hz", label: "Cao, vui tươi" },
+];
+
+/** Sắc thái giọng: đặt nhanh tốc độ + cao độ. */
+export const VOICE_MOODS = [
+  { label: "Tự nhiên", rate: "+0%", pitch: "+0Hz" },
+  { label: "Trầm ấm, chậm rãi", rate: "-10%", pitch: "-6Hz" },
+  { label: "Kể chuyện", rate: "-10%", pitch: "+0Hz" },
+  { label: "Trẻ trung, năng động", rate: "+10%", pitch: "+6Hz" },
+  { label: "Quảng cáo sôi nổi", rate: "+20%", pitch: "+6Hz" },
+  { label: "Tin tức", rate: "+10%", pitch: "-6Hz" },
+];
+
+export const VIDEO_TYPES = {
+  howto: { label: "Hướng dẫn", hint: "Các bước thực hiện theo thứ tự" },
+  listicle: { label: "Top danh sách", hint: "Top 5 địa điểm, món ăn, sản phẩm..." },
+  tips: { label: "Mẹo hay", hint: "Mẹo nhanh, làm được ngay" },
+  facts: { label: "Sự thật thú vị", hint: "Kiến thức gây tò mò" },
+  promo: { label: "Quảng cáo", hint: "Giới thiệu sản phẩm, dịch vụ, ưu đãi" },
+  story: { label: "Kể chuyện", hint: "Câu chuyện có mở đầu, cao trào, kết" },
+} as const;
+export type VideoType = keyof typeof VIDEO_TYPES;
+
+export const TONES = [
+  { value: "", label: "Tự nhiên (mặc định)" },
+  { value: "thân thiện, gần gũi như nói chuyện với bạn bè", label: "Thân thiện, gần gũi" },
+  { value: "hài hước, dí dỏm", label: "Hài hước, dí dỏm" },
+  { value: "chuyên nghiệp, đáng tin cậy", label: "Chuyên nghiệp" },
+  { value: "truyền cảm hứng, tích cực", label: "Truyền cảm hứng" },
+  { value: "thuyết phục, kêu gọi mua hàng", label: "Thuyết phục, bán hàng" },
+  { value: "kể chuyện lôi cuốn, giàu cảm xúc", label: "Lôi cuốn, cảm xúc" },
+  { value: "trẻ trung, bắt trend, ngôn ngữ Gen Z", label: "Trẻ trung (Gen Z)" },
+  { value: "ngắn gọn, đi thẳng vào vấn đề", label: "Ngắn gọn, súc tích" },
+];
+
+export const LENGTHS = {
+  short: { label: "Ngắn", hint: "< 45 giây, 3-4 phần" },
+  medium: { label: "Vừa", hint: "~1 phút, 5-8 phần" },
+  long: { label: "Dài", hint: "2-3 phút, 8-12 phần" },
+} as const;
+export type VideoLength = keyof typeof LENGTHS;
+
+export const PACINGS = {
+  slow: { label: "Chậm rãi", hint: "Cảnh dài, chuyển mềm" },
+  normal: { label: "Vừa", hint: "Cân bằng" },
+  fast: { label: "Nhanh, dồn dập", hint: "Cắt cảnh nhanh, zoom mạnh" },
+} as const;
+export type Pacing = keyof typeof PACINGS;
+
+export const TRANSITIONS = {
+  mix: "Đa dạng (tự luân phiên nhiều kiểu)",
+  slide: "Trượt đẩy",
+  whip: "Lia máy nhanh",
+  zoom: "Zoom xuyên cảnh",
+  wipe: "Quét ngang",
+  circle: "Mở vòng tròn",
+  flash: "Lóe sáng",
+  fade: "Mờ chồng (cổ điển)",
+} as const;
+export type TransitionKind = keyof typeof TRANSITIONS;
+
+export const SUBTITLE_STYLES = {
+  auto: "Tự động (karaoke cho video dọc, khung chữ cho video ngang)",
+  karaoke: "Karaoke: tô màu từ đang đọc",
+  outline: "Chữ to viền đen",
+  box: "Chữ trong khung tối",
+  none: "Không phụ đề",
+} as const;
+export type SubtitleStyle = keyof typeof SUBTITLE_STYLES;
+
+export const COLOR_FILTERS = {
+  none: "Màu gốc",
+  vivid: "Rực rỡ",
+  warm: "Ấm áp",
+  cool: "Mát lạnh",
+  cinematic: "Điện ảnh",
+  vintage: "Hoài cổ",
+  bw: "Đen trắng",
+} as const;
+export type ColorFilter = keyof typeof COLOR_FILTERS;
+
+export const ACCENTS = [
+  { value: "#e95420", label: "Cam" },
+  { value: "#f5b700", label: "Vàng" },
+  { value: "#e53935", label: "Đỏ" },
+  { value: "#ec407a", label: "Hồng" },
+  { value: "#8e24aa", label: "Tím" },
+  { value: "#1e88e5", label: "Xanh dương" },
+  { value: "#00acc1", label: "Xanh ngọc" },
+  { value: "#43a047", label: "Xanh lá" },
+];
+
+/** Phong cách dựng video (engine: Style). */
+export type VideoStyle = {
+  pacing: Pacing;
+  transition: TransitionKind;
+  subtitleStyle: SubtitleStyle;
+  colorFilter: ColorFilter;
+  /** màu chủ đạo dạng #rrggbb */
+  accent: string;
+  progressBar: boolean;
+  sfx: boolean;
+  /** id asset ảnh làm logo (góc trên phải) */
+  logoId: string | null;
+  /** lời kêu gọi hiện ở cuối video */
+  cta: string;
+};
+
+export const DEFAULT_STYLE: VideoStyle = {
+  pacing: "normal",
+  transition: "mix",
+  subtitleStyle: "auto",
+  colorFilter: "vivid",
+  accent: ACCENTS[0].value,
+  progressBar: true,
+  sfx: true,
+  logoId: null,
+  cta: "",
+};
+
+/** Giọng đọc của video. */
+export type VoiceSettings = {
+  language: string;
+  voice: string;
+  /** giọng thứ hai đọc xen kẽ các bước chẵn ("" = không dùng) */
+  voice2: string;
+  rate: string;
+  pitch: string;
+};
+
+export const DEFAULT_VOICE: VoiceSettings = {
+  language: LANGUAGES[0].value,
+  voice: LANGUAGES[0].voices[0].value,
+  voice2: "",
+  rate: "+0%",
+  pitch: "+0Hz",
+};
+
+export const MAX_CTA_CHARS = 120;
+export const MAX_TONE_CHARS = 200;
+
+/** Phong cách của video tạo trước khi có tùy chọn này (chạy lại job cũ cho kết quả như cũ). */
+export const LEGACY_STYLE: VideoStyle = {
+  pacing: "normal",
+  transition: "fade",
+  subtitleStyle: "box",
+  colorFilter: "none",
+  accent: ACCENTS[0].value,
+  progressBar: false,
+  sfx: false,
+  logoId: null,
+  cta: "",
+};
+
+/** Chuẩn hóa phong cách gửi lên (giá trị lạ thì dùng mặc định). */
+export function normalizeStyle(raw: Partial<VideoStyle> | null | undefined): VideoStyle {
+  const s = raw ?? {};
+  const pick = <T extends string>(value: unknown, allowed: Record<T, unknown>, fallback: T): T =>
+    typeof value === "string" && Object.hasOwn(allowed, value) ? (value as T) : fallback;
+  return {
+    pacing: pick(s.pacing, PACINGS, DEFAULT_STYLE.pacing),
+    transition: pick(s.transition, TRANSITIONS, DEFAULT_STYLE.transition),
+    subtitleStyle: pick(s.subtitleStyle, SUBTITLE_STYLES, DEFAULT_STYLE.subtitleStyle),
+    colorFilter: pick(s.colorFilter, COLOR_FILTERS, DEFAULT_STYLE.colorFilter),
+    accent: typeof s.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(s.accent) ? s.accent.toLowerCase() : DEFAULT_STYLE.accent,
+    progressBar: s.progressBar ?? DEFAULT_STYLE.progressBar,
+    sfx: s.sfx ?? DEFAULT_STYLE.sfx,
+    logoId: typeof s.logoId === "string" && s.logoId ? s.logoId : null,
+    cta: typeof s.cta === "string" ? s.cta.replace(/\s+/g, " ").trim().slice(0, MAX_CTA_CHARS) : "",
+  };
+}
+
+/** Mẫu nhanh: đặt nhiều lựa chọn cùng lúc. */
+export type Preset = {
+  id: string;
+  label: string;
+  hint: string;
+  layoutIndex: number;
+  videoType: VideoType;
+  length: VideoLength;
+  tone: string;
+  webMedia: "image" | "video" | "auto";
+  clipsPerStep: number;
+  voice: Pick<VoiceSettings, "rate" | "pitch">;
+  style: Omit<VideoStyle, "logoId" | "cta" | "accent">;
+};
+
+export const PRESETS: Preset[] = [
+  {
+    id: "tiktok",
+    label: "TikTok / Reels viral",
+    hint: "9:16, nhịp nhanh, karaoke, nhiều clip",
+    layoutIndex: 1,
+    videoType: "tips",
+    length: "short",
+    tone: "trẻ trung, bắt trend, ngôn ngữ Gen Z",
+    webMedia: "video",
+    clipsPerStep: 4,
+    voice: { rate: "+10%", pitch: "+6Hz" },
+    style: { pacing: "fast", transition: "mix", subtitleStyle: "karaoke", colorFilter: "vivid", progressBar: true, sfx: true },
+  },
+  {
+    id: "youtube",
+    label: "YouTube hướng dẫn",
+    hint: "16:9, rõ ràng, phụ đề khung",
+    layoutIndex: 0,
+    videoType: "howto",
+    length: "medium",
+    tone: "thân thiện, gần gũi như nói chuyện với bạn bè",
+    webMedia: "video",
+    clipsPerStep: 3,
+    voice: { rate: "+0%", pitch: "+0Hz" },
+    style: { pacing: "normal", transition: "slide", subtitleStyle: "box", colorFilter: "none", progressBar: false, sfx: false },
+  },
+  {
+    id: "promo",
+    label: "Quảng cáo sản phẩm",
+    hint: "Sôi nổi, lời kêu gọi cuối video",
+    layoutIndex: 1,
+    videoType: "promo",
+    length: "short",
+    tone: "thuyết phục, kêu gọi mua hàng",
+    webMedia: "video",
+    clipsPerStep: 3,
+    voice: { rate: "+20%", pitch: "+6Hz" },
+    style: { pacing: "fast", transition: "whip", subtitleStyle: "karaoke", colorFilter: "vivid", progressBar: true, sfx: true },
+  },
+  {
+    id: "story",
+    label: "Kể chuyện thư giãn",
+    hint: "Chậm rãi, màu điện ảnh",
+    layoutIndex: 0,
+    videoType: "story",
+    length: "medium",
+    tone: "kể chuyện lôi cuốn, giàu cảm xúc",
+    webMedia: "video",
+    clipsPerStep: 2,
+    voice: { rate: "-10%", pitch: "-6Hz" },
+    style: { pacing: "slow", transition: "fade", subtitleStyle: "outline", colorFilter: "cinematic", progressBar: false, sfx: false },
+  },
+  {
+    id: "facts",
+    label: "Kiến thức / sự thật",
+    hint: "Vuông 1:1, zoom xuyên cảnh",
+    layoutIndex: 2,
+    videoType: "facts",
+    length: "short",
+    tone: "",
+    webMedia: "auto",
+    clipsPerStep: 3,
+    voice: { rate: "+10%", pitch: "-6Hz" },
+    style: { pacing: "normal", transition: "zoom", subtitleStyle: "outline", colorFilter: "cool", progressBar: true, sfx: true },
+  },
+];

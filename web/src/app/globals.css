@@ -1,20 +1,81 @@
 @import "tailwindcss";
 
+/* Giao diện tối: <html data-theme="dark"> (đặt bởi script trong layout trước khi trang hiện ra). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   color-scheme: light;
   --background: #f6f6f4;
   --foreground: #1c1c1e;
+  --surface: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  /* Nền của thẻ, ô nhập, hộp thoại (thay cho bg-white để đổi được theo giao diện) */
+  --color-surface: var(--surface);
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+}
+
+/* Không dùng "inline" để các lớp bg-brand-* đọc biến CSS và đổi được trong giao diện tối */
+@theme {
   --color-brand-50: #fff4ee;
   --color-brand-100: #ffe3d3;
   --color-brand-500: #e95420;
   --color-brand-600: #d0461a;
   --color-brand-700: #a93812;
-  --font-sans: var(--font-inter), system-ui, sans-serif;
+}
+
+/*
+ * Giao diện tối: thay vì thêm dark: vào từng lớp, thang màu xám (zinc) được đảo ngược — zinc-50 là nền nổi nhẹ,
+ * zinc-900 là chữ sáng — và các màu trạng thái nhạt (red-50, emerald-50...) thành nền màu trong suốt trên nền tối.
+ * Vì vậy: dùng bg-surface cho nền thẻ; phần luôn tối ở cả hai giao diện (khung log, nền video) dùng neutral-*
+ * hoặc black (không bị đảo).
+ */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0e0e11;
+  --foreground: #ececef;
+  --surface: #17171b;
+
+  --color-zinc-50: #1d1d22;
+  --color-zinc-100: #26262c;
+  --color-zinc-200: #303037;
+  --color-zinc-300: #3e3e46;
+  --color-zinc-400: #6d6d77;
+  --color-zinc-500: #9d9da8;
+  --color-zinc-600: #b6b6c0;
+  --color-zinc-700: #cfcfd6;
+  --color-zinc-800: #e2e2e7;
+  --color-zinc-900: #f1f1f4;
+  --color-zinc-950: #fafafa;
+
+  --color-brand-50: rgb(233 84 32 / 0.15);
+  --color-brand-100: rgb(233 84 32 / 0.26);
+  --color-brand-600: #f26b3a;
+  --color-brand-700: #ff9f78;
+
+  --color-red-50: rgb(239 68 68 / 0.13);
+  --color-red-100: rgb(239 68 68 / 0.2);
+  --color-red-200: rgb(239 68 68 / 0.35);
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-red-800: #fecaca;
+  --color-emerald-50: rgb(16 185 129 / 0.14);
+  --color-emerald-600: #34d399;
+  --color-emerald-700: #6ee7b7;
+  --color-amber-50: rgb(245 158 11 / 0.14);
+  --color-amber-600: #fbbf24;
+  --color-amber-700: #fcd34d;
+  --color-sky-50: rgb(14 165 233 / 0.14);
+  --color-sky-100: rgb(14 165 233 / 0.24);
+  --color-sky-700: #7dd3fc;
+  --color-sky-800: #bae6fd;
+  --color-blue-50: rgb(59 130 246 / 0.15);
+  --color-blue-700: #93c5fd;
+  --color-violet-50: rgb(139 92 246 / 0.16);
+  --color-violet-700: #c4b5fd;
 }
 
 body {

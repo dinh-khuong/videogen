@@ -10,6 +10,8 @@ export const DATA_DIR = path.resolve(/* turbopackIgnore: true */ process.env.DAT
 export const MEDIA_DIR = path.join(DATA_DIR, "media");
 export const JOBS_DIR = path.join(DATA_DIR, "jobs");
 export const TMP_DIR = path.join(DATA_DIR, "tmp");
+/** File tạo lại được (vd mẫu nghe thử giọng đọc), xóa thoải mái. */
+export const CACHE_DIR = path.join(DATA_DIR, "cache");
 export const DB_PATH = path.join(DATA_DIR, "app.db");
 
 export const ENGINE_DIR = path.resolve(/* turbopackIgnore: true */ process.env.ENGINE_DIR || path.join(PROJECT_ROOT, "engine"));
@@ -28,7 +30,7 @@ export const MEDIA_SUBDIRS = ["assets", "images", "videos", "thumbs"] as const;
 export type MediaSubdir = (typeof MEDIA_SUBDIRS)[number];
 
 export function ensureDirs(): void {
-  for (const dir of [DATA_DIR, JOBS_DIR, TMP_DIR, ...MEDIA_SUBDIRS.map((d) => path.join(MEDIA_DIR, d))]) {
+  for (const dir of [DATA_DIR, JOBS_DIR, TMP_DIR, CACHE_DIR, ...MEDIA_SUBDIRS.map((d) => path.join(MEDIA_DIR, d))]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }

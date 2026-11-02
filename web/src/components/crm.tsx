@@ -173,7 +173,7 @@ export function ContactsList() {
             onClick={() => setStatus(v)}
             className={cx(
               "rounded-full px-3 py-1 text-sm font-medium",
-              status === v ? "bg-zinc-900 text-white" : "bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50",
+              status === v ? "bg-zinc-900 text-zinc-50" : "bg-surface text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50",
             )}
           >
             {l}
@@ -369,7 +369,7 @@ export function ContactDetailView({ id }: { id: string }) {
           {contact.activities.length ? (
             <ol className="space-y-2">
               {contact.activities.map((a) => (
-                <li key={a.id} className="group flex gap-3 rounded-lg bg-white p-3 ring-1 ring-zinc-200/80">
+                <li key={a.id} className="group flex gap-3 rounded-lg bg-surface p-3 ring-1 ring-zinc-200/80">
                   <span className="mt-0.5 shrink-0 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-600">{ACTIVITY_TYPES[a.type]}</span>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-pre-wrap text-sm text-zinc-800">{a.content}</p>
