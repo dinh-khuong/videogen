@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/client";
-import type { AssetItem, Page } from "@/lib/types";
+import type { AssetItem, EngineHealth, Page } from "@/lib/types";
 import {
   ACCENTS,
   COLOR_FILTERS,
+  FPT_VOICES,
   LANGUAGES,
   MAX_CTA_CHARS,
   MULTILINGUAL_VOICES,
@@ -14,7 +15,10 @@ import {
   RATES,
   SUBTITLE_STYLES,
   TRANSITIONS,
+  VOICE_EFFECTS,
   VOICE_MOODS,
+  VOICE_PERSONAS,
+  gttsVoice,
   languageOf,
   voiceLabel,
   type ColorFilter,
@@ -22,14 +26,18 @@ import {
   type SubtitleStyle,
   type TransitionKind,
   type VideoStyle,
+  type VoiceEffect,
   type VoiceSettings,
 } from "@/lib/video-options";
 import { AssetThumb } from "./assets-library";
 import { Button, Field, Segmented, Spinner, Toggle, cx, inputClass } from "./ui";
 
-function VoiceOptions({ language, current }: { language: string; current?: string }) {
+function VoiceOptions({ language, current, fpt }: { language: string; current?: string; fpt: boolean }) {
   const lang = languageOf(language);
-  const known = (v?: string) => !v || [...lang.voices, ...MULTILINGUAL_VOICES].some((x) => x.value === v);
+  const google = gttsVoice(lang.value);
+  const vietnamese = lang.value === LANGUAGES[0].value;
+  const all = [...lang.voices, google, ...MULTILINGUAL_VOICES, ...(vietnamese ? FPT_VOICES : [])];
+  const known = (v?: string) => !v || all.some((x) => x.value === v);
   return (
     <>
       {!known(current) && <option value={current}>{voiceLabel(current)}</option>}
@@ -39,8 +47,18 @@ function VoiceOptions({ language, current }: { language: string; current?: strin
             {v.label}
           </option>
         ))}
+        <option value={google.value}>{google.label}</option>
       </optgroup>
-      <optgroup label="Giọng đa ngôn ngữ (đọc được mọi ngôn ngữ)">
+      {vietnamese && (
+        <optgroup label={fpt ? "FPT.AI — giọng Việt tự nhiên" : "FPT.AI — cần FPT_AI_API_KEY trong engine/.env"}>
+          {FPT_VOICES.map((v) => (
+            <option key={v.value} value={v.value}>
+              {v.label}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <optgroup label="Giọng đa ngôn ngữ (đọc tiếng Việt kiểu Tây, ngọng ngọng)">
         {MULTILINGUAL_VOICES.map((v) => (
           <option key={v.value} value={v.value}>
             {v.label}
@@ -51,8 +69,8 @@ function VoiceOptions({ language, current }: { language: string; current?: strin
   );
 }
 
-/** Nút nghe thử: engine đọc một câu mẫu bằng giọng, tốc độ, cao độ đang chọn. */
-function VoicePreview({ voice, rate, pitch, language }: { voice: string; rate: string; pitch: string; language: string }) {
+/** Nút nghe thử: engine đọc một câu mẫu bằng giọng, tốc độ, cao độ, hiệu ứng đang chọn. */
+function VoicePreview({ voice, settings }: { voice: string; settings: VoiceSettings }) {
   const [state, setState] = useState<"idle" | "loading" | "playing">("idle");
   const [error, setError] = useState<string | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -67,7 +85,8 @@ function VoicePreview({ voice, rate, pitch, language }: { voice: string; rate: s
     setState("loading");
     setError(null);
     try {
-      const res = await fetch(`/api/voices/preview?${new URLSearchParams({ voice, rate, pitch, language })}`);
+      const { rate, pitch, language, effect } = settings;
+      const res = await fetch(`/api/voices/preview?${new URLSearchParams({ voice, rate, pitch, language, effect })}`);
       if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error || `Lỗi ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       audio.current?.pause();
@@ -96,7 +115,24 @@ function VoicePreview({ voice, rate, pitch, language }: { voice: string; rate: s
   );
 }
 
-/** Ngôn ngữ, giọng chính, giọng thứ hai (xen kẽ), sắc thái, tốc độ, cao độ. */
+function Chip({ active, onClick, title, hint }: { active: boolean; onClick: () => void; title: string; hint?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={hint}
+      className={cx(
+        "rounded-full px-3 py-1 text-sm ring-1 transition-colors",
+        active ? "bg-brand-50 font-medium text-brand-700 ring-brand-500" : "bg-surface text-zinc-600 ring-zinc-200 hover:ring-zinc-300",
+      )}
+    >
+      {title}
+    </button>
+  );
+}
+
+/** Ngôn ngữ, giọng chính, giọng thứ hai (xen kẽ), giọng kiểu kênh, sắc thái, tốc độ, cao độ, hiệu ứng. */
 export function VoiceFields({
   value,
   onChange,
@@ -107,10 +143,26 @@ export function VoiceFields({
   /** sửa kịch bản có sẵn: không đổi ngôn ngữ (kịch bản đã viết bằng ngôn ngữ đó) */
   lockLanguage?: boolean;
 }) {
+  const health = useApi<EngineHealth>("/api/health");
+  const fpt = !!health.data?.fpt_tts;
   const set = (patch: Partial<VoiceSettings>) => onChange({ ...value, ...patch });
   const mood = VOICE_MOODS.find((m) => m.rate === value.rate && m.pitch === value.pitch);
+  const vietnamese = value.language === LANGUAGES[0].value;
+  const isPersona = (p: (typeof VOICE_PERSONAS)[number]) =>
+    (Object.keys(p.voice) as (keyof typeof p.voice)[]).every((k) => value[k] === p.voice[k]);
   return (
     <div className="space-y-4">
+      {vietnamese && (
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-zinc-700">Giọng kiểu kênh quen thuộc</p>
+          <div className="flex flex-wrap gap-1.5">
+            {VOICE_PERSONAS.map((p) => (
+              <Chip key={p.label} active={isPersona(p)} onClick={() => set(p.voice)} title={p.label} hint={p.hint} />
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-zinc-500">Bấm một kiểu rồi “Nghe thử”; có thể chỉnh tiếp giọng, tốc độ, hiệu ứng bên dưới.</p>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Ngôn ngữ" hint={lockLanguage ? "Theo kịch bản đã viết." : "AI viết kịch bản và nhãn trong video bằng ngôn ngữ này."}>
           <select
@@ -119,7 +171,7 @@ export function VoiceFields({
             disabled={lockLanguage}
             onChange={(e) => {
               const lang = languageOf(e.target.value);
-              // Giọng đa ngôn ngữ đọc được mọi ngôn ngữ: giữ nguyên; giọng bản địa thì đổi theo ngôn ngữ
+              // Giọng đa ngôn ngữ đọc được mọi ngôn ngữ: giữ nguyên; giọng khác thì đổi theo ngôn ngữ
               const keep = (v: string) => MULTILINGUAL_VOICES.some((m) => m.value === v);
               set({
                 language: lang.value,
@@ -138,18 +190,18 @@ export function VoiceFields({
         <Field label="Giọng đọc">
           <div className="flex gap-2">
             <select className={inputClass} value={value.voice} onChange={(e) => set({ voice: e.target.value })}>
-              <VoiceOptions language={value.language} current={value.voice} />
+              <VoiceOptions language={value.language} current={value.voice} fpt={fpt} />
             </select>
-            <VoicePreview voice={value.voice} rate={value.rate} pitch={value.pitch} language={value.language} />
+            <VoicePreview voice={value.voice} settings={value} />
           </div>
         </Field>
         <Field label="Giọng thứ hai (đọc xen kẽ)" hint="Các bước chẵn dùng giọng này, như hai người dẫn.">
           <div className="flex gap-2">
             <select className={inputClass} value={value.voice2} onChange={(e) => set({ voice2: e.target.value })}>
               <option value="">Không dùng</option>
-              <VoiceOptions language={value.language} current={value.voice2} />
+              <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} />
             </select>
-            {value.voice2 && <VoicePreview voice={value.voice2} rate={value.rate} pitch={value.pitch} language={value.language} />}
+            {value.voice2 && <VoicePreview voice={value.voice2} settings={value} />}
           </div>
         </Field>
       </div>
@@ -157,21 +209,11 @@ export function VoiceFields({
         <p className="mb-1.5 text-sm font-medium text-zinc-700">Sắc thái giọng</p>
         <div className="flex flex-wrap gap-1.5">
           {VOICE_MOODS.map((m) => (
-            <button
-              key={m.label}
-              type="button"
-              onClick={() => set({ rate: m.rate, pitch: m.pitch })}
-              className={cx(
-                "rounded-full px-3 py-1 text-sm ring-1 transition-colors",
-                mood === m ? "bg-brand-50 font-medium text-brand-700 ring-brand-500" : "bg-surface text-zinc-600 ring-zinc-200 hover:ring-zinc-300",
-              )}
-            >
-              {m.label}
-            </button>
+            <Chip key={m.label} active={mood === m} onClick={() => set({ rate: m.rate, pitch: m.pitch })} title={m.label} />
           ))}
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Field label="Tốc độ đọc">
           <select className={inputClass} value={value.rate} onChange={(e) => set({ rate: e.target.value })}>
             {!RATES.some((r) => r.value === value.rate) && <option value={value.rate}>{value.rate}</option>}
@@ -188,6 +230,15 @@ export function VoiceFields({
             {PITCHES.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label} ({p.value})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Hiệu ứng giọng" hint="Áp dụng cho mọi giọng, phụ đề vẫn khớp.">
+          <select className={inputClass} value={value.effect} onChange={(e) => set({ effect: e.target.value as VoiceEffect })}>
+            {(Object.keys(VOICE_EFFECTS) as VoiceEffect[]).map((k) => (
+              <option key={k} value={k}>
+                {VOICE_EFFECTS[k]}
               </option>
             ))}
           </select>

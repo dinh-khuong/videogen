@@ -38,7 +38,7 @@ function ScriptEditorForm({
   const [voice, setVoice] = useState(() => {
     const lang = languageOf(source?.language);
     return source
-      ? { language: lang.value, voice: source.voice || lang.voices[0].value, voice2: source.voice2 || "", rate: source.rate || "+0%", pitch: source.pitch || "+0Hz" }
+      ? { language: lang.value, voice: source.voice || lang.voices[0].value, voice2: source.voice2 || "", rate: source.rate || "+0%", pitch: source.pitch || "+0Hz", effect: source.voiceEffect ?? "none" }
       : DEFAULT_VOICE;
   });
   const [style, setStyle] = useState(() => source?.style ?? LEGACY_STYLE);
@@ -82,6 +82,7 @@ function ScriptEditorForm({
           voice2: voice.voice2 || null,
           rate: voice.rate,
           pitch: voice.pitch,
+          voiceEffect: voice.effect,
           videoType,
           style,
           contactId: defaults.contactId ?? null,

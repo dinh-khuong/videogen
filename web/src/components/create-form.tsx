@@ -15,6 +15,8 @@ import {
   PRESETS,
   TONES,
   VIDEO_TYPES,
+  VOICE_EFFECTS,
+  VOICE_RE,
   languageOf,
   normalizeStyle,
   type Preset,
@@ -82,7 +84,7 @@ const DEFAULTS: Settings = {
 /** Ghép cài đặt (lưu trong trình duyệt hoặc từ job cũ) vào mặc định, bỏ giá trị không hợp lệ. */
 function sanitize(p: Partial<Settings>): Settings {
   const lang = languageOf(p.voice?.language);
-  const voiceOk = (v: unknown): v is string => typeof v === "string" && /^[a-z]{2,3}-[A-Z]{2,3}-\w+$/.test(v);
+  const voiceOk = (v: unknown): v is string => typeof v === "string" && VOICE_RE.test(v);
   const pick = <T,>(value: unknown, ok: (v: unknown) => boolean, fallback: T): T => (ok(value) ? (value as T) : fallback);
   return {
     voice: {
@@ -91,6 +93,7 @@ function sanitize(p: Partial<Settings>): Settings {
       voice2: voiceOk(p.voice?.voice2) ? p.voice.voice2 : "",
       rate: pick(p.voice?.rate, (v) => typeof v === "string" && /^[+-]\d{1,3}%$/.test(v), DEFAULTS.voice.rate),
       pitch: pick(p.voice?.pitch, (v) => typeof v === "string" && /^[+-]\d{1,3}Hz$/.test(v), DEFAULTS.voice.pitch),
+      effect: pick(p.voice?.effect, (v) => typeof v === "string" && Object.hasOwn(VOICE_EFFECTS, v), DEFAULTS.voice.effect),
     },
     style: p.style ? normalizeStyle(p.style) : DEFAULTS.style,
     videoType: pick(p.videoType, (v) => typeof v === "string" && Object.hasOwn(VIDEO_TYPES, v), DEFAULTS.videoType),
@@ -149,6 +152,7 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
       voice2: input.voice2 || "",
       rate: input.rate || "+0%",
       pitch: input.pitch || "+0Hz",
+      effect: input.voiceEffect ?? "none",
     },
     style: input.style ?? LEGACY_STYLE,
     videoType: input.videoType,
@@ -264,6 +268,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       voice2: s.voice.voice2 || null,
       rate: s.voice.rate,
       pitch: s.voice.pitch,
+      voiceEffect: s.voice.effect,
       videoType: s.videoType,
       tone: s.tone.trim(),
       length: s.length,

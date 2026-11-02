@@ -29,6 +29,9 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - 10 ngôn ngữ (Việt, Anh, Trung, Nhật, Hàn, Pháp, Tây Ban Nha, Đức, Thái, Indonesia), hơn 50 giọng; giọng **đa ngôn ngữ** (Ava, Andrew, Emma, Brian...) đọc được cả tiếng Việt.
   - **Nghe thử** giọng ngay trong form; **sắc thái giọng** (trầm ấm, kể chuyện, trẻ trung, quảng cáo sôi nổi, tin tức) đặt nhanh tốc độ + cao độ.
   - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn.
+  - **Giọng kiểu kênh quen thuộc** (một lần bấm): kênh kiến thức, "chị Google", ngọng Tây dễ thương, bé ngọng, sóc chuột lầy lội, kể chuyện ma, robot, tổng đài.
+  - **Giọng "chị Google"** (gTTS, miễn phí) và **FPT.AI** (Ban Mai, Lê Minh, Lan Nhi... — giọng Việt tự nhiên, cần `FPT_AI_API_KEY`).
+  - **Hiệu ứng giọng**: dễ thương/ngọng nhẹ, sóc chuột, trầm ma mị, robot, radio, vang. Xử lý bằng ffmpeg, giữ nguyên tốc độ nên phụ đề vẫn khớp.
 - **Hiệu ứng làm video sinh động**:
   - **Nhịp dựng** chậm / vừa / nhanh: độ dài mỗi cảnh, tốc độ chuyển, biên độ zoom.
   - **Chuyển cảnh** đa dạng: trượt đẩy, lia máy nhanh (có nhòe chuyển động), zoom xuyên cảnh, quét ngang, mở vòng tròn, lóe sáng, mờ chồng; mặc định tự luân phiên.
@@ -109,6 +112,26 @@ npm run build && npm start      # chạy ổn định, nhanh hơn
 
 Trang **Tổng quan** có mục "Engine Python": nếu thiếu API key, thiếu thư viện Python hoặc thiếu font tiếng Việt, mục này sẽ báo rõ cần sửa gì.
 
+## Nhập ảnh từ dataset (Hugging Face)
+
+Đưa cả bộ ảnh của một dataset vào Assets, ví dụ [not-lain/meme-dataset](https://huggingface.co/datasets/not-lain/meme-dataset). Chạy web app trước (`npm run dev`), rồi trong thư mục `web/`:
+
+```bash
+npm run import-dataset -- not-lain/meme-dataset
+```
+
+```bash
+npm run import-dataset -- not-lain/meme-dataset --limit 200 --tag meme
+```
+
+- Lệnh tự dùng Python của engine (`engine/.venv` hoặc `PYTHON_BIN`) và web app ở `http://localhost:$PORT` (mặc định 3000). Cần cài `datasets` (có trong `engine/requirements.txt`).
+- Dataset được đọc dạng streaming (không phải tải hết trước). Lệnh tự tìm cột ảnh và các cột nhãn (nhãn phân loại, tên, chú thích, danh sách tag); chỉ định tay bằng `--image-col`, `--label-col` nếu cần.
+- Nhãn của dataset được ghi vào mô tả asset kèm hashtag (vd `#memedataset #drakehotlinebling #funny`). Sau đó web app tự phân tích từng ảnh như ảnh tải lên: đọc chữ, AI tóm tắt và gợi ý hashtag dựa trên chính các nhãn đó (thêm mô hình thị giác nếu đặt `VISION_MODEL`).
+- Ảnh trùng nội dung chỉ lưu một lần, nên chạy lại lệnh không tạo bản sao.
+- `--out thư-mục`: chỉ lưu ảnh + file mô tả `.txt` ra thư mục (không cần web app), dùng được với `python -m videogen ... --library-dir thư-mục`.
+- Cũng chạy được trực tiếp: `cd engine && python -m videogen import-dataset not-lain/meme-dataset`. `source` có thể là thư mục ảnh hoặc file parquet trên máy.
+- Kiểm tra giấy phép của dataset trước khi dùng ảnh cho video thương mại (ảnh meme thường thuộc bản quyền của người khác).
+
 ## Engine Python dùng như CLI
 
 Engine chạy độc lập, không cần web app (chạy trong thư mục `engine/`, video lưu ở `engine/output/<tên>/`):
@@ -124,6 +147,7 @@ python -m videogen "cách pha cà phê drip" --web-media auto --clips-per-step 3
 python -m videogen "5 quán phở ngon Hà Nội" --type listicle --aspect 9:16 --pacing fast --subtitles karaoke --sfx --progress-bar
 python -m videogen "giới thiệu quán Mộc" --type promo --tone "thuyết phục" --cta "Gọi ngay 0909 123 456" --logo logo.png --accent "#43a047"
 python -m videogen "chuyện cổ tích Tấm Cám" --type story --voice vi-VN-HoaiMyNeural --voice2 vi-VN-NamMinhNeural --rate=-10% --pitch=-6Hz
+python -m videogen "5 sự thật về mèo" --type facts --voice gtts:vi --rate=+15% --voice-effect cute   # chị Google ngọng nhẹ
 python -m videogen voice-sample --voice en-US-AvaMultilingualNeural --out mau.mp3   # nghe thử giọng
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
 python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa
@@ -176,8 +200,9 @@ Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,
 - Đọc chữ bằng Tesseract chạy trên máy; tóm tắt dùng chung key DeepSeek.
 - Tùy chọn: mô hình thị giác (Gemini, OpenAI, hoặc Ollama chạy local) để mô tả ảnh không có chữ. Đặt `VISION_BASE_URL`, `VISION_MODEL`, `VISION_API_KEY`.
 
-### 5. Giọng đọc — **không cần key**
+### 5. Giọng đọc — **không cần key** (trừ FPT.AI)
 - edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS (khi đó phụ đề chia theo độ dài câu thay vì khớp từng từ).
+- `TTS_VOICE` / `--voice` nhận thêm `gtts:vi` ("chị Google") và `fpt:<giọng>` (FPT.AI, cần `FPT_AI_API_KEY` lấy tại https://console.fpt.ai). Giọng FPT lỗi thì tự chuyển sang gTTS.
 - Danh sách đầy đủ: `edge-tts --list-voices`. Giọng có chữ `Multilingual` đọc được nhiều ngôn ngữ, kể cả tiếng Việt.
 - Video tiếng Trung/Nhật/Hàn/Thái cần font hỗ trợ chữ đó, vd `sudo apt install fonts-noto-cjk fonts-noto-core` (hoặc đặt `FONT_PATH`).
 
@@ -202,6 +227,7 @@ engine/                      # Python: tạo video (process riêng, CLI)
     graphics.py              # Pillow: font theo ngôn ngữ, phụ đề, nhãn bước, title card, lời kêu gọi, logo
     video_builder.py         # ghép từng khung hình theo timeline, chia đôi màn hình, trộn âm thanh
     probe.py                 # đọc thông tin ảnh/video, tạo thumbnail
+    dataset_import.py        # nhập ảnh từ dataset Hugging Face / thư mục vào Assets kèm nhãn
 web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
   src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)

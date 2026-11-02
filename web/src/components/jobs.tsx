@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, formatDate, useApi, useDocumentTitle } from "@/lib/client";
 import type { JobDetail, JobItem } from "@/lib/types";
-import { COLOR_FILTERS, LENGTHS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, voiceLabel } from "@/lib/video-options";
+import { COLOR_FILTERS, LENGTHS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
 import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx } from "./ui";
 
@@ -117,9 +117,9 @@ function describeInput(job: JobDetail): string[] {
   if (i.videoType || i.length) {
     lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
   }
-  if (i.voice || i.rate || i.pitch) {
+  if (i.voice || i.rate || i.pitch || i.voiceEffect) {
     const voices = [voiceLabel(i.voice) || "mặc định", i.voice2 ? `${voiceLabel(i.voice2)} (xen kẽ)` : ""].filter(Boolean).join(" + ");
-    lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}`);
+    lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}${i.voiceEffect && i.voiceEffect !== "none" ? ` · hiệu ứng ${VOICE_EFFECTS[i.voiceEffect].toLowerCase()}` : ""}`);
   }
   if (i.style) {
     const st = i.style;

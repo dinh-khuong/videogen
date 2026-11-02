@@ -18,6 +18,53 @@ export const MULTILINGUAL_VOICES: Voice[] = [
   { value: "ko-KR-HyunsuMultilingualNeural", label: "Hyunsu (nam, trẻ)" },
 ];
 
+/** Mã ngôn ngữ của gTTS ("chị Google") theo ngôn ngữ video. */
+const GTTS_LANG: Record<string, string> = {
+  "tiếng Việt": "vi",
+  English: "en",
+  中文: "zh-CN",
+  日本語: "ja",
+  한국어: "ko",
+  Français: "fr",
+  Español: "es",
+  Deutsch: "de",
+  ไทย: "th",
+  "Bahasa Indonesia": "id",
+};
+
+/** Giọng "chị Google" (gTTS): giọng máy quen thuộc trên các kênh meme/kiến thức, miễn phí. */
+export function gttsVoice(language: string): Voice {
+  const code = GTTS_LANG[language] ?? "vi";
+  return { value: `gtts:${code}`, label: code === "vi" ? "Chị Google (giọng meme quen thuộc)" : "Google Translate (gTTS)" };
+}
+
+/** Giọng FPT.AI: giọng Việt tự nhiên nhiều kênh kiến thức dùng, cần FPT_AI_API_KEY trong engine/.env. */
+export const FPT_VOICES: Voice[] = [
+  { value: "fpt:banmaiace", label: "Ban Mai (nữ, miền Bắc)" },
+  { value: "fpt:thuminh", label: "Thu Minh (nữ, miền Bắc)" },
+  { value: "fpt:leminh", label: "Lê Minh (nam, miền Bắc)" },
+  { value: "fpt:myan", label: "Mỹ An (nữ, miền Trung)" },
+  { value: "fpt:ngoclam", label: "Ngọc Lam (nữ, miền Trung)" },
+  { value: "fpt:giahuy", label: "Gia Huy (nam, miền Trung)" },
+  { value: "fpt:lannhi", label: "Lan Nhi (nữ, miền Nam)" },
+  { value: "fpt:linhsan", label: "Linh San (nữ, miền Nam)" },
+  { value: "fpt:minhquang", label: "Minh Quang (nam, miền Nam)" },
+];
+
+/** Tên giọng hợp lệ: edge-tts (vi-VN-HoaiMyNeural), gTTS (gtts:vi) hoặc FPT.AI (fpt:banmaiace). */
+export const VOICE_RE = /^(?:(?:gtts|fpt):[a-zA-Z-]{2,20}|[a-z]{2,3}-[A-Z]{2,3}-\w+)$/;
+
+export const VOICE_EFFECTS = {
+  none: "Không",
+  cute: "Dễ thương, ngọng nhẹ",
+  chipmunk: "Sóc chuột (cao vút, lầy lội)",
+  deep: "Trầm ma mị (kể chuyện ma)",
+  robot: "Robot",
+  radio: "Radio / điện thoại",
+  echo: "Vang (như trong hang)",
+} as const;
+export type VoiceEffect = keyof typeof VOICE_EFFECTS;
+
 export type Language = { value: string; label: string; voices: Voice[] };
 
 /** value = tên ngôn ngữ gửi cho AI viết kịch bản và engine (nhãn "Bước", font chữ...). */
@@ -135,7 +182,8 @@ export function languageOf(value: string | undefined): Language {
 
 export function voiceLabel(value: string | null | undefined): string {
   if (!value) return "";
-  for (const v of [...LANGUAGES.flatMap((l) => l.voices), ...MULTILINGUAL_VOICES]) if (v.value === value) return v.label;
+  const all = [...LANGUAGES.flatMap((l) => [...l.voices, gttsVoice(l.value)]), ...MULTILINGUAL_VOICES, ...FPT_VOICES];
+  for (const v of all) if (v.value === value) return v.label;
   return value;
 }
 
@@ -143,7 +191,9 @@ export const RATES = [
   { value: "-20%", label: "Rất chậm (-20%)" },
   { value: "-10%", label: "Chậm (-10%)" },
   { value: "+0%", label: "Bình thường" },
+  { value: "+5%", label: "Hơi nhanh (+5%)" },
   { value: "+10%", label: "Nhanh (+10%)" },
+  { value: "+15%", label: "Nhanh hơn (+15%)" },
   { value: "+20%", label: "Rất nhanh (+20%)" },
   { value: "+30%", label: "Siêu nhanh (+30%)" },
 ];
@@ -281,6 +331,7 @@ export type VoiceSettings = {
   voice2: string;
   rate: string;
   pitch: string;
+  effect: VoiceEffect;
 };
 
 export const DEFAULT_VOICE: VoiceSettings = {
@@ -289,7 +340,20 @@ export const DEFAULT_VOICE: VoiceSettings = {
   voice2: "",
   rate: "+0%",
   pitch: "+0Hz",
+  effect: "none",
 };
+
+/** Giọng kiểu các kênh quen thuộc (tiếng Việt): đặt cùng lúc giọng, tốc độ, cao độ, hiệu ứng. */
+export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2"> }[] = [
+  { label: "Kênh kiến thức", hint: "Nam trầm, đọc nhanh vừa", voice: { voice: "vi-VN-NamMinhNeural", rate: "+10%", pitch: "-6Hz", effect: "none" } },
+  { label: "Chị Google", hint: "Giọng meme kinh điển", voice: { voice: "gtts:vi", rate: "+15%", pitch: "+0Hz", effect: "none" } },
+  { label: "Ngọng Tây dễ thương", hint: "Giọng Tây đọc tiếng Việt", voice: { voice: "en-US-AvaMultilingualNeural", rate: "+5%", pitch: "+6Hz", effect: "cute" } },
+  { label: "Bé ngọng", hint: "Cao, trong, hơi ngọng", voice: { voice: "vi-VN-HoaiMyNeural", rate: "+5%", pitch: "+6Hz", effect: "cute" } },
+  { label: "Sóc chuột lầy lội", hint: "Cao vút, nhanh", voice: { voice: "vi-VN-HoaiMyNeural", rate: "+15%", pitch: "+0Hz", effect: "chipmunk" } },
+  { label: "Kể chuyện ma", hint: "Trầm, chậm, có vang", voice: { voice: "vi-VN-NamMinhNeural", rate: "-10%", pitch: "-6Hz", effect: "deep" } },
+  { label: "Robot", hint: "Giọng máy", voice: { voice: "vi-VN-NamMinhNeural", rate: "+0%", pitch: "+0Hz", effect: "robot" } },
+  { label: "Tổng đài / radio", hint: "Như qua điện thoại", voice: { voice: "vi-VN-HoaiMyNeural", rate: "+5%", pitch: "+0Hz", effect: "radio" } },
+];
 
 export const MAX_CTA_CHARS = 120;
 export const MAX_TONE_CHARS = 200;
