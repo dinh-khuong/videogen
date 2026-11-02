@@ -6,6 +6,6 @@ moviepy>=1.0.3,<2.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
 # Tùy chọn: tải clip YouTube Creative Commons
-yt-dlp>=2025.1.1
+yt-dlp>=2025.10.22  # YouTube đổi liên tục: chạy "pip install -U yt-dlp" khi tải lỗi
 # Tùy chọn: nhập ảnh từ dataset Hugging Face (python -m videogen import-dataset ...)
 datasets>=2.18

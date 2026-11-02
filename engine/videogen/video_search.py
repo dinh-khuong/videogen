@@ -279,30 +279,88 @@ class _QuietLogger:
     info = warning = error = debug
 
 
-def _download_youtube(cand: VideoCandidate, dest: Path, seconds: float) -> None:
-    import yt_dlp
-    from yt_dlp.utils import download_range_func
+YT_FORMAT = "bv*/b"  # video (không cần tiếng); độ phân giải chọn bằng YT_SORT
+# "res" là cạnh nhỏ nhất nên đúng cả với video dọc (Shorts 1080x1920). Không dùng [height<=720]:
+# với video dọc mọi định dạng đều cao hơn 720 nên bộ lọc đó làm hỏng việc chọn định dạng.
+YT_SORT = ["res:720", "vcodec:h264", "ext:mp4"]
+YT_ERROR_PATTERN = r"Sign in|not a bot|429|Too Many Requests"
 
+
+def _yt_dlp_module(url: str, tmp: Path, ranges: tuple[float, float] | None) -> str | None:
+    """Tải bằng thư viện yt_dlp; trả về thông báo lỗi (None nếu tải được)."""
+    import yt_dlp
+
+    opts = {
+        "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True, "logger": _QuietLogger(),
+        "format": YT_FORMAT, "format_sort": YT_SORT,
+        "ffmpeg_location": ffmpeg_exe(),
+        "outtmpl": str(tmp / "clip.%(ext)s"),
+        "max_filesize": int(MAX_DOWNLOAD_BYTES),
+        "retries": 3, "fragment_retries": 3,
+    }
+    if ranges:
+        from yt_dlp.utils import download_range_func
+
+        opts["download_ranges"] = download_range_func(None, [ranges])
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except Exception as e:  # DownloadError, hoặc lỗi bên trong yt-dlp/ffmpeg
+        return f"{type(e).__name__}: {e}"
+    return None
+
+
+def _yt_dlp_cli(url: str, tmp: Path) -> str | None:
+    """Tải bằng lệnh yt-dlp trên máy (có thể mới hơn thư viện trong môi trường Python)."""
+    import shutil
+
+    exe = shutil.which("yt-dlp")
+    if not exe:
+        return "không có lệnh yt-dlp"
+    cmd = [exe, "--no-playlist", "--no-progress", "-q", "--no-warnings",
+           "-f", YT_FORMAT, "-S", ",".join(YT_SORT), "--max-filesize", str(int(MAX_DOWNLOAD_BYTES)),
+           "--ffmpeg-location", ffmpeg_exe(), "-o", str(tmp / "clip.%(ext)s"), url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"{type(e).__name__}: {e}"
+    if r.returncode != 0:
+        return (r.stderr or r.stdout or f"mã thoát {r.returncode}").strip().splitlines()[-1]
+    return None
+
+
+def _download_youtube(cand: VideoCandidate, dest: Path, seconds: float) -> None:
+    """Tải đoạn clip YouTube, thử lần lượt nhiều cách.
+
+    1. Thư viện yt_dlp, chỉ tải đoạn cần (download_ranges). Cách này để ffmpeg đọc thẳng URL HTTPS/m3u8 —
+       bản ffmpeg tĩnh của imageio có thể crash hoặc YouTube từ chối, nên không chắc chạy được.
+    2. Thư viện yt_dlp tải cả video (tối đa MAX_DOWNLOAD_BYTES) rồi tự cắt bằng ffmpeg trên file cục bộ.
+    3. Lệnh yt-dlp trên máy (thường được cập nhật riêng, có thể chạy khi thư viện Python đã cũ).
+    """
     start = _start_offset(cand.duration, seconds)
-    with tempfile.TemporaryDirectory(prefix="videogen_yt_") as tmp:
-        opts = {
-            "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True, "logger": _QuietLogger(),
-            "format": "bv*[height<=720][ext=mp4]/bv*[height<=720]/b[height<=720]/b",
-            "download_ranges": download_range_func(None, [(start, start + seconds)]),
-            "ffmpeg_location": ffmpeg_exe(),
-            "outtmpl": str(Path(tmp) / "clip.%(ext)s"),
-        }
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([cand.url])
-        except yt_dlp.utils.DownloadError as e:
-            if re.search(r"Sign in|not a bot|429|Too Many Requests", str(e)):
-                raise ProviderUnavailable("YouTube yêu cầu đăng nhập/xác minh, không tải được từ máy này") from e
-            raise
-        files = list(Path(tmp).glob("clip.*"))
-        if not files:
-            raise RuntimeError("yt-dlp không tạo ra file")
-        _transcode(str(files[0]), dest, 0.0, seconds)
+    errors: list[str] = []
+    attempts = [
+        ("yt_dlp (đoạn)", lambda t: _yt_dlp_module(cand.url, t, (start, start + seconds)), 0.0),
+        ("yt_dlp (cả video)", lambda t: _yt_dlp_module(cand.url, t, None), start),
+        ("lệnh yt-dlp", lambda t: _yt_dlp_cli(cand.url, t), start),
+    ]
+    for label, run, offset in attempts:
+        with tempfile.TemporaryDirectory(prefix="videogen_yt_") as tmp_name:
+            tmp = Path(tmp_name)
+            err = run(tmp)
+            files = [f for f in tmp.glob("clip.*") if not f.name.endswith((".part", ".ytdl"))]
+            if err is None and not files:
+                err = "không tạo ra file (có thể vượt giới hạn dung lượng)"
+            if err is None:
+                try:
+                    _transcode(str(files[0]), dest, offset, seconds)
+                    return
+                except subprocess.SubprocessError as e:
+                    err = f"ffmpeg lỗi: {type(e).__name__}"
+        errors.append(f"{label}: {err}")
+    if any(re.search(YT_ERROR_PATTERN, e) for e in errors):
+        raise ProviderUnavailable("YouTube yêu cầu đăng nhập/xác minh, không tải được từ máy này")
+    raise RuntimeError("; ".join(errors))
 
 
 def download_clip(cand: VideoCandidate, dest: Path, seconds: float) -> bool:
@@ -386,7 +444,7 @@ def fetch_videos(
                     break
                 except Exception as e:  # nguồn ngoài lỗi bất thường (vd yt-dlp/ffmpeg crash): thử clip khác
                     dest.unlink(missing_ok=True)
-                    print(f"      ⚠️  Không tải được clip {cand.credit.url}: {type(e).__name__}", flush=True)
+                    print(f"      ⚠️  Không tải được clip {cand.credit.url}: {type(e).__name__}: {str(e)[:300]}", flush=True)
     return found
 
 
