@@ -20,10 +20,10 @@ from PIL import Image, ImageDraw
 
 from . import sfx
 from .effects import (
-    MOTIONS, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, in_out_cubic, make_motion, motion_box,
+    ALL_MOTIONS, MOTIONS, STILL, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, in_out_cubic, make_motion, motion_box,
     out_cubic, pick_transitions, zoom_crop,
 )
-from .graphics import Fonts, framed_backdrop, logo_layer, prepare_background, resolve_fonts
+from .graphics import Fonts, clip_window, framed_backdrop, logo_layer, prepare_background, resolve_fonts
 from .probe import ffmpeg_exe, video_info
 from .style import Style
 from .subtitles import SubtitleTrack, build_cues
@@ -51,6 +51,19 @@ class Segment:
 
 
 @dataclass
+class ClipOverlay:
+    """Clip video lồng lên trên hình của scene (picture-in-picture): tắt tiếng, tự lặp, bật ra ở một góc khung.
+
+    Dùng cho clip meme/reaction chen vào theo câu thoại, hoặc clip lồng suốt cảnh trên ảnh nền.
+    """
+    path: Path
+    slot: str = "br"  # br | bl | tr | tl | center
+    start: float = 0.0  # giây trong scene (đã cộng khoảng lặng đầu cảnh)
+    end: float | None = None  # None: tới hết scene
+    big: bool = False  # lồng suốt cảnh: khung to hơn
+
+
+@dataclass
 class Scene:
     segments: list[Segment]  # nối tiếp nhau, chia đều thời lượng scene (vd nhiều clip cho một bước)
     audio_path: Path | None
@@ -61,6 +74,9 @@ class Scene:
     # Hiệu ứng theo câu thoại (Đạo diễn AI), thời điểm tính theo giọng đọc (chưa cộng khoảng lặng đầu cảnh)
     camera: list[tuple[float, str]] = field(default_factory=list)  # (giây, punch | shake | zoom_slow)
     sounds: list[tuple[float, str]] = field(default_factory=list)  # (giây, tên âm thanh trong sfx.named)
+    clips: list[ClipOverlay] = field(default_factory=list)  # clip video lồng trên hình (vẽ dưới chữ/phụ đề)
+    # Chuyển động của ảnh đầu tiên trong scene (theo cảm xúc hoặc do Đạo diễn AI chọn); None: luân phiên ngẫu nhiên
+    motion: str | None = None
 
 
 @dataclass
@@ -140,7 +156,7 @@ def prepare_clip(path: Path, cache_dir: Path | None) -> Path:
 def _image_frames(seg: Segment, motion_kind: str, size: tuple[int, int], duration: float, zoom: float):
     """Ảnh tĩnh với chuyển động Ken Burns (zoom vào/ra, lia ngang/dọc...): trả về hàm t -> khung hình PIL."""
     w, h = size
-    if seg.style == "frame":
+    if seg.style == "frame" and motion_kind != STILL:
         # Ảnh là nội dung chính: chỉ zoom rất nhẹ để chữ trong ảnh luôn đọc được
         zoom = FRAME_ZOOM
         motion_kind = "zoom_out" if motion_kind in ("zoom_out", "pan_left", "pan_up") else "zoom_in"
@@ -191,6 +207,23 @@ def _video_frames(seg: Segment, size: tuple[int, int], cache_dir: Path | None, d
         return source_frame(t).resize(size, Image.BILINEAR, box=(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2))
 
     return cover, source
+
+
+def _clip_layer(clip: ClipOverlay, size: tuple[int, int], cache_dir: Path | None) -> tuple[Layer, VideoFileClip]:
+    """Lớp động cho một clip lồng trên hình: mỗi khung hình lấy frame mới của clip (lặp lại nếu clip ngắn)."""
+    source = VideoFileClip(str(prepare_clip(clip.path, cache_dir)), audio=False)
+    last = max(0.0, source.duration - 1.0 / (source.fps or 30))
+    window, (ix, iy, fw, fh), mask, pos = clip_window(size, clip.slot, (source.w, source.h), clip.big)
+
+    def frames(local: float) -> Image.Image:
+        t = local % source.duration if source.duration > 0 else 0.0
+        frame = Image.fromarray(source.get_frame(min(t, last))[..., :3]).resize((fw, fh), Image.BILINEAR)
+        out = window.copy()
+        out.paste(frame, (ix, iy), mask)
+        return out
+
+    layer = Layer(window, pos, start=clip.start, end=clip.end, enter="pop", enter_dur=0.3, frames=frames)
+    return layer, source
 
 
 def decode_audio(path: Path) -> np.ndarray:
@@ -277,14 +310,30 @@ def _build_scene(
     blend = min(pacing.segment_blend, seg_len / 3)
     sources, bases = [], []
     last_motion = None
+    chosen = scene.motion if scene.motion in ALL_MOTIONS else None
     for k, seg in enumerate(segments):
         if seg.media == "video":
             fn, source = _video_frames(seg, size, cache_dir, seg_len + blend, pacing.clip_push)
             sources.append(source)
         else:
-            last_motion = rng.choice([m for m in MOTIONS if m != last_motion])
+            # Ảnh đầu dùng chuyển động hợp cảm xúc cảnh (nếu có), các ảnh sau đổi kiểu để không lặp một chuyển động
+            if chosen and last_motion is None:
+                last_motion = chosen
+            else:
+                last_motion = rng.choice([m for m in MOTIONS if m != last_motion])
             fn = _image_frames(seg, last_motion, size, seg_len + blend, pacing.zoom)
         bases.append(fn)
+    clip_layers = []
+    for clip in scene.clips:
+        try:
+            layer, source = _clip_layer(clip, size, cache_dir)
+        except Exception as e:  # clip hỏng không được làm hỏng cả video
+            print(f"      ⚠️  Không lồng được clip {clip.path.name}: {e}", flush=True)
+            continue
+        if layer.end is None or layer.end > duration:
+            layer.end = duration
+        clip_layers.append(layer)
+        sources.append(source)
 
     def base(t: float) -> Image.Image:
         k = min(int(t // seg_len), len(bases) - 1)
@@ -310,6 +359,8 @@ def _build_scene(
         if camera:
             scale, cx, cy = camera(t)
             img = zoom_crop(img, scale, cx, cy)
+        for layer in clip_layers:
+            draw_layer(img, layer, t)
         for layer in scene.overlays:
             draw_layer(img, layer, t)
         if subtitles:

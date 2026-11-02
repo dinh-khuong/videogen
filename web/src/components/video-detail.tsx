@@ -266,7 +266,13 @@ export function VideoDetailView({ id }: { id: string }) {
               <a key={`${asset.step}-${asset.position}`} href={asset.url} target="_blank" rel="noreferrer" className="group relative overflow-hidden rounded-lg bg-zinc-100 ring-1 ring-zinc-200">
                 <AssetThumb asset={asset} className="aspect-[4/3] w-full" />
                 <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                  {asset.step === 0 ? "Nhạc nền" : `Bước ${asset.step}`}
+                  {asset.step === 0
+                    ? "Nhạc nền"
+                    : asset.position >= 200
+                      ? `Sticker · bước ${asset.step}`
+                      : asset.position >= 100
+                        ? `Lồng · bước ${asset.step}`
+                        : `Bước ${asset.step}`}
                 </span>
                 <p className="truncate px-2 py-1 text-xs text-zinc-600">{asset.title}</p>
               </a>

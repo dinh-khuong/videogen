@@ -23,7 +23,7 @@ from .llm import LibraryAsset, Script, Step, generate_script, parse_script, shor
 from .probe import VIDEO_EXTS
 from .style import Style, language_for, step_label, tagline
 from .tts import TtsJob, load_words, provider_of, synthesize_many
-from .video_builder import ASPECTS, Scene, Segment, build_video, split_sizes
+from .video_builder import ASPECTS, ClipOverlay, Scene, Segment, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
 IMAGE_STYLES = ("auto", "cover", "frame")
@@ -79,6 +79,9 @@ class StepImage:
     query: str | None = None
     media: str = "image"  # image | video
     position: int = 0  # thứ tự đoạn hình trong bước (một bước có thể ghép nhiều clip)
+    # visual: đoạn hình chính của bước | overlay: clip/ảnh lồng trên hình suốt cảnh | sticker: meme bật ra theo câu
+    role: str = "visual"
+    ref: str | None = None  # vị trí trong kịch bản để web thay đường dẫn bằng id asset: "overlay" | "line:<số thứ tự câu>"
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -150,6 +153,27 @@ def _hash(*parts: str) -> str:
 
 ORIENTATIONS = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
 TITLE_CARD_SECONDS = 2.4  # thời gian tiêu đề lớn hiện ở cảnh Đạo diễn AI chọn (thường là hook)
+OVERLAY_POSITION = 100  # thứ tự (trong bước) ghi cho clip lồng / sticker, tách khỏi các đoạn hình chính
+STICKER_POSITION = 200
+
+# Chuyển động ảnh theo cảm xúc của câu mở cảnh (khi AI không chọn): kịch tính thì đẩy chậm vào, hào hứng thì lia,
+# tỉnh bơ thì đứng yên... Mỗi cảm xúc có vài lựa chọn để các cảnh không cùng một kiểu chuyển động.
+MOOD_MOTIONS = {
+    "dramatic": ("zoom_in",), "mysterious": ("zoom_in", "pan_up"), "sad": ("zoom_out", "pan_down"),
+    "serious": ("zoom_in",), "shocked": ("zoom_in_left", "zoom_in_right"), "hype": ("pan_left", "pan_right"),
+    "excited": ("pan_right", "zoom_in_right", "pan_left"), "fast": ("pan_left", "pan_right", "pan_up"),
+    "deadpan": ("still",), "sarcastic": ("zoom_in_right", "zoom_in_left", "still"), "warm": ("zoom_out", "pan_right"),
+    "neutral": (),
+}
+
+
+def motion_for(step: Step, index: int) -> str | None:
+    """Chuyển động ảnh của cảnh: AI chọn thì dùng, không thì theo cảm xúc câu đầu (neutral: luân phiên ngẫu nhiên)."""
+    if step.motion:
+        return step.motion
+    lines = step.acted_lines()
+    options = MOOD_MOTIONS.get(lines[0]["mood"], ()) if lines else ()
+    return options[index % len(options)] if options else None
 
 
 def _write_credits(images: list[StepImage], work_dir: Path) -> None:
@@ -321,6 +345,42 @@ def _prepare_images(
     return steps
 
 
+def resolve_media(ref: dict | None, library: dict[str, LibraryAsset], step: int, role: str, position: int,
+                  key: str) -> StepImage | None:
+    """Ảnh/clip mà kịch bản trỏ tới (asset thư viện hoặc file AI đã tải về), nếu file còn trên đĩa."""
+    if not isinstance(ref, dict):
+        return None
+    if ref.get("asset"):
+        lib = library.get(ref["asset"])
+        if lib and Path(lib.path).exists():
+            return StepImage(step, Path(lib.path), "library", library_id=lib.id, media=lib.kind, position=position,
+                             role=role, ref=key)
+        return None
+    path = Path(ref["path"]) if ref.get("path") else None
+    if not path or not path.exists():
+        return None
+    credit = ref.get("credit")
+    media = "video" if ref.get("media") == "video" or path.suffix.lower() in VIDEO_EXTS else "image"
+    return StepImage(step, path, "web", credit=Credit(**credit) if isinstance(credit, dict) else None,
+                     query=ref.get("query"), media=media, position=position, role=role, ref=key)
+
+
+def _prepare_extras(script: Script, library: dict[str, LibraryAsset]) -> tuple[list[StepImage | None], list[dict[int, StepImage]]]:
+    """Clip/ảnh lồng suốt cảnh và sticker meme (ảnh hoặc clip) theo câu thoại của từng bước."""
+    overlays: list[StepImage | None] = []
+    stickers: list[dict[int, StepImage]] = []
+    for i, step in enumerate(script.steps):
+        overlay = step.overlay or {}
+        overlays.append(resolve_media(overlay.get("ref"), library, i + 1, "overlay", OVERLAY_POSITION, "overlay"))
+        by_line = {}
+        for j, line in enumerate(step.acted_lines()):
+            img = resolve_media(line.get("sticker"), library, i + 1, "sticker", STICKER_POSITION + j, f"line:{j}")
+            if img:
+                by_line[j] = img
+        stickers.append(by_line)
+    return overlays, stickers
+
+
 def _prepare_audio(
     script: Script, work_dir: Path, voices: tuple[str, str | None], rate: str, pitch: str, reporter: Reporter,
     fallback_lang: str, effect: str = "none", alternate: bool = True,
@@ -464,7 +524,10 @@ def run(
     print("[2/4] Lấy ảnh/clip minh họa (song song) ...", flush=True)
     reporter.stage("images", "Đang lấy ảnh/clip minh họa")
     steps = _prepare_images(script, work_dir, settings, size, orientation, opts, fonts)
+    library = {a.id: a for a in opts.library}
+    step_overlays, step_stickers = _prepare_extras(script, library)
     result.images = [img for seg in steps for img in seg]
+    result.images += [img for img in step_overlays if img] + [img for by_line in step_stickers for img in by_line.values()]
 
     director = script.format == "director"
     if director and not voice2 and any(l.get("voice") == "second" for st in script.steps for l in st.acted_lines()):
@@ -481,7 +544,7 @@ def run(
         return [Segment(img.path, img.media, _style_for(img, opts)) for img in images]
 
     # Có clip video: mở đầu/kết thúc là montage cắt nhanh từ clip của các bước thay vì một ảnh tĩnh
-    has_clips = any(img.media == "video" for img in result.images)
+    has_clips = any(img.media == "video" for seg in steps for img in seg)
     intro_imgs = [seg[0] for seg in steps[:4]] if has_clips else steps[0][:1]
     outro_imgs = [seg[-1] for seg in steps[-3:]] if has_clips else steps[-1][-1:]
     if all(img.kind == "placeholder" for img in intro_imgs):
@@ -496,47 +559,61 @@ def run(
         canvas = render_step_badge(label, heading, size, fonts, style.accent, reserve_right=reserve)
         return Layer.from_canvas(canvas, start=0.2, enter="slide_left", enter_dur=0.45)
 
-    library = {a.id: a for a in opts.library}
     head = style.timing.head
 
-    def sticker_path(ref: dict) -> Path | None:
-        lib = library.get(ref.get("asset") or "")
-        path = Path(lib.path) if lib and lib.kind == "image" else Path(ref["path"]) if ref.get("path") else None
-        return path if path and path.exists() and path.suffix.lower() not in VIDEO_EXTS else None
-
-    def acting(step: Step, path: Path | None, not_before: float = 0.0) -> tuple[list[Layer | None], list, list]:
-        """Hiệu ứng theo từng câu thoại: sticker meme, chữ nhấn mạnh, zoom giật/rung, âm thanh meme.
+    def acting(step: Step, index: int, path: Path | None, not_before: float = 0.0,
+               taken: str | None = None) -> tuple[list[Layer | None], list[ClipOverlay], list, list]:
+        """Hiệu ứng theo từng câu thoại: sticker meme (ảnh, hoặc clip video bật ra), chữ nhấn mạnh, zoom giật/rung,
+        âm thanh meme.
 
         not_before: lớp hình (sticker, chữ nhấn mạnh) chờ tới thời điểm này (vd sau khi tiêu đề lớn biến mất).
+        taken: góc khung đã có clip lồng suốt cảnh, sticker tránh góc đó.
         """
         lines = step.acted_lines()
         times = load_line_times(path) if path and lines else None
         if not times or len(times) != len(lines):
-            return [], [], []
-        overlays, camera, sounds = [], [], []
-        slots = iter(STICKER_SLOTS[:4] * 8)
-        for line, span in zip(lines, times):
+            return [], [], [], []
+        overlays, clips, camera, sounds = [], [], [], []
+        slots = iter([s for s in STICKER_SLOTS[:4] if s != taken] * 8)
+        stickers = step_stickers[index] if index < len(step_stickers) else {}
+        for j, (line, span) in enumerate(zip(lines, times)):
             start, end = span["start"], span["end"]
             if line.get("camera"):
                 camera.append((start, line["camera"]))
             if line.get("sfx"):
                 sounds.append((max(0.0, start - 0.05), line["sfx"]))
             show = max(head + start, not_before)
-            if line.get("sticker") and (sticker := sticker_path(line["sticker"])) and head + end + 0.5 - show > 0.8:
-                overlays.append(sticker_layer(sticker, size, next(slots), show, head + end + 0.5))
+            sticker = stickers.get(j)
+            if sticker and head + end + 0.5 - show > 0.8:
+                if sticker.media == "video":
+                    # Clip meme/reaction chen vào đúng câu thoại, giữ thêm một chút cho "miếng" hài ngấm
+                    clips.append(ClipOverlay(sticker.path, next(slots), show, head + max(end + 0.6, start + 2.0)))
+                else:
+                    overlays.append(sticker_layer(sticker.path, size, next(slots), show, head + end + 0.5))
             pop_end = head + max(end, start + 1.2)
             if line.get("pop_text"):  # luôn hiện đủ 1,2 giây, kể cả khi phải chờ tiêu đề
                 overlays.append(pop_text_layer(line["pop_text"], size, fonts, style.accent, show, max(pop_end, show + 1.2)))
-        return overlays, camera, sounds
+        return overlays, clips, camera, sounds
 
     def scene(images: list[StepImage], key: str, narration: str, overlays: list[Layer | None], pop: bool,
-              step: Step | None = None, not_before: float = 0.0) -> Scene:
+              step: Step | None = None, not_before: float = 0.0, index: int = -1) -> Scene:
         path = audio.get(key)
         layers = [o for o in overlays if o]
-        extra, camera, sounds = acting(step, path, not_before) if step else ([], [], [])
+        clips: list[ClipOverlay] = []
+        taken = None
+        lay = step_overlays[index] if step and 0 <= index < len(step_overlays) else None
+        if lay and step and step.overlay:
+            taken = step.overlay["position"]
+            if lay.media == "video":
+                # Clip lồng trên ảnh nền suốt cảnh: hình không chỉ là ảnh tĩnh mà có video chạy bên trong
+                clips.append(ClipOverlay(lay.path, taken, max(0.25, not_before), None, big=True))
+            else:
+                layers.append(sticker_layer(lay.path, size, taken, max(0.25, not_before), None))
+        extra, line_clips, camera, sounds = acting(step, index, path, not_before, taken) if step else ([], [], [], [])
         return Scene(
             segments=segments(images), audio_path=path, narration=narration, overlays=layers + [o for o in extra if o],
             words=load_words(path) if path else None, pops=[0.2] if pop and layers else [], camera=camera, sounds=sounds,
+            clips=clips + line_clips, motion=motion_for(step, index) if step else None,
         )
 
     if director:
@@ -557,19 +634,19 @@ def run(
                                                 max(0.1, clear_at))
             if i == len(script.steps) - 1 and style.cta:
                 overlays.append(cta_layer(style.cta, size, fonts, style.accent, start=1.0))
-            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, overlays, bool(step.heading), step, clear_at))
+            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, overlays, bool(step.heading), step, clear_at, i))
     else:
         subtitle = tagline(lang, opts.video_type, len(script.steps))
         scenes = [scene(intro_imgs, "intro", script.intro, title_layers(script.title, subtitle, size, fonts, style.accent), False)]
         for i, step in enumerate(script.steps):
             label = step_label(lang, opts.video_type, i + 1)
-            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, [badge(label, step.heading)], True, step))
+            scenes.append(scene(steps[i], f"step_{i + 1:02d}", step.narration, [badge(label, step.heading)], True, step, index=i))
         if script.outro or style.cta:
             outro = [badge(lang.done, "")]
             if style.cta:
                 outro.append(cta_layer(style.cta, size, fonts, style.accent))
             scenes.append(scene(outro_imgs, "outro", script.outro, outro, True))
-    clip_count = sum(1 for img in result.images if img.media == "video")
+    clip_count = sum(1 for seg in steps for img in seg if img.media == "video")
     if clip_count:
         print(f"      Ghép {clip_count} clip video từ {sum(1 for s in steps if any(i.media == 'video' for i in s))} bước", flush=True)
 
