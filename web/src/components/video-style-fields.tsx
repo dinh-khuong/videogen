@@ -18,6 +18,7 @@ import {
   VOICE_EFFECTS,
   VOICE_MOODS,
   VOICE_PERSONAS,
+  gttsMaleVoice,
   gttsVoice,
   languageOf,
   voiceLabel,
@@ -34,9 +35,9 @@ import { Button, Field, Segmented, Spinner, Toggle, cx, inputClass } from "./ui"
 
 function VoiceOptions({ language, current, fpt }: { language: string; current?: string; fpt: boolean }) {
   const lang = languageOf(language);
-  const google = gttsVoice(lang.value);
+  const google = [gttsVoice(lang.value), gttsMaleVoice(lang.value)];
   const vietnamese = lang.value === LANGUAGES[0].value;
-  const all = [...lang.voices, google, ...MULTILINGUAL_VOICES, ...(vietnamese ? FPT_VOICES : [])];
+  const all = [...lang.voices, ...google, ...MULTILINGUAL_VOICES, ...(vietnamese ? FPT_VOICES : [])];
   const known = (v?: string) => !v || all.some((x) => x.value === v);
   return (
     <>
@@ -47,7 +48,11 @@ function VoiceOptions({ language, current, fpt }: { language: string; current?: 
             {v.label}
           </option>
         ))}
-        <option value={google.value}>{google.label}</option>
+        {google.map((v) => (
+          <option key={v.value} value={v.value}>
+            {v.label}
+          </option>
+        ))}
       </optgroup>
       {vietnamese && (
         <optgroup label={fpt ? "FPT.AI — giọng Việt tự nhiên" : "FPT.AI — cần FPT_AI_API_KEY trong engine/.env"}>

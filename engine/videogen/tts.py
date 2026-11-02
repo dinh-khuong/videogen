@@ -1,7 +1,8 @@
 """Chuyển văn bản thành giọng nói.
 
 Chính: edge-tts (giọng Microsoft Neural, miễn phí, không cần API key).
-Thêm: "gtts:vi" (giọng "chị Google" quen thuộc trên các kênh meme/kiến thức), "fpt:<giọng>" (FPT.AI, giọng Việt
+Thêm: "gtts:vi" (giọng "chị Google" quen thuộc trên các kênh meme/kiến thức), "gtts:vi-male" ("anh Google": cùng
+giọng đó hạ trầm thành giọng nam), "fpt:<giọng>" (FPT.AI, giọng Việt
 tự nhiên, cần FPT_AI_API_KEY) và hiệu ứng giọng (dễ thương, sóc chuột, trầm, robot, radio, vang) bằng ffmpeg. Ngoài giọng bản địa còn có các giọng
 "Multilingual" (vd en-US-AvaMultilingualNeural) đọc được nhiều ngôn ngữ, kể cả tiếng Việt.
 edge-tts trả về thời điểm của từng từ: lưu cạnh file mp3 (<tên>.words.json) để phụ đề khớp chính xác với giọng đọc.
@@ -173,6 +174,18 @@ def _post_process(src: Path, dest: Path, filters: list[str]) -> None:
     tmp.replace(dest)
 
 
+# gTTS chỉ có giọng nữ: "anh Google" (gtts:vi-male) = cùng giọng hạ trầm, giữ nguyên tốc độ
+MALE_PITCH = 0.78
+
+
+def is_male(voice: str) -> bool:
+    return provider_of(voice) == "gtts" and voice.endswith("-male")
+
+
+def gtts_lang(name: str) -> str:
+    return name.removesuffix("-male") or "vi"
+
+
 def provider_of(voice: str) -> str:
     """edge (mặc định) | gtts ("gtts:vi") | fpt ("fpt:banmaiace")."""
     prefix, _, rest = voice.partition(":")
@@ -210,14 +223,14 @@ async def _synthesize_all(
                 except Exception as e:
                     print(f"      ⚠️  FPT.AI lỗi cho '{job.path.stem}' ({e}), chuyển sang gTTS.", flush=True)
             if made_by == "gtts":
-                lang = name if provider == "gtts" else fallback_lang or job.voice.split("-")[0] or "vi"
+                lang = gtts_lang(name) if provider == "gtts" else fallback_lang or job.voice.split("-")[0] or "vi"
                 await asyncio.to_thread(_gtts_synthesize, job.text, lang, raw)
         # Hậu xử lý: hiệu ứng giọng, cộng tốc độ/cao độ với giọng không tự hỗ trợ
         # (edge-tts tự đổi cả hai, FPT.AI chỉ tự đổi tốc độ, gTTS không đổi được gì)
         filters = audio_filters(
             effect,
             tempo=1.0 if made_by in ("edge", "fpt") else tempo,
-            pitch=1.0 if made_by == "edge" else pitch_factor,
+            pitch=(1.0 if made_by == "edge" else pitch_factor) * (MALE_PITCH if is_male(job.voice) else 1.0),
         )
         if filters:
             await asyncio.to_thread(_post_process, raw, job.path, filters)
