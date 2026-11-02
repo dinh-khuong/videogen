@@ -14,6 +14,7 @@ Lệnh dành cho web app:
     python -m videogen probe file... [--thumbnail-dir dir]
     python -m videogen analyze --spec spec.json   # phân tích asset, phát sự kiện JSON trên stdout
     python -m videogen voice-sample --voice vi-VN-NamMinhNeural --out mau.mp3   # nghe thử giọng
+    python -m videogen import-dataset not-lain/meme-dataset   # nhập ảnh dataset Hugging Face vào Assets
     python -m videogen doctor             # kiểm tra cấu hình, in JSON
 """
 import argparse
@@ -21,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor", "voice-sample"}
+SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor", "voice-sample", "import-dataset"}
 
 
 ANALYSIS_CACHE = ".videogen-analysis.json"
@@ -257,6 +258,12 @@ def cmd_voice_sample(argv: list[str]) -> int:
     return 0
 
 
+def cmd_import_dataset(argv: list[str]) -> int:
+    from .dataset_import import main as import_main
+
+    return import_main(argv)
+
+
 SAMPLE_TEXT = {
     "vi": "Xin chào! Đây là giọng đọc cho video của bạn. Hôm nay mình sẽ hướng dẫn bạn từng bước thật dễ hiểu.",
     "en": "Hi there! This is the voice for your video. Today I'll walk you through it step by step.",
@@ -326,5 +333,6 @@ def main(argv: list[str] | None = None) -> None:
     handler = {
         "make": cmd_make, "job": cmd_job, "probe": cmd_probe, "analyze": cmd_analyze, "doctor": cmd_doctor,
         "voice-sample": cmd_voice_sample,
+        "import-dataset": cmd_import_dataset,
     }[command]
     sys.exit(handler(argv))

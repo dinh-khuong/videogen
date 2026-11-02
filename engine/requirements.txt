@@ -7,3 +7,5 @@ Pillow>=10.0.0
 python-dotenv>=1.0.0
 # Tùy chọn: tải clip YouTube Creative Commons
 yt-dlp>=2025.1.1
+# Tùy chọn: nhập ảnh từ dataset Hugging Face (python -m videogen import-dataset ...)
+datasets>=2.18
