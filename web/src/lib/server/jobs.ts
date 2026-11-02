@@ -5,7 +5,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { normalizeTag } from "@/lib/hashtags";
 import type { AgentEvent, JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
-import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, VIDEO_TYPES, VOICE_EFFECTS, VOICE_RE, normalizeStyle } from "@/lib/video-options";
+import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, SEARCH_ENGINES, VIDEO_TYPES, VOICE_EFFECTS, VOICE_RE, normalizeStyle } from "@/lib/video-options";
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
@@ -208,6 +208,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     webImages: raw.webImages !== false,
     webMedia: raw.webMedia === "video" || raw.webMedia === "auto" ? raw.webMedia : "image",
     clipsPerStep: Math.min(Math.max(Math.round(Number(raw.clipsPerStep) || 3), 1), 6),
+    searchEngine: raw.searchEngine && Object.hasOwn(SEARCH_ENGINES, raw.searchEngine) ? raw.searchEngine : "auto",
     libraryMode: script ? "off" : libraryMode,
     libraryTags: libraryMode === "auto" ? libraryTagsOf(raw) : [],
     assetIds: libraryMode === "selected" && !script ? assetIds : [],
@@ -266,6 +267,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     web_images: input.webImages,
     web_media: input.webMedia ?? "image",
     clips_per_step: input.clipsPerStep ?? 3,
+    search_engine: input.searchEngine ?? "auto",
     library_mode: input.libraryMode,
     library: [],
   };

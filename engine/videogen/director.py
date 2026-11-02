@@ -280,7 +280,7 @@ class Director:
         if media == "image":
             if self._image_pool is None:
                 try:
-                    self._image_pool = ProviderPool(self.settings)
+                    self._image_pool = ProviderPool(self.settings, self.opts.search_engine)
                 except ConfigError as e:
                     return f"Không tìm ảnh trên mạng được ({e}). Dùng asset thư viện hoặc fallback_query."
             dest = images_dir / f"agent_{key}.jpg"

@@ -80,6 +80,7 @@ def _library_from_dir(folder: Path, analyze: bool = False):
 
 def cmd_make(argv: list[str]) -> int:
     from .config import ConfigError
+    from .image_search import SEARCH_ENGINES
     from .pipeline import IMAGE_STYLES, Options, run
     from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
     from .tts import VOICE_EFFECTS
@@ -138,6 +139,9 @@ def cmd_make(argv: list[str]) -> int:
     parser.add_argument("--web-media", choices=("image", "video", "auto"), default="image",
                         help="Tìm trên mạng: image (ảnh), video (clip Creative Commons/stock, thiếu thì dùng ảnh), "
                              "auto (AI chọn ảnh hay clip cho từng bước)")
+    parser.add_argument("--search-engine", choices=SEARCH_ENGINES, default="auto",
+                        help="Công cụ tìm ảnh ưu tiên (vd brave, google); nguồn khác làm dự phòng. "
+                             "auto = theo thứ tự IMAGE_PROVIDERS trong .env")
     parser.add_argument("--clips-per-step", type=int, default=3, choices=range(1, 7), metavar="1-6",
                         help="Số clip mạng ghép nối tiếp trong một bước dùng video (mặc định 3)")
     parser.add_argument("--director", action="store_true",
@@ -184,6 +188,7 @@ def cmd_make(argv: list[str]) -> int:
         image_style=args.image_style,
         web_images=not args.no_web_images,
         web_media=args.web_media,
+        search_engine=args.search_engine,
         clips_per_step=args.clips_per_step,
         library=library,
         library_mode=args.library_mode if library else "off",
@@ -302,7 +307,7 @@ def cmd_doctor(argv: list[str]) -> int:
     try:
         from .config import load_settings
         from .graphics import find_font
-        from .image_search import PROVIDERS
+        from .image_search import PROVIDERS, engine_status
 
         settings = load_settings()
         report["deepseek"] = bool(settings.deepseek_api_key)
@@ -313,6 +318,8 @@ def cmd_doctor(argv: list[str]) -> int:
         ]
         if not report["image_providers"]:
             report["problems"].append("Không có nguồn ảnh nào dùng được (IMAGE_PROVIDERS)")
+        # mọi công cụ tìm ảnh và đã có key chưa (web hiện lựa chọn công cụ tìm kiếm)
+        report["search_engines"] = engine_status(settings)
         from .video_search import active_video_providers
 
         report["video_providers"] = active_video_providers(settings)

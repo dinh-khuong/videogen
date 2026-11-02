@@ -42,9 +42,12 @@ class Settings:
         self.google_cse_id = _get("GOOGLE_CSE_ID")
         self.serper_api_key = _get("SERPER_API_KEY")
         self.pexels_api_key = _get("PEXELS_API_KEY")
+        # Brave Search API (gói "Data for Search"/"Free"): https://api-dashboard.search.brave.com
+        self.brave_api_key = _get("BRAVE_API_KEY")
+        self.brave_country = _get("BRAVE_COUNTRY")  # vd VN, US; để trống = Brave tự chọn
         self.image_providers = [
             p.strip().lower()
-            for p in _get("IMAGE_PROVIDERS", "duckduckgo,google,serper,pexels").split(",")
+            for p in _get("IMAGE_PROVIDERS", "duckduckgo,google,brave,serper,pexels,pixabay").split(",")
             if p.strip()
         ]
         self.pixabay_api_key = _get("PIXABAY_API_KEY")

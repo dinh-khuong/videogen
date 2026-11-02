@@ -207,14 +207,17 @@ Tất cả đặt trong `engine/.env`.
 - `DEEPSEEK_API_KEY=sk-...`
 
 ### 2. Nguồn ảnh — **mặc định không cần key** (DuckDuckGo)
-Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,google,serper,pexels`). Một nguồn chỉ được dùng khi có key và nguồn đứng trước bị lỗi.
+Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,google,brave,serper,pexels,pixabay`). Một nguồn chỉ được dùng khi có key và nguồn đứng trước bị lỗi.
+Trong form tạo video, mục **Công cụ tìm ảnh** cho chọn ưu tiên một nguồn (Brave, Google, DuckDuckGo...) cho từng video; các nguồn khác vẫn làm dự phòng. Dòng lệnh: `--search-engine brave`.
 
 - **DuckDuckGo**: không cần key. Đặt vùng tìm kiếm bằng `DDG_REGION`, lọc giấy phép ảnh bằng `DDG_LICENSE`; làm quảng cáo nên đặt `ShareCommercially`. Nguồn này không có API chính thức nên đôi khi bị giới hạn tốc độ; khi đó chương trình tự chờ rồi chuyển sang nguồn sau.
 - **Google Custom Search**: cần `GOOGLE_API_KEY` (dạng `AIza...`) và `GOOGLE_CSE_ID`. File `client_secret_*.json` (OAuth) không dùng được. Google đã đóng API này với khách hàng mới và sẽ tắt vào 1/1/2027.
 - **Serper.dev**: cần `SERPER_API_KEY`; trả kết quả Google Images qua API.
+- **Brave Search**: cần `BRAVE_API_KEY` (có gói miễn phí, lấy tại https://api-dashboard.search.brave.com). Đặt quốc gia ưu tiên bằng `BRAVE_COUNTRY` (vd `VN`).
 - **Pexels**: cần `PEXELS_API_KEY` (miễn phí). Ảnh được phép dùng thương mại, **nên dùng nguồn này khi làm video quảng cáo**.
+- **Pixabay**: dùng chung `PIXABAY_API_KEY` với clip video. Ảnh được phép dùng thương mại.
 
-> Ảnh từ DuckDuckGo, Google hoặc Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc. Chỉ nên dùng cho học tập hoặc thử nghiệm. Với quảng cáo, hãy dùng ảnh của chính bạn (tải lên thư viện) hoặc ảnh Pexels.
+> Ảnh từ DuckDuckGo, Google, Brave hoặc Serper (khi không lọc giấy phép) thuộc bản quyền của website gốc. Chỉ nên dùng cho học tập hoặc thử nghiệm. Với quảng cáo, hãy dùng ảnh của chính bạn (tải lên thư viện) hoặc ảnh Pexels/Pixabay.
 
 ### 3. Clip video trên mạng — **Wikimedia Commons không cần key**
 - `PEXELS_API_KEY` (dùng chung với ảnh), `PIXABAY_API_KEY` (miễn phí), `YOUTUBE_API_KEY` (hoặc `GOOGLE_API_KEY` đã bật YouTube Data API v3).
@@ -241,7 +244,7 @@ engine/                      # Python: tạo video (process riêng, CLI)
     pipeline.py              # điều phối: kịch bản -> ảnh/video -> giọng -> video
     llm.py                   # DeepSeek: kịch bản, hashtag, chọn asset thư viện
     analyze.py               # phân tích asset: OCR (Tesseract) + AI tóm tắt
-    image_search.py          # DuckDuckGo / Google / Serper / Pexels
+    image_search.py          # DuckDuckGo / Google / Brave / Serper / Pexels / Pixabay
     video_search.py          # clip được phép dùng lại: Pexels / Pixabay / Wikimedia / YouTube CC
     tts.py                   # edge-tts (+ gTTS dự phòng), mốc thời gian từng từ, giọng mẫu
     style.py                 # phong cách dựng (nhịp, chuyển cảnh, phụ đề, màu...) + nhãn theo ngôn ngữ

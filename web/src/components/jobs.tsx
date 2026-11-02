@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, formatDate, useApi, useDocumentTitle } from "@/lib/client";
 import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
-import { COLOR_FILTERS, LENGTHS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
+import { COLOR_FILTERS, LENGTHS, PACINGS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
 
 function libraryTagsLabel(i: JobDetail["input"]): string {
@@ -124,7 +124,7 @@ function describeInput(job: JobDetail): string[] {
     `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
     `Assets: ${{ off: "không dùng", auto: `AI tự chọn${libraryTagsLabel(i)}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
-    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}`,
+    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}${i.webImages && i.searchEngine && i.searchEngine !== "auto" ? ` · tìm ảnh bằng ${SEARCH_ENGINES[i.searchEngine]?.label ?? i.searchEngine}` : ""}`,
   ];
   if (i.videoType || i.length) {
     lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
