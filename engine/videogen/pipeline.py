@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .config import Settings, load_settings
-from .delivery import assemble, load_line_times, prosody
+from .delivery import apply_tuning, assemble, load_line_times, prosody
 from .events import Reporter
 from .effects import Layer
 from .graphics import (
@@ -41,6 +41,8 @@ class Options:
     rate: str | None = None
     pitch: str | None = None  # cao độ giọng, vd "+5Hz" (trong trẻo hơn) hoặc "-8Hz" (trầm hơn)
     voice_effect: str = "none"  # hiệu ứng giọng: cute | chipmunk | deep | robot | radio | echo (xem tts.VOICE_EFFECTS)
+    # AI được quyền tinh chỉnh cao độ/tốc độ chung của video quanh mức người dùng chọn (Script.voice_tuning)
+    ai_voice: bool = False
     video_type: str = "howto"  # howto | listicle | tips | facts | promo | story
     tone: str = ""  # giọng văn mong muốn (vd "hài hước, dí dỏm")
     length: str = "medium"  # short | medium | long
@@ -426,14 +428,28 @@ def run(
             print(f"[1/4] DeepSeek đang viết kịch bản cho: {short_title(topic, 80)!r} ({len(topic)} ký tự) ...", flush=True)
             reporter.stage("script", "DeepSeek đang viết kịch bản")
             library = opts.library if opts.library_mode != "off" else []
+            voice_desc = None
+            if opts.ai_voice:
+                voice_desc = f"{voice}, cao độ {pitch}, tốc độ {rate}"
+                if opts.voice_effect != "none":
+                    voice_desc += f", hiệu ứng {opts.voice_effect}"
             script = generate_script(
                 topic, settings, opts.num_steps, opts.language, library, opts.library_mode, opts.web_media,
-                video_type=opts.video_type, tone=opts.tone, length=opts.length,
+                video_type=opts.video_type, tone=opts.tone, length=opts.length, voice=voice_desc,
             )
         work_dir = opts.work_dir or director_dir or OUTPUT_ROOT / slugify(script.title)
         work_dir.mkdir(parents=True, exist_ok=True)
         script_file = work_dir / "script.json"
         script.save(script_file)
+    if script.voice_tuning:
+        # Giọng chung của video = giọng người dùng chọn + phần AI tinh chỉnh (ghi lại để web hiện và nghe thử đúng mức)
+        base_rate, base_pitch = rate, pitch
+        rate, pitch = apply_tuning(base_rate, base_pitch, script.voice_tuning)
+        script.voice_tuning.update(base_rate=base_rate, base_pitch=base_pitch, final_rate=rate, final_pitch=pitch)
+        reason = f" — {script.voice_tuning['reason']}" if script.voice_tuning.get("reason") else ""
+        print(f"      AI tinh chỉnh giọng: cao độ {base_pitch} → {pitch}, tốc độ {base_rate} → {rate}{reason}", flush=True)
+        if script_data is not None or not script_path:
+            script.save(script_file)
     print(f"      Tiêu đề: {script.title} — {len(script.steps)} bước", flush=True)
     print(f"      Kịch bản: {script_file}", flush=True)
     reporter.stage("script", f"Kịch bản: {script.title}", 1.0)

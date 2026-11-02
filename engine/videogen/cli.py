@@ -101,6 +101,8 @@ def cmd_make(argv: list[str]) -> int:
     parser.add_argument("--voice2", help="Giọng thứ hai đọc xen kẽ các bước chẵn, vd vi-VN-NamMinhNeural")
     parser.add_argument("--voice-effect", choices=VOICE_EFFECTS, default="none",
                         help="Hiệu ứng giọng: cute (dễ thương), chipmunk (sóc chuột), deep (trầm), robot, radio, echo (vang)")
+    parser.add_argument("--ai-voice", action="store_true",
+                        help="Cho AI tinh chỉnh cao độ/tốc độ giọng (quanh --pitch/--rate) cho hợp không khí video")
     parser.add_argument("--type", dest="video_type", choices=VIDEO_TYPES, default="howto",
                         help="Loại video: howto (hướng dẫn), listicle (top danh sách), tips (mẹo), facts (sự thật thú vị), "
                              "promo (giới thiệu/quảng cáo), story (kể chuyện)")
@@ -166,6 +168,7 @@ def cmd_make(argv: list[str]) -> int:
         rate=args.rate,
         pitch=args.pitch,
         voice_effect=args.voice_effect,
+        ai_voice=args.ai_voice,
         video_type=args.video_type,
         tone=args.tone,
         length=args.length,

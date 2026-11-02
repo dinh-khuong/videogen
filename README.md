@@ -43,6 +43,12 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
 - **Giọng đọc**:
   - 10 ngôn ngữ (Việt, Anh, Trung, Nhật, Hàn, Pháp, Tây Ban Nha, Đức, Thái, Indonesia), hơn 50 giọng; giọng **đa ngôn ngữ** (Ava, Andrew, Emma, Brian...) đọc được cả tiếng Việt.
   - **Nghe thử** giọng ngay trong form; **sắc thái giọng** (trầm ấm, kể chuyện, trẻ trung, quảng cáo sôi nổi, tin tức) đặt nhanh tốc độ + cao độ.
+  - **Thanh trượt cao độ** (−30…+30 Hz): kéo xong là tự phát giọng mẫu đúng mức vừa chỉnh. Mẫu do engine tạo qua cùng đường
+    xử lý với giọng trong video (cùng giọng, tốc độ, cao độ, hiệu ứng) nên nghe thử thế nào thì video y như vậy; chỉnh tiếp khi
+    mẫu cũ chưa xong thì mẫu cũ bị hủy, dòng "Đang phát" luôn ghi rõ mức đang nghe.
+  - **AI tinh chỉnh giọng cho hợp video** (bật mặc định, tắt được): AI viết kịch bản / Đạo diễn AI được chỉnh thêm cao độ (±15 Hz)
+    và tốc độ (±20%) quanh mức bạn chọn theo không khí video (chuyện ma trầm, chậm hơn; quảng cáo sáng, nhanh hơn), kèm lý do.
+    Trang video hiện mức AI đã chỉnh, nghe thử được cả mức đó lẫn mức ban đầu; "Sửa kịch bản & tạo lại" bắt đầu từ mức AI đã chỉnh.
   - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn.
   - **Giọng kiểu kênh quen thuộc** (một lần bấm): kênh kiến thức, "chị Google", "anh Google", ngọng Tây dễ thương, bé ngọng, sóc chuột lầy lội, kể chuyện ma, robot, tổng đài.
   - **Giọng "chị Google"** và **"anh Google"** (gTTS, miễn phí; Google chỉ có giọng nữ nên giọng nam là cùng giọng đó hạ trầm) và **FPT.AI** (Ban Mai, Lê Minh, Lan Nhi... — giọng Việt tự nhiên, cần `FPT_AI_API_KEY`).
@@ -165,6 +171,7 @@ python -m videogen "chuyện cổ tích Tấm Cám" --type story --voice vi-VN-H
 python -m videogen "5 sự thật về mèo" --type facts --voice gtts:vi --rate=+15% --voice-effect cute   # chị Google ngọng nhẹ
 python -m videogen "5 sự thật về mèo" --director --aspect 9:16 --tone "lầy lội" --library-dir meme/ --library-mode auto   # Đạo diễn AI
 python -m videogen "5 sự thật về mèo" --director --base-script output/x/script.json --feedback "thêm meme, hook mạnh hơn"     # sửa theo góp ý
+python -m videogen "chuyện ma căn nhà cũ" --type story --director --pitch=+4Hz --ai-voice   # AI được chỉnh giọng cho hợp video
 python -m videogen voice-sample --voice en-US-AvaMultilingualNeural --out mau.mp3   # nghe thử giọng
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
 python -m videogen --script output/cach_thay_lop_xe_dap/script.json             # render lại từ kịch bản đã sửa

@@ -78,9 +78,24 @@ export type ScriptLine = {
   pop_text?: string;
 };
 
+/** AI tinh chỉnh giọng chung của video (cộng vào cài đặt người dùng). base/final do engine ghi lúc dựng. */
+export type VoiceTuning = {
+  /** Hz cộng thêm */
+  pitch: number;
+  /** % cộng thêm */
+  rate: number;
+  reason: string;
+  base_rate?: string;
+  base_pitch?: string;
+  /** mức thật sự dùng trong video, vd "-2Hz" */
+  final_rate?: string;
+  final_pitch?: string;
+};
+
 export type Script = {
   /** director: các cảnh tự do do Đạo diễn AI dựng (không có cảnh mở đầu/kết riêng) */
   format?: "classic" | "director";
+  voice_tuning?: VoiceTuning | null;
   title: string;
   description?: string;
   hashtags?: string[];
@@ -109,6 +124,8 @@ export type JobInput = {
   pitch?: string;
   /** hiệu ứng giọng: dễ thương, sóc chuột, trầm, robot, radio, vang */
   voiceEffect?: VoiceEffect;
+  /** AI được tinh chỉnh cao độ/tốc độ quanh mức đã chọn cho hợp video (job cũ: không) */
+  aiVoice?: boolean;
   /** loại video: hướng dẫn, top danh sách, mẹo, sự thật, quảng cáo, kể chuyện */
   videoType?: VideoType;
   /** giọng văn mong muốn của kịch bản */

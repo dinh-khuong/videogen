@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useApi } from "@/lib/client";
 import type { AssetItem, JobDetail, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
-import { DEFAULT_VOICE, LEGACY_STYLE, VIDEO_TYPES, languageOf, type VideoType } from "@/lib/video-options";
+import { DEFAULT_VOICE, LEGACY_STYLE, VIDEO_TYPES, languageOf, type VideoType, type VoiceSettings } from "@/lib/video-options";
 import { AssetPicker, AssetThumb, MusicPicker } from "./assets-library";
 import { Button, ErrorBox, Field, Loading, Modal, inputClass } from "./ui";
 import { StyleFields, VoiceFields } from "./video-style-fields";
@@ -33,13 +33,25 @@ function ScriptEditorForm({
   onCancel: () => void;
 }) {
   const router = useRouter();
-  const [script, setScript] = useState<Script>(() => structuredClone(initial));
+  // Phần giọng AI đã chỉnh được gộp vào thanh trượt bên dưới (kịch bản gửi lại không còn voice_tuning):
+  // người dùng nghe thử và tạo lại đúng mức đang thấy, không bị cộng thêm lần nữa
+  const tuning = initial.voice_tuning ?? null;
+  const [script, setScript] = useState<Script>(() => ({ ...structuredClone(initial), voice_tuning: null }));
   const [aspect, setAspect] = useState(defaults.aspect);
-  const [voice, setVoice] = useState(() => {
+  const [voice, setVoice] = useState<VoiceSettings>(() => {
     const lang = languageOf(source?.language);
-    return source
-      ? { language: lang.value, voice: source.voice || lang.voices[0].value, voice2: source.voice2 || "", rate: source.rate || "+0%", pitch: source.pitch || "+0Hz", effect: source.voiceEffect ?? "none" }
-      : DEFAULT_VOICE;
+    const base: VoiceSettings = source
+      ? {
+          language: lang.value,
+          voice: source.voice || lang.voices[0].value,
+          voice2: source.voice2 || "",
+          rate: source.rate || "+0%",
+          pitch: source.pitch || "+0Hz",
+          effect: source.voiceEffect ?? "none",
+          aiTune: false,
+        }
+      : { ...DEFAULT_VOICE, aiTune: false };
+    return tuning ? { ...base, rate: tuning.final_rate || base.rate, pitch: tuning.final_pitch || base.pitch } : base;
   });
   const [style, setStyle] = useState(() => source?.style ?? LEGACY_STYLE);
   const [videoType, setVideoType] = useState<VideoType>(source?.videoType ?? "howto");
@@ -198,7 +210,16 @@ function ScriptEditorForm({
               ))}
             </select>
           </Field>
-          <VoiceFields value={voice} onChange={setVoice} lockLanguage={!!source} />
+          <VoiceFields
+            value={voice}
+            onChange={setVoice}
+            lockLanguage={!!source}
+            note={
+              tuning?.final_pitch
+                ? `Đang ở mức AI đã chỉnh cho video này (cao độ ${tuning.base_pitch} → ${tuning.final_pitch}, tốc độ ${tuning.base_rate} → ${tuning.final_rate}${tuning.reason ? ` — ${tuning.reason}` : ""}). Chỉnh tiếp tùy ý: video tạo lại dùng đúng mức bạn nghe thử.`
+                : undefined
+            }
+          />
           <StyleFields value={style} onChange={setStyle} />
         </div>
       </details>

@@ -9,6 +9,7 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "voice2": null,                           # giọng thứ hai đọc xen kẽ các bước chẵn
   "pitch": "+0Hz",                          # cao độ giọng, vd "+5Hz" / "-8Hz"
   "voice_effect": "none",                   # none | cute | chipmunk | deep | robot | radio | echo
+  "ai_voice": false,                        # cho AI tinh chỉnh cao độ/tốc độ giọng cho hợp video (quanh rate/pitch)
                                             # voice có thể là "gtts:vi" (chị Google) hoặc "fpt:banmaiace" (FPT.AI)
   "video_type": "howto",                    # howto | listicle | tips | facts | promo | story
   "tone": "hài hước",                       # giọng văn (tùy ý)
@@ -101,6 +102,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         rate=spec.get("rate") or None,
         pitch=spec.get("pitch") or None,
         voice_effect=voice_effect,
+        ai_voice=bool(spec.get("ai_voice")),
         video_type=video_type,
         tone=spec.get("tone") or "",
         length=spec.get("length") if spec.get("length") in ("short", "medium", "long") else "medium",

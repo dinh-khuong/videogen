@@ -212,6 +212,37 @@ export const PITCHES = [
   { value: "+12Hz", label: "Cao, vui tươi" },
 ];
 
+/** Khoảng của thanh trượt cao độ (Hz, cộng vào giọng gốc). */
+export const PITCH_MIN = -30;
+export const PITCH_MAX = 30;
+
+/** Giới hạn AI được tinh chỉnh quanh mức người dùng chọn (khớp engine/videogen/delivery.py). */
+export const AI_TUNE_PITCH_LIMIT = 15;
+export const AI_TUNE_RATE_LIMIT = 20;
+
+/** "+6Hz" -> 6 (giá trị lạ -> 0). */
+export function pitchHz(value: string | null | undefined): number {
+  const n = Number.parseInt(String(value ?? "").replace(/Hz$/, ""), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** 6 -> "+6Hz", 0 -> "+0Hz", -6 -> "-6Hz" (dạng engine nhận). */
+export function hzValue(n: number): string {
+  const v = Math.round(n);
+  return `${v < 0 ? "-" : "+"}${Math.abs(v)}Hz`;
+}
+
+/** Mô tả ngắn của một mức cao độ, vd "Trầm ấm". */
+export function pitchLabel(n: number): string {
+  if (n <= -18) return "Rất trầm, ồm";
+  if (n <= -9) return "Rất trầm";
+  if (n <= -3) return "Trầm ấm";
+  if (n < 3) return "Tự nhiên";
+  if (n < 9) return "Trong trẻo";
+  if (n < 18) return "Cao, vui tươi";
+  return "Rất cao, lảnh lót";
+}
+
 /** Sắc thái giọng: đặt nhanh tốc độ + cao độ. */
 export const VOICE_MOODS = [
   { label: "Tự nhiên", rate: "+0%", pitch: "+0Hz" },
@@ -338,6 +369,8 @@ export type VoiceSettings = {
   rate: string;
   pitch: string;
   effect: VoiceEffect;
+  /** AI được tinh chỉnh cao độ/tốc độ quanh mức đã chọn cho hợp không khí video */
+  aiTune: boolean;
 };
 
 export const DEFAULT_VOICE: VoiceSettings = {
@@ -347,10 +380,11 @@ export const DEFAULT_VOICE: VoiceSettings = {
   rate: "+0%",
   pitch: "+0Hz",
   effect: "none",
+  aiTune: true,
 };
 
 /** Giọng kiểu các kênh quen thuộc (tiếng Việt): đặt cùng lúc giọng, tốc độ, cao độ, hiệu ứng. */
-export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2"> }[] = [
+export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2" | "aiTune"> }[] = [
   { label: "Kênh kiến thức", hint: "Nam trầm, đọc nhanh vừa", voice: { voice: "vi-VN-NamMinhNeural", rate: "+10%", pitch: "-6Hz", effect: "none" } },
   { label: "Chị Google", hint: "Giọng meme kinh điển", voice: { voice: "gtts:vi", rate: "+15%", pitch: "+0Hz", effect: "none" } },
   { label: "Anh Google", hint: "Giọng Google nam, trầm", voice: { voice: "gtts:vi-male", rate: "+15%", pitch: "+0Hz", effect: "none" } },

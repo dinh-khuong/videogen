@@ -99,6 +99,7 @@ function sanitize(p: Partial<Settings>): Settings {
       rate: pick(p.voice?.rate, (v) => typeof v === "string" && /^[+-]\d{1,3}%$/.test(v), DEFAULTS.voice.rate),
       pitch: pick(p.voice?.pitch, (v) => typeof v === "string" && /^[+-]\d{1,3}Hz$/.test(v), DEFAULTS.voice.pitch),
       effect: pick(p.voice?.effect, (v) => typeof v === "string" && Object.hasOwn(VOICE_EFFECTS, v), DEFAULTS.voice.effect),
+      aiTune: typeof p.voice?.aiTune === "boolean" ? p.voice.aiTune : DEFAULTS.voice.aiTune,
     },
     style: p.style ? normalizeStyle(p.style) : DEFAULTS.style,
     videoType: pick(p.videoType, (v) => typeof v === "string" && Object.hasOwn(VIDEO_TYPES, v), DEFAULTS.videoType),
@@ -164,6 +165,8 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
       rate: input.rate || "+0%",
       pitch: input.pitch || "+0Hz",
       effect: input.voiceEffect ?? "none",
+      // job cũ chưa có tùy chọn này: dùng mặc định
+      aiTune: input.aiVoice ?? DEFAULTS.voice.aiTune,
     },
     style: input.style ?? LEGACY_STYLE,
     videoType: input.videoType,
@@ -281,6 +284,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       rate: s.voice.rate,
       pitch: s.voice.pitch,
       voiceEffect: s.voice.effect,
+      aiVoice: s.voice.aiTune,
       videoType: s.videoType,
       tone: s.tone.trim(),
       length: s.length,
@@ -458,7 +462,16 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
           <h2 className="font-semibold text-zinc-900">Giọng đọc</h2>
           <p className="text-sm text-zinc-500">Hơn 50 giọng ở 10 ngôn ngữ; giọng đa ngôn ngữ đọc được cả tiếng Việt. Bấm “Nghe thử” trước khi chọn.</p>
         </div>
-        <VoiceFields value={s.voice} onChange={(v) => set("voice", v)} />
+        <VoiceFields
+          value={s.voice}
+          onChange={(v) => set("voice", v)}
+          allowAiTune
+          note={
+            s.director
+              ? "Đạo diễn AI còn đổi cảm xúc từng câu (hào hứng cao hơn, kịch tính trầm hơn...) quanh mức này; câu bình thường đọc đúng như bản nghe thử."
+              : undefined
+          }
+        />
       </Card>
 
       <Card className="space-y-4 p-5">
