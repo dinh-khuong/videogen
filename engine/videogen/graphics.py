@@ -599,6 +599,45 @@ def sticker_layer(path: Path, size: tuple[int, int], slot: str, start: float, en
     return Layer(sticker, (x, max(0, y)), start=start, end=end, enter="pop", enter_dur=0.3)
 
 
+CLIP_SLOTS = ("br", "bl", "tr", "tl", "center")
+
+
+def clip_window(size: tuple[int, int], slot: str, clip_size: tuple[int, int], big: bool = False):
+    """Khung cửa sổ cho clip video lồng trên ảnh (picture-in-picture): viền trắng bo góc + bóng đổ.
+
+    big: clip lồng suốt cảnh (to hơn sticker). Trả về (nền RGBA có viền + bóng, (x, y, rộng, cao) của vùng clip
+    trong nền đó, mặt nạ bo góc của clip, vị trí đặt nền trên khung hình).
+    """
+    w, h = size
+    cw, ch = max(1, clip_size[0]), max(1, clip_size[1])
+    if slot == "center":
+        box_w, box_h = w * 0.72, h * 0.62
+    else:
+        side = min(w, h) * (0.46 if big else 0.38)
+        box_w, box_h = side * (1.25 if w > h else 1.0), side
+    scale = min(box_w / cw, box_h / ch)
+    fw, fh = max(2, round(cw * scale)), max(2, round(ch * scale))
+    border = max(3, round(min(w, h) / 160))
+    pad = border * 4  # chỗ cho bóng đổ
+    radius = max(6, round(min(fw, fh) * 0.06))
+    win = Image.new("RGBA", (fw + border * 2 + pad * 2, fh + border * 2 + pad * 2), (0, 0, 0, 0))
+    shadow = Image.new("L", win.size, 0)
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (pad + border, pad + border * 2, pad + border + fw + border * 2, pad + border * 2 + fh + border * 2), radius + border, fill=150)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(border * 2))
+    win.paste(Image.new("RGBA", win.size, (0, 0, 0, 255)), (0, 0), shadow)
+    ImageDraw.Draw(win).rounded_rectangle((pad, pad, pad + fw + border * 2 - 1, pad + fh + border * 2 - 1), radius + border,
+                                          fill=(255, 255, 255, 255))
+    mask = Image.new("L", (fw, fh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, fw - 1, fh - 1), radius, fill=255)
+    margin = round(min(w, h) * 0.04)
+    ww, wh = win.size
+    x = {"bl": margin, "tl": margin, "br": w - ww - margin, "tr": w - ww - margin}.get(slot, (w - ww) // 2)
+    # Góc dưới đặt cao hơn vùng phụ đề; góc trên chừa chỗ cho nhãn/logo
+    y = {"tl": margin * 3, "tr": margin * 3, "bl": round(h * 0.72) - wh, "br": round(h * 0.72) - wh}.get(slot, round((h - wh) * 0.42))
+    return win, (pad + border, pad + border, fw, fh), mask, (max(0, x), max(0, y))
+
+
 def pop_text_layer(text: str, size: tuple[int, int], fonts: Fonts, accent: tuple[int, int, int] = DEFAULT_ACCENT,
                    start: float = 0.0, end: float | None = None) -> Layer | None:
     """Chữ nhấn mạnh to giữa khung (vd "SAI BÉT!", "x10 LẦN"): màu chủ đạo, viền đen, nghiêng nhẹ, bật ra."""

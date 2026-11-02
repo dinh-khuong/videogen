@@ -27,7 +27,15 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - **Giọng điệu biến hóa theo từng câu**: mỗi câu thoại có cảm xúc riêng (hào hứng, sốc, kịch tính, thì thầm, cà khịa,
     tỉnh bơ, liến thoắng...). Engine đổi tốc độ, cao độ và khoảng ngừng cho từng câu rồi ghép lại, phụ đề vẫn khớp từng từ.
     Có **giọng phụ** khác giới chen ngang hoặc đối đáp, như hai người dẫn.
-  - **Meme**: chữ meme trên/dưới hình ("KHI BẠN..."), sticker meme/reaction bật ra theo câu, chữ nhấn mạnh to giữa khung,
+  - **Chọn hình theo cảm xúc**: AI tìm ảnh/clip theo cảm xúc của từng câu (sốc, cà khịa, tỉnh bơ...), ưu tiên meme và clip
+    reaction; chuyển động ảnh cũng theo cảm xúc (kịch tính thì đẩy chậm vào, hào hứng thì lia, tỉnh bơ thì đứng yên), không
+    gò bó một kiểu.
+  - **Video lồng trên ảnh**: cảnh dùng ảnh nền vẫn có clip chạy bên trong — clip lồng trong khung nhỏ ở một góc (hoặc khung lớn
+    giữa) suốt cảnh, hay clip reaction bật ra đúng câu thoại rồi biến mất. Clip lồng được tắt tiếng và tự lặp.
+  - **Câu cửa miệng meme Việt**: "vắt cực khô", "lỗi như thế này là đúng rồi", "đây không phải bug, đây là tính năng",
+    "người ở hành tinh Nga", "người Florida", "hảo hán", "X quốc dân", "đứa nào tạo ra cái này?", "toang rồi", "còn cái nịt"...
+    AI chèn vào chỗ đắt nhất và tìm ảnh/clip meme hợp với câu đó (vd "người Florida" ~ "Florida man").
+  - **Meme**: chữ meme trên/dưới hình ("KHI BẠN..."), sticker meme/reaction (ảnh hoặc clip) bật ra theo câu, chữ nhấn mạnh to giữa khung,
     âm thanh meme (bùm, ting, đĩa rít, trống dồn, tèn ten, cốp — tự tổng hợp, không vướng bản quyền), zoom giật, rung khung, zoom chậm kịch tính.
   - Trang job hiện **nhật ký Đạo diễn AI** trực tiếp: từng suy nghĩ, hành động và kết quả.
   - **Góp ý để AI làm lại**: dưới video đã tạo, viết góp ý (vd "thêm meme khi nói về giá, hook mạnh hơn"). AI mở lại
@@ -63,6 +71,9 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - **Thanh tiến độ**, **hiệu ứng âm thanh** tự tổng hợp ("vút" khi chuyển cảnh, "tách" khi hiện nhãn — không dùng file mẫu nên không lo bản quyền).
   - **Logo** (ảnh trong Assets) ở góc trên phải và **lời kêu gọi cuối video** (vd số điện thoại, ưu đãi) dạng nút nổi bật.
 - **Giao diện sáng / tối / theo hệ thống** (nút chuyển ở thanh bên).
+- **Không còn tiếng khi không xem**: video/audio trong trang tự dừng khi thu nhỏ cửa sổ hoặc chuyển tab, khi cuộn/thu gọn
+  khiến video khuất khỏi màn hình, khi đóng hộp thoại hay chuyển trang; mỗi lúc chỉ một nguồn phát (kể cả giọng nghe thử).
+  Video đang xem toàn màn hình hoặc hình-trong-hình (PiP) được giữ nguyên.
 - **Assets: ảnh và video là nội dung chính, không chỉ làm nền**:
   - Asset là ảnh hoặc clip video (sản phẩm, menu, ảnh chụp màn hình, clip quay thao tác...) dùng để ghép vào video.
   - *AI tự chọn từ Assets* (mặc định): AI đọc mô tả, tóm tắt và chữ trong từng asset rồi tự gán asset phù hợp cho từng bước. Bước nào không có asset khớp thì tìm ảnh trên mạng.

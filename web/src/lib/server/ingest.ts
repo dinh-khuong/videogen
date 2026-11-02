@@ -37,6 +37,10 @@ export type EngineResult = {
     query: string | null;
     media?: "image" | "video";
     position?: number;
+    /** visual: đoạn hình chính | overlay: clip/ảnh lồng trên hình suốt cảnh | sticker: meme bật ra theo câu thoại */
+    role?: "visual" | "overlay" | "sticker";
+    /** vị trí trong kịch bản: "overlay" hoặc "line:<thứ tự câu>" */
+    ref?: string | null;
   }[];
 };
 
@@ -49,24 +53,31 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
   const script = result.script;
   // bước -> (thứ tự trong bước -> id asset)
   const stepAssets = new Map<number, Map<number, string>>();
-  const setAsset = (step: number, position: number, id: string) => {
-    if (!stepAssets.has(step)) stepAssets.set(step, new Map());
-    stepAssets.get(step)!.set(position, id);
+  // Clip lồng / sticker meme: gắn với video (để hiện trong "Assets dùng trong video") nhưng không phải hình chính của bước
+  const extraLinks: { step: number; position: number; id: string; ref: string | null }[] = [];
+  type Img = EngineResult["images"][number];
+  const setAsset = (img: Img, position: number, id: string) => {
+    if (img.role && img.role !== "visual") {
+      extraLinks.push({ step: img.step, position, id, ref: img.ref ?? null });
+      return;
+    }
+    if (!stepAssets.has(img.step)) stepAssets.set(img.step, new Map());
+    stepAssets.get(img.step)!.set(position, id);
   };
-  const pending: { step: number; position: number; asset: NewAsset }[] = [];
+  const pending: { img: Img; position: number; asset: NewAsset }[] = [];
 
   for (const img of result.images) {
     if (img.kind === "placeholder") continue;
     const position = img.position ?? 0;
     if (img.kind === "library" && img.library_id && getAsset(img.library_id)) {
-      setAsset(img.step, position, img.library_id);
+      setAsset(img, position, img.library_id);
       continue;
     }
     if (!fs.existsSync(img.path)) continue;
     const sha1 = await sha1File(img.path);
     const existing = findAssetBySha1(sha1);
     if (existing) {
-      setAsset(img.step, position, existing);
+      setAsset(img, position, existing);
       continue;
     }
     const ext = extOf(img.path) || ".jpg";
@@ -79,7 +90,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
       ? `\nNguồn: ${[credit.source, credit.author, credit.license].filter(Boolean).join(" — ")} (${credit.url})`
       : "";
     pending.push({
-      step: img.step,
+      img,
       position,
       asset: {
         tmpPath: tmp,
@@ -94,18 +105,33 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     });
   }
   const added = await addAssets(pending.map((p) => p.asset));
-  pending.forEach((p, i) => setAsset(p.step, p.position, added[i].id));
+  pending.forEach((p, i) => setAsset(p.img, p.position, added[i].id));
   const orderedIds = (step: number) =>
     [...(stepAssets.get(step) ?? new Map<number, string>()).entries()].sort((a, b) => a[0] - b[0]).map(([, id]) => id);
   if (added.some((a) => !a.existed)) analyzer().kick();
 
   // Lưu kịch bản kèm id asset thư viện từng bước để có thể sửa và render lại
+  const refId = (step: number, ref: string) => extraLinks.find((l) => l.step === step && l.ref === ref)?.id;
   const storedScript: Script = {
     ...script,
     steps: script.steps.map((s, i) => {
       const [first = null, ...extra] = [...new Set(orderedIds(i + 1))];
+      // Clip lồng / sticker AI tải về cũng đã thành asset: trỏ bằng id để sửa kịch bản & tạo lại vẫn còn
+      const overlayId = s.overlay ? refId(i + 1, "overlay") : undefined;
+      const lines = s.lines?.map((l, j) => {
+        const id = l.sticker ? refId(i + 1, `line:${j}`) : undefined;
+        return id ? { ...l, sticker: { asset: id } } : l;
+      });
       // Hình Đạo diễn AI tải về đã thành asset: visuals (đường dẫn file tạm) được thay bằng id asset theo đúng thứ tự
-      return { ...s, image: null, visuals: undefined, library_image: first, extra_assets: extra };
+      return {
+        ...s,
+        image: null,
+        visuals: undefined,
+        library_image: first,
+        extra_assets: extra,
+        ...(lines ? { lines } : {}),
+        ...(s.overlay && overlayId ? { overlay: { ...s.overlay, ref: { asset: overlayId } } } : {}),
+      };
     }),
   };
   const video = {
@@ -135,6 +161,9 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
         for (const [position, assetId] of byPosition) {
           if (getAsset(assetId)) link.run(files.id, assetId, step, position);
         }
+      }
+      for (const l of extraLinks) {
+        if (getAsset(l.id)) link.run(files.id, l.id, l.step, l.position);
       }
       // Nhạc nền gắn với video ở "bước 0"
       const musicId = (JSON.parse(job.input) as JobInput).musicId;

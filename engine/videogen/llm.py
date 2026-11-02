@@ -135,6 +135,10 @@ class Step:
     visuals: list[dict] = field(default_factory=list)
     meme: dict | None = None  # chữ meme phủ trên hình suốt cảnh: {"top": "...", "bottom": "..."}
     title_card: bool = False  # hiện tiêu đề video lớn ở cảnh này (thường là cảnh mở đầu)
+    # Clip video (hoặc ảnh) lồng trên hình nền suốt cảnh: {"ref": {"asset": id} | {"path", "media"}, "position": góc}
+    overlay: dict | None = None
+    # Chuyển động ảnh của cảnh (xem effects.ALL_MOTIONS) hoặc None: tự chọn theo cảm xúc câu thoại
+    motion: str | None = None
 
     def acted_lines(self) -> list[dict]:
         """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
@@ -245,6 +249,19 @@ def short_title(text: str, limit: int = 60) -> str:
 
 SFX_NAMES = ("boom", "ding", "whoosh", "pop", "scratch", "drumroll", "tada", "bonk")
 CAMERA_MOVES = ("punch", "shake", "zoom_slow")
+OVERLAY_POSITIONS = ("br", "bl", "tr", "tl", "center")
+SCENE_MOTIONS = ("zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "zoom_in_left", "zoom_in_right", "still")
+
+
+def normalize_overlay(value) -> dict | None:
+    """{"ref": media_ref, "position": góc} — clip/ảnh lồng trên hình nền suốt cảnh."""
+    if not isinstance(value, dict):
+        return None
+    ref = _media_ref(value.get("ref"))
+    if not ref:
+        return None
+    position = value.get("position") if value.get("position") in OVERLAY_POSITIONS else "br"
+    return {"ref": ref, "position": position}
 
 
 def _media_ref(value) -> dict | None:
@@ -312,6 +329,8 @@ def parse_script(data: dict, default_title: str) -> Script:
                 visuals=[r for r in (_media_ref(v) for v in s.get("visuals") or []) if r],
                 meme=meme if meme and (meme["top"] or meme["bottom"]) else None,
                 title_card=bool(s.get("title_card")),
+                overlay=normalize_overlay(s.get("overlay")),
+                motion=s.get("motion") if s.get("motion") in SCENE_MOTIONS else None,
             )
         )
     if not steps or any(not st.narration for st in steps):

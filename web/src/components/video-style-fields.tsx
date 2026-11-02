@@ -36,6 +36,7 @@ import {
   type VoiceEffect,
   type VoiceSettings,
 } from "@/lib/video-options";
+import { PAUSE_MEDIA_EVENT, pauseOtherMedia } from "./media-guard";
 import { AssetThumb } from "./assets-library";
 import { Button, Field, Segmented, Spinner, Toggle, cx, inputClass } from "./ui";
 
@@ -139,6 +140,18 @@ export function useVoicePreview() {
     };
   }, [halt]);
 
+  // Giọng nghe thử không nằm trong DOM: dừng khi trang bị ẩn (thu nhỏ cửa sổ, chuyển tab/trang) hoặc nguồn khác phát
+  useEffect(() => {
+    const onPause = (e: Event) => {
+      if (!audio.current && !request.current) return;
+      if ((e as CustomEvent<HTMLMediaElement | null>).detail === audio.current && audio.current) return;
+      halt();
+      setState(IDLE);
+    };
+    window.addEventListener(PAUSE_MEDIA_EVENT, onPause);
+    return () => window.removeEventListener(PAUSE_MEDIA_EVENT, onPause);
+  }, [halt]);
+
   const stop = useCallback(() => {
     halt();
     setState(IDLE);
@@ -163,6 +176,7 @@ export function useVoicePreview() {
         if (id !== seq.current) return; // đã có lần chỉnh mới hơn
         const el = new Audio(url);
         audio.current = el;
+        pauseOtherMedia(el); // video/audio khác đang phát thì dừng lại
         el.onended = () => {
           if (audio.current !== el) return;
           audio.current = null;

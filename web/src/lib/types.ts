@@ -66,6 +66,10 @@ export type ScriptStep = {
   /** Chữ meme phủ trên hình suốt cảnh */
   meme?: { top: string; bottom: string } | null;
   title_card?: boolean;
+  /** Clip (hoặc ảnh) lồng trên hình nền suốt cảnh, ở một góc khung */
+  overlay?: { ref: { asset: string } | { path: string; media?: "image" | "video" }; position: "br" | "bl" | "tr" | "tl" | "center" } | null;
+  /** Chuyển động ảnh của cảnh (vd zoom_in, pan_left, still); bỏ trống: theo cảm xúc câu thoại */
+  motion?: string | null;
 };
 
 export type ScriptLine = {
@@ -74,7 +78,7 @@ export type ScriptLine = {
   voice?: "second";
   sfx?: string;
   camera?: string;
-  sticker?: { asset: string } | { path: string };
+  sticker?: { asset: string } | { path: string; media?: "image" | "video" };
   pop_text?: string;
 };
 

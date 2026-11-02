@@ -308,9 +308,9 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     }
   }
   if (input.script) {
-    // Render lại: asset từng bước lấy theo library_image (id asset thư viện), sticker meme của câu thoại
+    // Render lại: asset từng bước lấy theo library_image (id asset thư viện), clip lồng và sticker meme của câu thoại
     const ids = input.script.steps
-      .flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...stickerIds(s.lines)])
+      .flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...extraIds(s)])
       .filter((x): x is string => !!x);
     spec.script = { ...input.script, steps: input.script.steps.map((s) => ({ ...s, image: null })) };
     spec.library = assetsForEngine({ ids, kind: VISUAL_KINDS, limit: ids.length || 1 });
@@ -331,15 +331,18 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
   if (base) {
     // Bản gốc khi sửa theo góp ý có thể dùng asset ngoài phạm vi thư viện của lần này
     const library = spec.library as ReturnType<typeof assetsForEngine>;
-    const baseIds = base.steps.flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...stickerIds(s.lines)]);
+    const baseIds = base.steps.flatMap((s) => [s.library_image, ...(s.extra_assets ?? []), ...extraIds(s)]);
     const missing = [...new Set(baseIds.filter((x): x is string => !!x && !library.some((a) => a.id === x)))];
     if (missing.length) library.push(...assetsForEngine({ ids: missing, kind: VISUAL_KINDS, limit: missing.length }));
   }
   return spec;
 }
 
-function stickerIds(lines: Script["steps"][number]["lines"]): string[] {
-  return (lines ?? []).flatMap((l) => (l.sticker && "asset" in l.sticker ? [l.sticker.asset] : []));
+/** Asset thư viện ngoài hình chính của bước: clip/ảnh lồng suốt cảnh và sticker meme (ảnh/clip) của câu thoại. */
+function extraIds(step: Script["steps"][number]): string[] {
+  const stickers = (step.lines ?? []).flatMap((l) => (l.sticker && "asset" in l.sticker ? [l.sticker.asset] : []));
+  const overlay = step.overlay?.ref && "asset" in step.overlay.ref ? [step.overlay.ref.asset] : [];
+  return [...overlay, ...stickers];
 }
 
 function selectedAssetIds(input: JobInput): string[] {

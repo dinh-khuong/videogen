@@ -238,6 +238,9 @@ def color_filter(name: str) -> Callable[[Image.Image], Image.Image] | None:
 # ===== Chuyển động Ken Burns =====
 
 MOTIONS = ("zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "zoom_in_left", "zoom_in_right")
+# Chỉ dùng khi được chọn chủ động (Đạo diễn AI / cảm xúc câu thoại), không nằm trong vòng luân phiên ngẫu nhiên
+STILL = "still"
+ALL_MOTIONS = (*MOTIONS, STILL)
 
 
 @dataclass(frozen=True)
@@ -265,6 +268,7 @@ def make_motion(kind: str, zoom: float) -> Motion:
         "pan_down": Motion(0.5, 0.0, tight, 0.5, 1.0, tight),
         "zoom_in_left": Motion(0.5, 0.5, zoom, 0.25, 0.45, 1.0),
         "zoom_in_right": Motion(0.5, 0.5, zoom, 0.75, 0.45, 1.0),
+        STILL: Motion(0.5, 0.5, zoom, 0.5, 0.5, zoom),  # đứng yên, thấy trọn ảnh (vd câu tỉnh bơ)
     }[kind]
 
 
@@ -295,6 +299,8 @@ class Layer:
     enter: str = "none"   # none | fade | slide_left | rise | drop | pop
     enter_dur: float = 0.35
     pulse: bool = False   # nhịp nhẹ liên tục (vd nút kêu gọi hành động)
+    # Lớp động (vd clip video lồng trên ảnh): t (giây, tính từ start) -> ảnh RGBA cùng kích thước với `image`
+    frames: Callable[[float], Image.Image] | None = None
 
     @classmethod
     def from_canvas(cls, canvas: Image.Image, **kwargs) -> "Layer | None":
@@ -321,8 +327,8 @@ def draw_layer(frame: Image.Image, layer: Layer, t: float) -> None:
     """Vẽ lớp lên khung hình tại thời điểm t của scene, kèm hoạt ảnh xuất hiện."""
     if t < layer.start or (layer.end is not None and t >= layer.end):
         return
-    img, (x, y) = layer.image, layer.pos
     local = t - layer.start
+    img, (x, y) = (layer.frames(local) if layer.frames else layer.image), layer.pos
     p = 1.0 if layer.enter == "none" or layer.enter_dur <= 0 else clamp01(local / layer.enter_dur)
     alpha, scale = 1.0, 1.0
     if p < 1:

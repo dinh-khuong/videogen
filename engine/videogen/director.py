@@ -26,8 +26,10 @@ from .config import ConfigError, Settings, require
 from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mood_of, normalize_tuning
 from .image_search import ProviderPool, UrlRegistry, fetch_image
 from .llm import (
-    CAMERA_MOVES, SFX_NAMES, LibraryAsset, Script, _oneline, _tokens, normalize_hashtags, parse_script, short_title,
+    CAMERA_MOVES, OVERLAY_POSITIONS, SCENE_MOTIONS, SFX_NAMES, LibraryAsset, Script, _oneline, _tokens,
+    normalize_hashtags, parse_script, short_title,
 )
+from .memes import EMOTION_WORDS, catchphrase_doc, emotion_keywords, phrase_keywords, used_phrases
 from .video_search import VideoProviderPool, fetch_videos
 
 if TYPE_CHECKING:
@@ -45,9 +47,11 @@ Bạn KHÔNG viết kịch bản một lần cho xong: bạn làm việc như m�
 tìm tư liệu (asset của người dùng, meme, clip/ảnh trên mạng) → dựng từng cảnh → tự duyệt → sửa → chốt.
 
 Quy trình gợi ý (tự quyết định thứ tự và số bước, không bắt buộc cứng nhắc):
-1. Nghĩ ý tưởng: góc nhìn bất ngờ, câu hook 3 giây đầu, mạch cảm xúc (tò mò → bất ngờ → cười → thỏa mãn).
-2. Tìm tư liệu: search_assets (thư viện của người dùng, có thể có kho meme), search_web (clip/ảnh minh họa).
-   Tìm nhiều lần với từ khóa khác nhau nếu kết quả chưa hợp. Ưu tiên asset của người dùng khi khớp nội dung.
+1. Nghĩ ý tưởng: góc nhìn bất ngờ, câu hook 3 giây đầu, MẠCH CẢM XÚC của cả video (tò mò → bất ngờ → cười → thỏa
+   mãn) và cảm xúc của từng câu. Cảm xúc quyết định hình ảnh, không phải ngược lại.
+2. Tìm tư liệu THEO CẢM XÚC: với mỗi "miếng" (câu sốc, câu cà khịa, câu tỉnh bơ...), search_assets với emotion tương ứng
+   (ưu tiên meme, clip reaction), search_web cho clip/ảnh minh họa. Tìm nhiều lần với từ khóa khác nhau nếu chưa hợp.
+   Ưu tiên asset của người dùng khi khớp nội dung; ưu tiên MEME (ảnh/clip) cho chỗ có cảm xúc mạnh.
 3. Dựng cảnh bằng add_scene. Số cảnh do bạn quyết định theo nội dung (thường 4-12), không cần đều nhau.
 4. review_storyboard để tự soi lỗi (dài/ngắn, giọng đều đều, thiếu hình, lạm dụng hiệu ứng...) rồi update_scene/
    remove_scene/move_scene cho tới khi thật sự hay. Sau đó gọi finish.
@@ -67,10 +71,24 @@ Nghệ thuật dựng:
   Hiệu ứng là gia vị: khoảng 1 hiệu ứng mỗi 1-2 câu là vừa, đặt đúng "miếng", không rải đều mọi câu.
 - Hình: mỗi cảnh 1-3 hình (asset/clip) nối tiếp. Clip video sinh động hơn ảnh. Nếu chưa có hình phù hợp,
   đặt fallback_query (tiếng Anh) để hệ thống tự tìm. Không dùng lặp một hình cho nhiều cảnh.
+- VIDEO LỒNG TRÊN ẢNH: cảnh dùng ảnh làm nền vẫn có thể có video chạy bên trong: "overlay" = id một CLIP (meme,
+  reaction, minh họa) hiện trong khung nhỏ suốt cảnh, "overlay_position" chọn góc (br/bl/tr/tl, center = khung lớn
+  giữa, ảnh làm nền). Sticker theo câu ("sticker") cũng có thể là CLIP: clip reaction bật ra đúng câu đó rồi biến mất.
+  Nhờ vậy video không chỉ toàn ảnh tĩnh. Dùng clip của thư viện (search_assets kind=video) hoặc search_web media=video.
+- CHUYỂN ĐỘNG theo cảm xúc, không gò bó một kiểu: "motion" của cảnh (zoom_in đẩy vào = kịch tính/nghiêm túc,
+  zoom_out = mở ra/ấm áp, pan_* = lia khi liệt kê/hào hứng, zoom_in_left/right = sốc nhìn kỹ, still = đứng yên cho câu
+  tỉnh bơ/cà khịa). Bỏ trống thì hệ thống tự chọn theo cảm xúc câu đầu. Cảnh liền nhau nên khác chuyển động.
 - Cảnh đầu là hook: câu đầu ≤ 15 từ, gây tò mò/sốc ngay. Có thể đặt title_card cho cảnh đầu (tiêu đề hiện 3 giây).
 - "heading" là nhãn nhỏ góc trên (vd "#1", "Mẹo 2", "Plot twist") — chỉ đặt khi giúp người xem theo dõi.
 - Cảnh cuối: chốt hạ gọn, có thể kêu gọi follow/bình luận một cách duyên dáng.
 - Giữ đúng mọi thông tin người dùng cung cấp (tên, giá, số liệu). Không bịa số liệu.
+
+CÂU CỬA MIỆNG MEME (khi viết tiếng Việt): ưu tiên chèn đúng chỗ, tự nhiên — trong lời thoại, pop_text hay chữ meme
+(meme_top/meme_bottom) — và chọn ảnh/clip meme hợp với câu đó (search_assets với query là chính câu meme, hệ thống tự
+thêm từ khóa tương ứng, vd "người Florida" ~ "Florida man"). Viết đúng chính tả. Có thể biến tấu ("điện thoại quốc dân",
+"pin vắt cực khô"). Không nhồi: 1-3 câu cho cả video, đặt vào "miếng" đắt nhất. Danh sách gợi ý (dùng thêm các câu
+trend khác nếu hợp):
+{catchphrases}
 
 {voice_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
 Toàn bộ lời thoại viết bằng {language}."""
@@ -92,7 +110,7 @@ LINE_SCHEMA = {
         "voice": {"type": "string", "enum": ["main", "second"], "description": "main: người dẫn chính; second: giọng phụ"},
         "sfx": {"type": "string", "enum": list(SFX_NAMES), "description": "Âm thanh meme phát khi bắt đầu câu."},
         "camera": {"type": "string", "enum": list(CAMERA_MOVES), "description": "Chuyển động máy khi bắt đầu câu."},
-        "sticker": {"type": "string", "description": "id ẢNH (meme/reaction) bật ra ở góc khung trong lúc đọc câu."},
+        "sticker": {"type": "string", "description": "id ảnh HOẶC clip (meme/reaction) bật ra ở góc khung trong lúc đọc câu."},
         "pop_text": {"type": "string", "description": "Chữ nhấn mạnh rất ngắn hiện to giữa khung khi đọc câu."},
     },
     "required": ["text", "mood"],
@@ -106,6 +124,12 @@ SCENE_PROPS = {
     "meme_top": {"type": "string", "description": "Chữ meme phía trên hình (tùy chọn)."},
     "meme_bottom": {"type": "string", "description": "Chữ meme phía dưới hình (tùy chọn)."},
     "title_card": {"type": "boolean", "description": "Hiện tiêu đề video lớn trong 3 giây đầu cảnh."},
+    "overlay": {"type": "string", "description": "id CLIP (hoặc ảnh) lồng trong khung nhỏ trên hình nền suốt cảnh "
+                                                 "(vd clip reaction trên ảnh minh họa). Chuỗi rỗng để bỏ."},
+    "overlay_position": {"type": "string", "enum": list(OVERLAY_POSITIONS),
+                         "description": "Góc đặt overlay: br/bl/tr/tl, center = khung lớn giữa (mặc định br)."},
+    "motion": {"type": "string", "enum": ["auto", *SCENE_MOTIONS],
+               "description": "Chuyển động ảnh của cảnh theo cảm xúc. auto: tự chọn theo mood câu đầu."},
 }
 
 
@@ -117,11 +141,14 @@ def _tool(name: str, description: str, properties: dict, required: list[str] | N
 
 
 TOOLS = [
-    _tool("search_assets", "Tìm trong thư viện asset của người dùng (ảnh/video, kể cả kho meme) theo nội dung.", {
-        "query": {"type": "string", "description": "Từ khóa (tiếng Việt hoặc tiếng Anh, vd 'mèo ngạc nhiên', 'drake')."},
+    _tool("search_assets", "Tìm trong thư viện asset của người dùng (ảnh/video, kể cả kho meme) theo nội dung và/hoặc "
+                           "CẢM XÚC. Meme và clip được xếp trước khi tìm theo cảm xúc.", {
+        "query": {"type": "string", "description": "Từ khóa hoặc câu meme (tiếng Việt/Anh, vd 'mèo ngạc nhiên', 'drake', "
+                                                   "'người Florida'). Có thể để trống nếu chỉ tìm theo emotion."},
+        "emotion": {"type": "string", "description": "Cảm xúc cần (vd " + ", ".join(EMOTION_WORDS) + ")."},
         "kind": {"type": "string", "enum": ["any", "image", "video"]},
         "memes_only": {"type": "boolean", "description": "Chỉ tìm trong kho meme."},
-    }, ["query"]),
+    }),
     _tool("inspect_asset", "Xem chi tiết một asset thư viện: mô tả đầy đủ, chữ trong ảnh, thời lượng, đã dùng ở đâu. "
                            "Ảnh/clip tải từ mạng chỉ có thông tin từ khóa tìm kiếm.", {
         "id": {"type": "string"},
@@ -173,6 +200,7 @@ class Director:
         self.topic, self.settings, self.opts, self.work_dir, self.orientation = topic, settings, opts, work_dir, orientation
         self.library = {a.id: a for a in opts.library}
         self.memes = [a for a in opts.library if _is_meme(a)]
+        self.meme_ids = {a.id for a in self.memes}
         self.web: dict[str, dict] = {}  # id -> {"path", "media", "credit", "query"}
         self.scenes: list[dict] = []
         self.next_scene = 1
@@ -229,22 +257,38 @@ class Director:
     def _usage(self, media_id: str) -> list[str]:
         used = []
         for sc in self.scenes:
-            if media_id in sc["visuals"] or any(l.get("sticker") == media_id for l in sc["lines"]):
+            if media_id in sc["visuals"] or sc.get("overlay") == media_id or any(l.get("sticker") == media_id for l in sc["lines"]):
                 used.append(sc["id"])
         return used
 
-    def search_assets(self, query: str, kind: str = "any", memes_only: bool = False) -> str:
+    def search_assets(self, query: str = "", kind: str = "any", memes_only: bool = False, emotion: str = "") -> str:
         pool = self.memes if memes_only else list(self.library.values())
         if kind in ("image", "video"):
             pool = [a for a in pool if a.kind == kind]
         if not pool:
             return ("Thư viện không có meme nào." if memes_only else "Thư viện trống hoặc không có loại này.") + \
                 " Hãy dùng search_web hoặc meme_top/meme_bottom, pop_text, sfx để tạo chất meme."
-        words = _tokens(query)
-        scored = sorted(((len(words & _tokens(a.search_text())), i, a) for i, a in enumerate(pool)), key=lambda x: (-x[0], x[1]))
-        hits = [a for score, _, a in scored if score > 0][:SEARCH_LIMIT]
+        query = str(query or "")
+        # Câu meme quen thuộc -> thêm từ khóa tương ứng (vd "người Florida" ~ "florida man")
+        words = _tokens(query) | _tokens(phrase_keywords(query))
+        feel = _tokens(emotion_keywords(emotion)) if emotion else set()
+        if not words and not feel:
+            return "Cần query hoặc emotion."
+
+        def score(a: LibraryAsset) -> float:
+            text = _tokens(a.search_text())
+            hit_words, hit_feel = len(words & text), len(feel & text)
+            if not hit_words and not hit_feel:
+                return 0.0
+            # Tìm theo cảm xúc: meme và clip (sống động hơn ảnh) được ưu tiên
+            bonus = (0.6 if a.id in self.meme_ids else 0) + (0.4 if a.kind == "video" else 0) if feel else 0
+            return hit_words * 2 + hit_feel + bonus
+
+        scored = sorted(((score(a), i, a) for i, a in enumerate(pool)), key=lambda x: (-x[0], x[1]))
+        hits = [a for sc, _, a in scored if sc > 0][:SEARCH_LIMIT]
         if not hits:
-            return f"Không có asset khớp '{query}'. Thử từ khóa khác (đồng nghĩa, tiếng Anh) hoặc search_web."
+            what = " / ".join(x for x in (query and f"'{query}'", emotion and f"cảm xúc {emotion}") if x)
+            return f"Không có asset khớp {what}. Thử từ khóa khác (đồng nghĩa, tiếng Anh) hoặc search_web."
         lines = [self._describe(a.id) + (f" (đang dùng ở {', '.join(u)})" if (u := self._usage(a.id)) else "") for a in hits]
         return f"{len(hits)} kết quả:\n" + "\n".join(lines)
 
@@ -316,11 +360,10 @@ class Director:
                 line["camera"] = item["camera"]
             sticker = str(item.get("sticker") or "").strip()
             if sticker:
-                kind = self._kind_of(sticker)
-                if kind == "image":
+                if self._kind_of(sticker) in ("image", "video"):
                     line["sticker"] = sticker
                 else:
-                    warnings.append(f"sticker '{sticker}' " + ("là video, sticker phải là ảnh" if kind else "không tồn tại"))
+                    warnings.append(f"sticker '{sticker}' không tồn tại")
             pop = " ".join(str(item.get("pop_text") or "").split())
             if pop:
                 line["pop_text"] = pop[:40]
@@ -352,6 +395,27 @@ class Director:
                 scene[key] = " ".join(str(args.get(key) or "").split())[:100]
         if "title_card" in args:
             scene["title_card"] = bool(args.get("title_card"))
+        if "overlay" in args:
+            overlay = str(args.get("overlay") or "").strip()
+            if not overlay:
+                scene.pop("overlay", None)
+            elif self._kind_of(overlay) is None:
+                warnings.append(f"overlay '{overlay}' không tồn tại (bỏ qua)")
+            elif overlay in scene["visuals"]:
+                warnings.append(f"overlay '{overlay}' đang là hình chính của cảnh, chọn clip khác")
+            else:
+                scene["overlay"] = overlay
+                if self._kind_of(overlay) != "video":
+                    warnings.append("overlay là ảnh: được, nhưng clip video sẽ sinh động hơn")
+        if "overlay_position" in args:
+            pos = args.get("overlay_position")
+            scene["overlay_position"] = pos if pos in OVERLAY_POSITIONS else "br"
+        if "motion" in args:
+            motion = args.get("motion")
+            if motion in SCENE_MOTIONS:
+                scene["motion"] = motion
+            else:
+                scene.pop("motion", None)
 
     def _find(self, scene_id: str) -> int | None:
         return next((i for i, s in enumerate(self.scenes) if s["id"] == scene_id), None)
@@ -490,6 +554,22 @@ class Director:
             notes.append(f"Âm '{Counter(sfx).most_common(1)[0][0]}' lặp quá nhiều lần.")
         if not any(l.get("voice") == "second" for l in lines) and len(lines) >= 6:
             notes.append("Có thể thêm vài câu giọng phụ (voice second) để đối đáp, đỡ độc thoại.")
+        clips = [a for a in self.library.values() if a.kind == "video"] + [m for m in self.web.values() if m["media"] == "video"]
+        moving = sum(1 for s in self.scenes if s.get("overlay") or any(self._kind_of(v) == "video" for v in s["visuals"])
+                     or any(self._kind_of(l.get("sticker", "")) == "video" for l in s["lines"]))
+        if len(self.scenes) >= 3 and moving < max(1, len(self.scenes) // 3):
+            hint = "lồng clip (overlay) lên cảnh ảnh, hoặc dùng clip reaction làm sticker" if clips \
+                else "tìm clip (search_assets kind=video / search_web media=video) để lồng lên cảnh ảnh"
+            notes.append(f"Chỉ {moving}/{len(self.scenes)} cảnh có video chuyển động, còn lại toàn ảnh tĩnh: {hint}.")
+        if self.opts.language.lower().startswith("tiếng việt") and len(self.scenes) >= 3:
+            texts = [l.get("text", "") + " " + l.get("pop_text", "") for l in lines]
+            texts += [s.get("meme_top", "") + " " + s.get("meme_bottom", "") for s in self.scenes]
+            if not used_phrases(texts):
+                notes.append("Chưa có câu cửa miệng meme nào (vắt cực khô, không phải bug mà là tính năng, người Florida...): "
+                             "chèn 1-2 câu vào chỗ đắt nhất nếu hợp chủ đề.")
+        motions = [s.get("motion") for s in self.scenes if s.get("motion")]
+        if len(motions) >= 3 and len(set(motions)) == 1:
+            notes.append(f"Mọi cảnh cùng chuyển động '{motions[0]}': đổi theo cảm xúc từng cảnh (hoặc để auto).")
         if self.opts.ai_voice and self.voice_tuning is None and not self.voice_checked:
             notes.append("Giọng chung chưa tinh chỉnh: nếu cao độ/tốc độ chưa hợp không khí video, dùng tune_voice.")
         return notes
@@ -503,7 +583,9 @@ class Director:
                f"Giọng: {self.voice_summary()}"]
         for k, s in enumerate(self.scenes, 1):
             extra = [x for x in (s.get("heading") and f"nhãn '{s['heading']}'", s.get("title_card") and "title card",
-                                 (s.get("meme_top") or s.get("meme_bottom")) and f"meme '{s.get('meme_top', '')} / {s.get('meme_bottom', '')}'")
+                                 (s.get("meme_top") or s.get("meme_bottom")) and f"meme '{s.get('meme_top', '')} / {s.get('meme_bottom', '')}'",
+                                 s.get("overlay") and f"lồng {s['overlay']} ({s.get('overlay_position', 'br')})",
+                                 s.get("motion") and f"chuyển động {s['motion']}")
                      if x]
             visuals = ", ".join(s["visuals"]) or (f"(tự tìm: {s['fallback_query']})" if s.get("fallback_query") else "(KHÔNG CÓ HÌNH)")
             out.append(f"{k}. {s['id']} ~{self._scene_seconds(s):.0f}s | hình: {visuals}" + (f" | {'; '.join(extra)}" if extra else ""))
@@ -532,7 +614,8 @@ class Director:
     def _intro_message(self) -> str:
         opts = self.opts
         tags = Counter(t for a in opts.library for t in a.tags).most_common(25)
-        lib = f"{len(self.library)} asset ({sum(a.kind == 'video' for a in opts.library)} video), {len(self.memes)} meme"
+        lib = (f"{len(self.library)} asset ({sum(a.kind == 'video' for a in opts.library)} video), {len(self.memes)} meme "
+               f"({sum(a.kind == 'video' for a in self.memes)} clip meme)")
         if tags:
             lib += ". Tag phổ biến: " + " ".join(f"#{t}({n})" for t, n in tags)
         parts = [
@@ -568,7 +651,7 @@ class Director:
         fn = handlers.get(name)
         if not fn:
             return f"Không có công cụ '{name}'."
-        allowed = {"search_assets": {"query", "kind", "memes_only"}, "inspect_asset": {"id"},
+        allowed = {"search_assets": {"query", "kind", "memes_only", "emotion"}, "inspect_asset": {"id"},
                    "search_web": {"query", "media", "count"}, "remove_scene": {"scene"}, "move_scene": {"scene", "position"},
                    "review_storyboard": set(), "finish": {"title", "description", "hashtags"},
                    "tune_voice": {"pitch", "rate", "reason"}}
@@ -588,7 +671,8 @@ class Director:
         first = lambda: (args.get("lines") or [{}])[0]  # noqa: E731
         first_text = lambda: first().get("text", "") if isinstance(first(), dict) else str(first())  # noqa: E731
         return {
-            "search_assets": lambda: f"Tìm {'meme' if args.get('memes_only') else 'asset'} trong thư viện: “{args.get('query', '')}”",
+            "search_assets": lambda: f"Tìm {'meme' if args.get('memes_only') else 'asset'} trong thư viện: “{args.get('query', '')}”"
+                                     + (f" (cảm xúc: {args['emotion']})" if args.get("emotion") else ""),
             "inspect_asset": lambda: f"Xem kỹ {args.get('id')}",
             "search_web": lambda: f"Tìm {'clip' if args.get('media') == 'video' else 'ảnh'} trên mạng: “{args.get('query', '')}”",
             "add_scene": lambda: f"Thêm cảnh: “{_oneline(first_text(), 80)}”",
@@ -607,7 +691,7 @@ class Director:
             base_url=self.settings.deepseek_base_url, max_retries=3, timeout=180,
         )
         model = self.settings.director_model or self.settings.deepseek_model
-        system = SYSTEM.replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
+        system = SYSTEM.replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "").replace("{catchphrases}", catchphrase_doc())
         tools = TOOLS if self.opts.ai_voice else [t for t in TOOLS if t["function"]["name"] != "tune_voice"]
         messages: list[dict] = [
             {"role": "system", "content": system.replace("{language}", self.opts.language)},
@@ -695,6 +779,10 @@ class Director:
             }
             if sc.get("meme_top") or sc.get("meme_bottom"):
                 step["meme"] = {"top": sc.get("meme_top", ""), "bottom": sc.get("meme_bottom", "")}
+            if sc.get("overlay") and self._kind_of(sc["overlay"]):
+                step["overlay"] = {"ref": self._ref(sc["overlay"]), "position": sc.get("overlay_position", "br")}
+            if sc.get("motion"):
+                step["motion"] = sc["motion"]
             steps.append(step)
         meta = self.meta or {}
         return parse_script({
@@ -718,12 +806,19 @@ class Director:
             ids = [step.get("library_image"), *(step.get("extra_assets") or [])]
             ids += [v.get("asset") for v in step.get("visuals") or [] if isinstance(v, dict)]
             meme = step.get("meme") or {}
+            overlay = step.get("overlay") or {}
+            overlay_id = (overlay.get("ref") or {}).get("asset") if isinstance(overlay, dict) else None
             scene = {
                 "id": f"s{self.next_scene}", "heading": step.get("heading") or "",
                 "lines": [], "visuals": [], "title_card": bool(step.get("title_card")),
                 "meme_top": meme.get("top", ""), "meme_bottom": meme.get("bottom", ""),
             }
-            self._apply(scene, {"lines": lines, "visuals": [i for i in dict.fromkeys(ids) if i and i in self.library]}, [])
+            base = {"lines": lines, "visuals": [i for i in dict.fromkeys(ids) if i and i in self.library]}
+            if overlay_id in self.library:
+                base.update(overlay=overlay_id, overlay_position=overlay.get("position", "br"))
+            if step.get("motion"):
+                base["motion"] = step["motion"]
+            self._apply(scene, base, [])
             if scene["lines"]:
                 self.scenes.append(scene)
                 self.next_scene += 1
