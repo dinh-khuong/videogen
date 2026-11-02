@@ -35,7 +35,13 @@ const GTTS_LANG: Record<string, string> = {
 /** Giọng "chị Google" (gTTS): giọng máy quen thuộc trên các kênh meme/kiến thức, miễn phí. */
 export function gttsVoice(language: string): Voice {
   const code = GTTS_LANG[language] ?? "vi";
-  return { value: `gtts:${code}`, label: code === "vi" ? "Chị Google (giọng meme quen thuộc)" : "Google Translate (gTTS)" };
+  return { value: `gtts:${code}`, label: code === "vi" ? "Chị Google (giọng meme quen thuộc)" : "Google Translate — nữ (gTTS)" };
+}
+
+/** "Anh Google": Google chỉ có giọng nữ, giọng nam là cùng giọng đó được hạ trầm (engine xử lý). */
+export function gttsMaleVoice(language: string): Voice {
+  const code = GTTS_LANG[language] ?? "vi";
+  return { value: `gtts:${code}-male`, label: code === "vi" ? "Anh Google (giọng Google nam)" : "Google Translate — nam (gTTS)" };
 }
 
 /** Giọng FPT.AI: giọng Việt tự nhiên nhiều kênh kiến thức dùng, cần FPT_AI_API_KEY trong engine/.env. */
@@ -182,7 +188,7 @@ export function languageOf(value: string | undefined): Language {
 
 export function voiceLabel(value: string | null | undefined): string {
   if (!value) return "";
-  const all = [...LANGUAGES.flatMap((l) => [...l.voices, gttsVoice(l.value)]), ...MULTILINGUAL_VOICES, ...FPT_VOICES];
+  const all = [...LANGUAGES.flatMap((l) => [...l.voices, gttsVoice(l.value), gttsMaleVoice(l.value)]), ...MULTILINGUAL_VOICES, ...FPT_VOICES];
   for (const v of all) if (v.value === value) return v.label;
   return value;
 }
@@ -347,6 +353,7 @@ export const DEFAULT_VOICE: VoiceSettings = {
 export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2"> }[] = [
   { label: "Kênh kiến thức", hint: "Nam trầm, đọc nhanh vừa", voice: { voice: "vi-VN-NamMinhNeural", rate: "+10%", pitch: "-6Hz", effect: "none" } },
   { label: "Chị Google", hint: "Giọng meme kinh điển", voice: { voice: "gtts:vi", rate: "+15%", pitch: "+0Hz", effect: "none" } },
+  { label: "Anh Google", hint: "Giọng Google nam, trầm", voice: { voice: "gtts:vi-male", rate: "+15%", pitch: "+0Hz", effect: "none" } },
   { label: "Ngọng Tây dễ thương", hint: "Giọng Tây đọc tiếng Việt", voice: { voice: "en-US-AvaMultilingualNeural", rate: "+5%", pitch: "+6Hz", effect: "cute" } },
   { label: "Bé ngọng", hint: "Cao, trong, hơi ngọng", voice: { voice: "vi-VN-HoaiMyNeural", rate: "+5%", pitch: "+6Hz", effect: "cute" } },
   { label: "Sóc chuột lầy lội", hint: "Cao vút, nhanh", voice: { voice: "vi-VN-HoaiMyNeural", rate: "+15%", pitch: "+0Hz", effect: "chipmunk" } },

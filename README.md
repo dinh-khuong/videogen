@@ -29,8 +29,8 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - 10 ngôn ngữ (Việt, Anh, Trung, Nhật, Hàn, Pháp, Tây Ban Nha, Đức, Thái, Indonesia), hơn 50 giọng; giọng **đa ngôn ngữ** (Ava, Andrew, Emma, Brian...) đọc được cả tiếng Việt.
   - **Nghe thử** giọng ngay trong form; **sắc thái giọng** (trầm ấm, kể chuyện, trẻ trung, quảng cáo sôi nổi, tin tức) đặt nhanh tốc độ + cao độ.
   - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn.
-  - **Giọng kiểu kênh quen thuộc** (một lần bấm): kênh kiến thức, "chị Google", ngọng Tây dễ thương, bé ngọng, sóc chuột lầy lội, kể chuyện ma, robot, tổng đài.
-  - **Giọng "chị Google"** (gTTS, miễn phí) và **FPT.AI** (Ban Mai, Lê Minh, Lan Nhi... — giọng Việt tự nhiên, cần `FPT_AI_API_KEY`).
+  - **Giọng kiểu kênh quen thuộc** (một lần bấm): kênh kiến thức, "chị Google", "anh Google", ngọng Tây dễ thương, bé ngọng, sóc chuột lầy lội, kể chuyện ma, robot, tổng đài.
+  - **Giọng "chị Google"** và **"anh Google"** (gTTS, miễn phí; Google chỉ có giọng nữ nên giọng nam là cùng giọng đó hạ trầm) và **FPT.AI** (Ban Mai, Lê Minh, Lan Nhi... — giọng Việt tự nhiên, cần `FPT_AI_API_KEY`).
   - **Hiệu ứng giọng**: dễ thương/ngọng nhẹ, sóc chuột, trầm ma mị, robot, radio, vang. Xử lý bằng ffmpeg, giữ nguyên tốc độ nên phụ đề vẫn khớp.
 - **Hiệu ứng làm video sinh động**:
   - **Nhịp dựng** chậm / vừa / nhanh: độ dài mỗi cảnh, tốc độ chuyển, biên độ zoom.
@@ -202,7 +202,7 @@ Thứ tự ưu tiên đặt bằng `IMAGE_PROVIDERS` (mặc định `duckduckgo,
 
 ### 5. Giọng đọc — **không cần key** (trừ FPT.AI)
 - edge-tts, giọng mặc định `vi-VN-HoaiMyNeural`. Nếu edge-tts lỗi, chương trình tự chuyển sang gTTS (khi đó phụ đề chia theo độ dài câu thay vì khớp từng từ).
-- `TTS_VOICE` / `--voice` nhận thêm `gtts:vi` ("chị Google") và `fpt:<giọng>` (FPT.AI, cần `FPT_AI_API_KEY` lấy tại https://console.fpt.ai). Giọng FPT lỗi thì tự chuyển sang gTTS.
+- `TTS_VOICE` / `--voice` nhận thêm `gtts:vi` ("chị Google"), `gtts:vi-male` ("anh Google") và `fpt:<giọng>` (FPT.AI, cần `FPT_AI_API_KEY` lấy tại https://console.fpt.ai). Giọng FPT lỗi thì tự chuyển sang gTTS.
 - Danh sách đầy đủ: `edge-tts --list-voices`. Giọng có chữ `Multilingual` đọc được nhiều ngôn ngữ, kể cả tiếng Việt.
 - Video tiếng Trung/Nhật/Hàn/Thái cần font hỗ trợ chữ đó, vd `sudo apt install fonts-noto-cjk fonts-noto-core` (hoặc đặt `FONT_PATH`).
 
