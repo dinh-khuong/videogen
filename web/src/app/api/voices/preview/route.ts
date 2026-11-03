@@ -52,7 +52,8 @@ async function generate(
   const { code, stdout, stderr } = await runEngine(
     // Dạng --khóa=giá trị: argparse sẽ hiểu nhầm giá trị âm như "-6Hz" là một tùy chọn
     ["voice-sample", `--voice=${p.voice}`, `--rate=${p.rate}`, `--pitch=${p.pitch}`, `--language=${p.language}`, `--effect=${p.effect}`, `--out=${file}`],
-    90_000,
+    // ZeroTTS: lần đầu phải tải mô hình ~900 MB và nạp vào bộ nhớ
+    p.voice.startsWith("zerotts:") ? 900_000 : 90_000,
   );
   if (code === 0 && fs.existsSync(file)) return { ok: true };
   let message = "Không tạo được giọng mẫu";
@@ -61,6 +62,7 @@ async function generate(
   } catch {
     message = `${message}: ${(stderr || stdout).slice(-300)}`;
   }
-  const hint = message.includes("FPT_AI_API_KEY") ? "" : ". Kiểm tra kết nối mạng (giọng đọc cần Internet)";
+  const hint =
+    message.includes("FPT_AI_API_KEY") || p.voice.startsWith("zerotts:") ? "" : ". Kiểm tra kết nối mạng (giọng đọc cần Internet)";
   return { ok: false, error: `${message}${hint}.` };
 }

@@ -9,6 +9,7 @@ import {
   AI_TUNE_RATE_LIMIT,
   COLOR_FILTERS,
   FPT_VOICES,
+  ZEROTTS_VOICES,
   LANGUAGES,
   MAX_CTA_CHARS,
   MULTILINGUAL_VOICES,
@@ -33,6 +34,7 @@ import {
   type SubtitleStyle,
   type TransitionKind,
   type VideoStyle,
+  type Voice,
   type VoiceEffect,
   type VoiceSettings,
 } from "@/lib/video-options";
@@ -40,11 +42,15 @@ import { PAUSE_MEDIA_EVENT, pauseOtherMedia } from "./media-guard";
 import { AssetThumb } from "./assets-library";
 import { Button, Field, Segmented, Spinner, Toggle, cx, inputClass } from "./ui";
 
-function VoiceOptions({ language, current, fpt }: { language: string; current?: string; fpt: boolean }) {
+type ZeroTtsState = { installed: boolean; voices: Voice[] | null; error?: string };
+
+function VoiceOptions({ language, current, fpt, zerotts }: { language: string; current?: string; fpt: boolean; zerotts: ZeroTtsState }) {
   const lang = languageOf(language);
   const google = [gttsVoice(lang.value), gttsMaleVoice(lang.value)];
   const vietnamese = lang.value === LANGUAGES[0].value;
-  const all = [...lang.voices, ...google, ...MULTILINGUAL_VOICES, ...(vietnamese ? FPT_VOICES : [])];
+  // Chưa lấy được danh sách từ mô hình (đang tải mô hình / chưa cài): hiện giọng mặc định
+  const zeroVoices = zerotts.voices?.length ? zerotts.voices : ZEROTTS_VOICES;
+  const all = [...lang.voices, ...google, ...MULTILINGUAL_VOICES, ...(vietnamese ? [...FPT_VOICES, ...zeroVoices] : [])];
   const known = (v?: string) => !v || all.some((x) => x.value === v);
   return (
     <>
@@ -64,6 +70,25 @@ function VoiceOptions({ language, current, fpt }: { language: string; current?: 
       {vietnamese && (
         <optgroup label={fpt ? "FPT.AI — giọng Việt tự nhiên" : "FPT.AI — cần FPT_AI_API_KEY trong engine/.env"}>
           {FPT_VOICES.map((v) => (
+            <option key={v.value} value={v.value}>
+              {v.label}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {vietnamese && (
+        <optgroup
+          label={
+            !zerotts.installed
+              ? "ZeroTTS — cần pip install zerotts trong engine"
+              : zerotts.voices === null
+                ? "ZeroTTS — đang nạp mô hình (lần đầu tải ~900 MB)..."
+                : zerotts.error
+                  ? `ZeroTTS — lỗi nạp mô hình: ${zerotts.error.slice(0, 80)}`
+                : "ZeroTTS — giọng Việt chạy trên máy, không cần API key"
+          }
+        >
+          {zeroVoices.map((v) => (
             <option key={v.value} value={v.value}>
               {v.label}
             </option>
@@ -331,6 +356,14 @@ export function VoiceFields({
 }) {
   const health = useApi<EngineHealth>("/api/health");
   const fpt = !!health.data?.fpt_tts;
+  const zerottsInstalled = !!health.data?.zerotts;
+  // Chỉ hỏi danh sách giọng khi đã cài zerotts (lần đầu engine sẽ tải mô hình)
+  const zerottsList = useApi<{ voices: Voice[]; error?: string }>(zerottsInstalled ? "/api/voices/zerotts" : null);
+  const zerotts: ZeroTtsState = {
+    installed: zerottsInstalled,
+    voices: zerottsList.data?.voices ?? (zerottsList.error ? [] : null),
+    error: zerottsList.data?.error ?? zerottsList.error ?? undefined,
+  };
   const player = useVoicePreview();
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastVoice = useRef<string | null>(null);
@@ -399,7 +432,7 @@ export function VoiceFields({
         <Field label="Giọng đọc">
           <div className="flex gap-2">
             <select className={inputClass} value={value.voice} onChange={(e) => set({ voice: e.target.value })}>
-              <VoiceOptions language={value.language} current={value.voice} fpt={fpt} />
+              <VoiceOptions language={value.language} current={value.voice} fpt={fpt} zerotts={zerotts} />
             </select>
             <VoicePreview player={player} params={previewParams(value.voice, value)} onPlay={() => rememberVoice(value.voice)} />
           </div>
@@ -408,7 +441,7 @@ export function VoiceFields({
           <div className="flex gap-2">
             <select className={inputClass} value={value.voice2} onChange={(e) => set({ voice2: e.target.value })}>
               <option value="">Không dùng</option>
-              <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} />
+              <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} zerotts={zerotts} />
             </select>
             {value.voice2 && (
               <VoicePreview player={player} params={previewParams(value.voice2, value)} onPlay={() => rememberVoice(value.voice2)} />

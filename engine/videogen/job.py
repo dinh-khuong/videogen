@@ -10,7 +10,7 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "pitch": "+0Hz",                          # cao độ giọng, vd "+5Hz" / "-8Hz"
   "voice_effect": "none",                   # none | cute | chipmunk | deep | robot | radio | echo
   "ai_voice": false,                        # cho AI tinh chỉnh cao độ/tốc độ giọng cho hợp video (quanh rate/pitch)
-                                            # voice có thể là "gtts:vi" (chị Google) hoặc "fpt:banmaiace" (FPT.AI)
+                                            # voice có thể là "gtts:vi" (chị Google) hoặc "fpt:banmaiace" (FPT.AI), "zerotts:maichi" (ZeroTTS)
   "video_type": "howto",                    # howto | listicle | tips | facts | promo | story
   "tone": "hài hước",                       # giọng văn (tùy ý)
   "length": "medium",                       # short | medium | long

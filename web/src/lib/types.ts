@@ -270,6 +270,8 @@ export type EngineHealth = {
   voice?: string;
   /** có FPT_AI_API_KEY (giọng FPT.AI) */
   fpt_tts?: boolean;
+  /** đã cài thư viện zerotts (giọng ZeroTTS chạy trên máy) */
+  zerotts?: boolean;
   font?: string | null;
   moviepy?: string;
 };
