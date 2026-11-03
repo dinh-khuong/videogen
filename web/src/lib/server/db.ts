@@ -175,6 +175,11 @@ const MIGRATIONS: string[] = [
   ALTER TABLE asset_folders ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX asset_folders_parent ON asset_folders(parent_id);
   `,
+  // Thời gian chạy job: lưu thời gian thực tế khi job kết thúc, và ước tính khi tạo job (dựa vào lịch sử job tương tự)
+  `
+  ALTER TABLE jobs ADD COLUMN duration_seconds REAL;
+  ALTER TABLE jobs ADD COLUMN estimated_seconds REAL;
+  `,
 ];
 
 function open(): Database.Database {

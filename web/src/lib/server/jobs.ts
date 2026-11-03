@@ -28,6 +28,8 @@ export type JobRow = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  duration_seconds: number | null;
+  estimated_seconds: number | null;
 };
 
 export function jobDir(id: string): string {
@@ -49,6 +51,8 @@ function toItem(r: JobRow): JobItem {
     createdAt: r.created_at,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
+    durationSeconds: r.duration_seconds,
+    estimatedSeconds: r.estimated_seconds,
   };
 }
 
@@ -245,11 +249,48 @@ function baseScript(jobId: string): Script | null {
   return row?.video_id ? (getVideoDetail(row.video_id)?.script ?? null) : null;
 }
 
+/** Lấy tối đa chừng này job gần nhất đã xong để ước tính thời gian (đủ để bắt được vài job giống nhau, không chậm). */
+const ESTIMATE_SAMPLE_LIMIT = 300;
+/** Cần ít nhất chừng này mẫu đủ giống mới tin; không thì dùng chung cả lịch sử gần đây. */
+const ESTIMATE_MIN_SIMILAR = 3;
+
+/** Độ giống giữa hai job để ước tính thời gian: những yếu tố ảnh hưởng nhiều nhất đến thời gian dựng video. */
+function similarity(a: JobInput, b: JobInput): number {
+  let score = 0;
+  if (!!a.director === !!b.director) score += 3;
+  if (!!a.script === !!b.script) score += 2;
+  if ((a.webMedia ?? "image") === (b.webMedia ?? "image")) score += 1;
+  if ((a.length ?? "medium") === (b.length ?? "medium")) score += 1;
+  if (Math.abs((a.numSteps ?? 6) - (b.numSteps ?? 6)) <= 2) score += 1;
+  if ((a.libraryMode ?? "off") === (b.libraryMode ?? "off")) score += 1;
+  return score;
+}
+
+/** Ước tính thời gian chạy (giây) cho một job mới, dựa trên thời gian thực tế của job tương tự đã chạy xong gần đây. */
+export function estimateSeconds(input: JobInput): number | null {
+  const rows = db()
+    .prepare(
+      `SELECT input, duration_seconds FROM jobs
+       WHERE status = 'succeeded' AND duration_seconds IS NOT NULL
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(ESTIMATE_SAMPLE_LIMIT) as { input: string; duration_seconds: number }[];
+  if (!rows.length) return null;
+
+  const scored = rows.map((r) => ({ duration: r.duration_seconds, score: similarity(JSON.parse(r.input) as JobInput, input) }));
+  const bestScore = Math.max(...scored.map((s) => s.score));
+  let pool = scored.filter((s) => s.score >= bestScore - 1).map((s) => s.duration);
+  if (pool.length < ESTIMATE_MIN_SIMILAR) pool = scored.map((s) => s.duration);
+  pool.sort((x, y) => x - y);
+  // Trung vị: ít bị lệch bởi một job bất thường nhanh/chậm hơn hẳn phần còn lại
+  return pool[Math.floor(pool.length / 2)];
+}
+
 export function createJob(input: JobInput): JobItem {
   const id = crypto.randomUUID();
   db()
-    .prepare("INSERT INTO jobs (id, topic, input, contact_id, message) VALUES (?, ?, ?, ?, ?)")
-    .run(id, input.topic, JSON.stringify(input), input.contactId ?? null, "Đang chờ");
+    .prepare("INSERT INTO jobs (id, topic, input, contact_id, message, estimated_seconds) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(id, input.topic, JSON.stringify(input), input.contactId ?? null, "Đang chờ", estimateSeconds(input));
   return toItem(getJobRow(id)!);
 }
 

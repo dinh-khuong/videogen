@@ -86,8 +86,10 @@ export function AssetThumb({ asset, className }: { asset: AssetItem; className?:
   return (
     <span className={cx("relative block overflow-hidden bg-zinc-100", className)}>
       {asset.thumbUrl ? (
+        // draggable=false: <img> được kéo mặc định của trình duyệt sẽ "cướp" drag chuẩn HTML5
+        // của thẻ asset (kéo thả chuyển thư mục), chỉ thư mục (icon SVG) mới kéo thả được
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={asset.thumbUrl} alt={asset.title} loading="lazy" className="size-full object-cover" />
+        <img src={asset.thumbUrl} alt={asset.title} loading="lazy" draggable={false} className="size-full object-cover" />
       ) : (
         <span className="grid size-full place-items-center text-xs text-zinc-400">Không có ảnh xem trước</span>
       )}
