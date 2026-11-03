@@ -73,14 +73,32 @@ function toItems(rows: AssetRow[]): AssetItem[] {
   }));
 }
 
+/** SQL con trả về các thư mục trong json `?` và mọi thư mục con cháu của chúng. */
+export const SUBTREE_SQL = `WITH RECURSIVE sub(id) AS (
+  SELECT value FROM json_each(?)
+  UNION SELECT f.id FROM asset_folders f JOIN sub ON f.parent_id = sub.id
+) SELECT id FROM sub`;
+
+export const ASSET_SORTS = {
+  new: "a.created_at DESC",
+  old: "a.created_at ASC",
+  name: "a.title COLLATE NOCASE ASC, a.created_at DESC",
+  size: "a.size_bytes DESC, a.created_at DESC",
+} as const;
+
 export type AssetQuery = {
   q?: string;
   tag?: string;
   kind?: string;
   ids?: string[];
   status?: string;
-  /** id thư mục, hoặc "none" = asset chưa thuộc thư mục nào */
+  /** id thư mục, hoặc "none" = asset chưa thuộc thư mục nào (nằm ở gốc) */
   folder?: string;
+  /** Lấy cả asset trong thư mục con của `folder` */
+  recursive?: boolean;
+  /** Asset nằm trong một trong các thư mục này (tính cả thư mục con) */
+  folders?: string[];
+  sort?: string;
   limit?: number;
   offset?: number;
 };
@@ -111,9 +129,16 @@ function where(query: AssetQuery): { sql: string; params: unknown[] } {
   }
   if (query.folder === "none") {
     clauses.push("a.folder_id IS NULL");
+  } else if (query.folder && query.recursive) {
+    clauses.push(`a.folder_id IN (${SUBTREE_SQL})`);
+    params.push(JSON.stringify([query.folder]));
   } else if (query.folder) {
     clauses.push("a.folder_id = ?");
     params.push(query.folder);
+  }
+  if (query.folders?.length) {
+    clauses.push(`a.folder_id IN (${SUBTREE_SQL})`);
+    params.push(JSON.stringify(query.folders));
   }
   if (query.ids) {
     clauses.push("a.id IN (SELECT value FROM json_each(?))");
@@ -125,8 +150,9 @@ function where(query: AssetQuery): { sql: string; params: unknown[] } {
 export function listAssets(query: AssetQuery = {}): Page<AssetItem> {
   const { sql, params } = where(query);
   const limit = Math.min(Math.max(query.limit ?? 60, 1), 500);
+  const order = query.sort && Object.hasOwn(ASSET_SORTS, query.sort) ? ASSET_SORTS[query.sort as keyof typeof ASSET_SORTS] : ASSET_SORTS.new;
   const rows = db()
-    .prepare(`${SELECT}${sql} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`)
+    .prepare(`${SELECT}${sql} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...params, limit, query.offset ?? 0) as AssetRow[];
   const { total } = db().prepare(`SELECT COUNT(*) AS total FROM assets a${sql}`).get(...params) as { total: number };
   return { items: toItems(rows), total };
@@ -337,9 +363,15 @@ export function requeueInterruptedAnalysis(): void {
   db().prepare("UPDATE assets SET analysis_status = 'pending' WHERE analysis_status = 'running'").run();
 }
 
-/** Số asset còn chờ/đang phân tích trong phạm vi (ids hoặc tag; không có gì = toàn thư viện). */
-export function countUnanalyzed(scope: { ids?: string[]; tag?: string | null }): number {
+/** Số asset còn chờ/đang phân tích trong phạm vi (ids, tag hoặc thư mục; không có gì = toàn thư viện). */
+export function countUnanalyzed(scope: { ids?: string[]; tag?: string | null; folders?: string[] }): number {
   // Chỉ ảnh/video: audio không được AI chọn cho từng bước nên job không cần chờ
-  const { sql, params } = where({ ids: scope.ids, tag: scope.tag ?? undefined, kind: "image,video", status: "pending,running" });
+  const { sql, params } = where({
+    ids: scope.ids,
+    tag: scope.tag ?? undefined,
+    folders: scope.folders,
+    kind: "image,video",
+    status: "pending,running",
+  });
   return (db().prepare(`SELECT COUNT(*) AS n FROM assets a${sql}`).get(...params) as { n: number }).n;
 }

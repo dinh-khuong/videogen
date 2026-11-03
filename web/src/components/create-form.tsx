@@ -27,6 +27,7 @@ import {
   type VideoType,
   type VoiceSettings,
 } from "@/lib/video-options";
+import { FolderMultiPicker } from "./asset-folders";
 import { AssetPicker, MusicPicker } from "./assets-library";
 import { TagPicker } from "./library-filters";
 import { Button, Card, Choice, ErrorBox, Field, Loading, PageHeader, Segmented, Toggle, cx, inputClass } from "./ui";
@@ -62,6 +63,7 @@ type Settings = {
   searchEngine: SearchEngine;
   libraryMode: JobInput["libraryMode"];
   libraryTags: string[];
+  libraryFolders: string[];
   music: { musicId: string; volume: number };
 };
 
@@ -86,6 +88,7 @@ const DEFAULTS: Settings = {
   searchEngine: "auto",
   libraryMode: "auto",
   libraryTags: [],
+  libraryFolders: [],
   music: { musicId: "", volume: 0.12 },
 };
 
@@ -124,6 +127,7 @@ function sanitize(p: Partial<Settings>): Settings {
         typeof (p as { libraryTag?: unknown }).libraryTag === "string" && (p as { libraryTag: string }).libraryTag
         ? [(p as { libraryTag: string }).libraryTag]
         : [],
+    libraryFolders: Array.isArray(p.libraryFolders) ? p.libraryFolders.filter((t): t is string => typeof t === "string").slice(0, 20) : [],
     music: {
       musicId: typeof p.music?.musicId === "string" ? p.music.musicId : "",
       volume: typeof p.music?.volume === "number" ? Math.min(Math.max(p.music.volume, 0.02), 0.5) : DEFAULTS.music.volume,
@@ -187,6 +191,7 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
     searchEngine: input.searchEngine ?? "auto",
     libraryMode: input.libraryMode,
     libraryTags: input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [],
+    libraryFolders: input.libraryFolders ?? [],
     music: { musicId: input.musicId ?? "", volume: input.musicVolume ?? DEFAULTS.music.volume },
   };
 }
@@ -307,6 +312,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       searchEngine: s.searchEngine,
       libraryMode: s.libraryMode,
       libraryTags: s.libraryMode === "auto" ? s.libraryTags : [],
+      libraryFolders: s.libraryMode === "auto" ? s.libraryFolders : [],
       assetIds: s.libraryMode === "selected" ? s.assetIds : [],
       contactId: s.contactId || null,
       musicId: s.music.musicId || null,
@@ -551,6 +557,9 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
             <p className="mt-1 text-xs text-zinc-500">
               AI chỉ xem các asset có ít nhất một tag đã chọn (vd #meme + #meo). Để trống: cả thư viện (AI lọc theo chủ đề).
             </p>
+            <p className="mt-4 mb-1.5 text-sm font-medium text-zinc-700">Giới hạn trong thư mục (tùy chọn)</p>
+            <FolderMultiPicker value={s.libraryFolders} onChange={(v) => set("libraryFolders", v)} />
+            <p className="mt-1 text-xs text-zinc-500">AI chỉ xem asset trong các thư mục đã chọn (tính cả thư mục con). Dùng chung với tag thì asset phải thỏa cả hai.</p>
           </div>
         )}
         {s.libraryMode === "selected" && (

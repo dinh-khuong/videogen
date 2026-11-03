@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { AssetsLibrary } from "@/components/assets-library";
+import { AssetsLibrary } from "@/components/asset-drive";
 import { Loading } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Assets" };

@@ -34,11 +34,44 @@ export type AssetItem = {
   createdAt: string;
 };
 
+/** Màu thư mục (giống Drive) */
+export const FOLDER_COLORS = {
+  gray: "#8c8c96",
+  red: "#e5484d",
+  orange: "#f76b15",
+  amber: "#f5a524",
+  green: "#30a46c",
+  teal: "#12a594",
+  blue: "#3e7bfa",
+  violet: "#8e4ec6",
+  pink: "#d6409f",
+} as const;
+export type FolderColor = keyof typeof FOLDER_COLORS;
+
 export type AssetFolder = {
   id: string;
   name: string;
+  /** Thư mục cha, null = nằm ở gốc thư viện */
+  parentId: string | null;
+  color: FolderColor | null;
+  starred: boolean;
+  /** Số asset nằm trực tiếp trong thư mục */
   assetCount: number;
+  /** Số asset tính cả thư mục con */
+  totalAssets: number;
+  /** Dung lượng asset tính cả thư mục con (byte) */
+  totalBytes: number;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type FolderList = {
+  items: AssetFolder[];
+  /** Số asset nằm ở gốc (chưa thuộc thư mục nào) */
+  unfiled: number;
+  /** Tổng số asset và dung lượng của cả thư viện */
+  totalAssets: number;
+  totalBytes: number;
 };
 
 export type VideoItem = {
@@ -163,6 +196,8 @@ export type JobInput = {
   libraryTags?: string[];
   /** tên cũ của libraryTags (job tạo khi mới chọn được một tag) */
   libraryTag?: string | null;
+  /** AI chỉ xem asset trong các thư mục này (tính cả thư mục con, chế độ "auto"); trống = cả thư viện */
+  libraryFolders?: string[];
   /** asset chọn làm nội dung chính (chế độ "selected"), theo thứ tự */
   assetIds?: string[];
   /** tên cũ của assetIds (job tạo trước khi đổi sang asset) */

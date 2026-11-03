@@ -168,6 +168,13 @@ const MIGRATIONS: string[] = [
   ALTER TABLE assets ADD COLUMN folder_id TEXT REFERENCES asset_folders(id) ON DELETE SET NULL;
   CREATE INDEX assets_folder ON assets(folder_id, created_at);
   `,
+  // Thư mục lồng nhau kiểu Drive: thư mục cha (NULL = gốc), màu và gắn sao
+  `
+  ALTER TABLE asset_folders ADD COLUMN parent_id TEXT REFERENCES asset_folders(id) ON DELETE CASCADE;
+  ALTER TABLE asset_folders ADD COLUMN color TEXT;
+  ALTER TABLE asset_folders ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX asset_folders_parent ON asset_folders(parent_id);
+  `,
 ];
 
 function open(): Database.Database {

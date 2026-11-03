@@ -9,6 +9,7 @@ import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, SEARCH_ENGINES, VIDEO_TYPES, VOI
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
+import { folderExists } from "./folders";
 import { JOBS_DIR } from "./paths";
 import { getVideo, getVideoDetail } from "./videos";
 
@@ -211,6 +212,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     searchEngine: raw.searchEngine && Object.hasOwn(SEARCH_ENGINES, raw.searchEngine) ? raw.searchEngine : "auto",
     libraryMode: script ? "off" : libraryMode,
     libraryTags: libraryMode === "auto" ? libraryTagsOf(raw) : [],
+    libraryFolders: libraryMode === "auto" ? libraryFoldersOf(raw).filter(folderExists) : [],
     assetIds: libraryMode === "selected" && !script ? assetIds : [],
     musicId,
     musicVolume: musicId ? musicVolume : undefined,
@@ -229,6 +231,12 @@ const MAX_LIBRARY_TAGS = 20;
 export function libraryTagsOf(input: Partial<JobInput>): string[] {
   const raw = input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [];
   return [...new Set(raw.map((t) => normalizeTag(String(t))).filter(Boolean))].slice(0, MAX_LIBRARY_TAGS);
+}
+
+/** Thư mục giới hạn thư viện của job (tính cả thư mục con). */
+export function libraryFoldersOf(input: Partial<JobInput>): string[] {
+  const raw = Array.isArray(input.libraryFolders) ? input.libraryFolders : [];
+  return [...new Set(raw.filter((id): id is string => typeof id === "string" && !!id))].slice(0, MAX_LIBRARY_TAGS);
 }
 
 /** Kịch bản (kèm id asset từng bước) của video do job tạo ra, dùng làm bản gốc khi sửa theo góp ý. */
@@ -323,7 +331,13 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
   } else if (input.libraryMode === "auto") {
     // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
     const limit = input.director ? DIRECTOR_LIBRARY_LIMIT : 300;
-    spec.library = assetsForEngine({ tag: libraryTagsOf(input).join(",") || undefined, kind: VISUAL_KINDS, limit }).filter(
+    const folders = libraryFoldersOf(input);
+    spec.library = assetsForEngine({
+      tag: libraryTagsOf(input).join(",") || undefined,
+      folders: folders.length ? folders : undefined,
+      kind: VISUAL_KINDS,
+      limit,
+    }).filter(
       (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
@@ -358,7 +372,9 @@ export function waitsForAnalysis(row: JobRow): boolean {
   const input = JSON.parse(row.input) as JobInput;
   if (input.script) return false;
   if (input.libraryMode === "selected") return countUnanalyzed({ ids: selectedAssetIds(input) }) > 0;
-  if (input.libraryMode === "auto") return countUnanalyzed({ tag: libraryTagsOf(input).join(",") || null }) > 0;
+  if (input.libraryMode === "auto") {
+    return countUnanalyzed({ tag: libraryTagsOf(input).join(",") || null, folders: libraryFoldersOf(input) }) > 0;
+  }
   return false;
 }
 

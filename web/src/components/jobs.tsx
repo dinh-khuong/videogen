@@ -10,7 +10,8 @@ import { JobRow, STAGES, VideoCard } from "./cards";
 
 function libraryTagsLabel(i: JobDetail["input"]): string {
   const tags = i.libraryTags?.length ? i.libraryTags : i.libraryTag ? [i.libraryTag] : [];
-  return tags.length ? ` trong ${tags.map((t) => `#${t}`).join(", ")}` : "";
+  const folders = i.libraryFolders?.length ? ` · ${i.libraryFolders.length} thư mục` : "";
+  return (tags.length ? ` trong ${tags.map((t) => `#${t}`).join(", ")}` : "") + folders;
 }
 import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx, inputClass } from "./ui";
 
