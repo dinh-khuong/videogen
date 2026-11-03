@@ -157,6 +157,17 @@ const MIGRATIONS: string[] = [
   ALTER TABLE video_assets_new RENAME TO video_assets;
   CREATE INDEX video_assets_asset ON video_assets(asset_id);
   `,
+  // Thư mục asset: mỗi asset nằm trong tối đa một thư mục; xóa thư mục thì asset về "Chưa phân loại"
+  `
+  CREATE TABLE asset_folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  ALTER TABLE assets ADD COLUMN folder_id TEXT REFERENCES asset_folders(id) ON DELETE SET NULL;
+  CREATE INDEX assets_folder ON assets(folder_id, created_at);
+  `,
 ];
 
 function open(): Database.Database {

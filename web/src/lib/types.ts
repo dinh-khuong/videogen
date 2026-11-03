@@ -29,6 +29,15 @@ export type AssetItem = {
   analysisStatus: AnalysisStatus;
   analysisError: string | null;
   analyzedAt: string | null;
+  /** Thư mục chứa asset, null = chưa phân loại */
+  folderId: string | null;
+  createdAt: string;
+};
+
+export type AssetFolder = {
+  id: string;
+  name: string;
+  assetCount: number;
   createdAt: string;
 };
 
