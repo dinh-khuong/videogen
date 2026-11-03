@@ -1,6 +1,7 @@
 import { analyzer } from "@/lib/server/analyzer";
 import { addAssets, getAsset, listAssets } from "@/lib/server/assets";
 import { AUDIO_EXTS, HttpError, IMAGE_EXTS, VIDEO_EXTS, extOf, saveUpload } from "@/lib/server/files";
+import { checkFolderId, moveAssets } from "@/lib/server/folders";
 import { route, intParam, json, searchParams } from "@/lib/server/http";
 
 const MAX_IMAGE_BYTES = 40e6;
@@ -15,6 +16,7 @@ export const GET = route(async (request: Request) => {
       tag: p.get("tag") || undefined,
       kind: p.get("kind") || undefined,
       status: p.get("status") || undefined,
+      folder: p.get("folder") || undefined,
       ids: p.get("ids") ? p.get("ids")!.split(",") : undefined,
       limit: intParam(p.get("limit")),
       offset: intParam(p.get("offset")),
@@ -34,11 +36,14 @@ export const POST = route(async (request: Request) => {
       `Chỉ hỗ trợ ảnh ${IMAGE_EXTS.join(", ")}, video ${VIDEO_EXTS.join(", ")} hoặc audio ${AUDIO_EXTS.join(", ")} (file ${filename})`,
     );
   }
+  const folderId = checkFolderId(p.get("folderId"));
   const upload = await saveUpload(request.body, ext, maxBytes);
   const title = (p.get("title") ?? filename.replace(/\.[^.]+$/, "")).trim();
   const [result] = await addAssets([
-    { tmpPath: upload.path, ext, sha1: upload.sha1, size: upload.size, title, description: p.get("description") ?? "", source: "upload" },
+    { tmpPath: upload.path, ext, sha1: upload.sha1, size: upload.size, title, description: p.get("description") ?? "", source: "upload", folderId },
   ]);
+  // File đã có trong thư viện: tải vào thư mục nào thì chuyển asset đó sang thư mục ấy
+  if (result.existed && folderId) moveAssets([result.id], folderId);
   if (!result.existed) analyzer().kick();
   return json({ asset: getAsset(result.id), existed: result.existed }, result.existed ? 200 : 201);
 });

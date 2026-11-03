@@ -3,7 +3,8 @@
 import { useSearchParams } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { api, formatBytes, formatDate, formatDuration, uploadFile, useApi } from "@/lib/client";
-import type { AnalysisStatus, AssetItem, Page, Stats } from "@/lib/types";
+import type { AnalysisStatus, AssetFolder, AssetItem, Page, Stats } from "@/lib/types";
+import { ASSET_DRAG_TYPE, FolderBar, FolderSelect, useFolders } from "./asset-folders";
 import { LibraryFilters } from "./library-filters";
 import {
   Button,
@@ -118,12 +119,23 @@ export function AssetThumb({ asset, className }: { asset: AssetItem; className?:
   );
 }
 
-function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onClose: () => void; onChanged: () => void }) {
+function AssetEditor({
+  initial,
+  folders,
+  onClose,
+  onChanged,
+}: {
+  initial: AssetItem;
+  folders: AssetFolder[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   // Tải lại định kỳ khi asset đang được phân tích để hiện kết quả ngay khi xong
   const live = useApi<AssetItem>(`/api/assets/${initial.id}`, { refreshMs: 2000, shouldRefresh: isAnalyzing });
   const asset = live.data ?? initial;
   const [title, setTitle] = useState(initial.title);
   const [description, setDescription] = useState(initial.description);
+  const [folderId, setFolderId] = useState(initial.folderId ?? "");
   const [summary, setSummary] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +147,7 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
     try {
       await api(`/api/assets/${asset.id}`, {
         method: "PATCH",
-        json: { title, description, ...(summary !== null && !analyzing ? { aiSummary: summary } : {}) },
+        json: { title, description, folderId: folderId || null, ...(summary !== null && !analyzing ? { aiSummary: summary } : {}) },
       });
       onChanged();
       onClose();
@@ -204,6 +216,9 @@ function AssetEditor({ initial, onClose, onChanged }: { initial: AssetItem; onCl
       <div className="space-y-4">
         <Field label="Tiêu đề">
           <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label="Thư mục">
+          <FolderSelect folders={folders} value={folderId} onChange={setFolderId} />
         </Field>
         <Field label="Mô tả & hashtag" hint="Mô tả của bạn được ưu tiên hơn tóm tắt AI khi AI chọn asset cho từng bước.">
           <DescriptionInput value={description} onChange={setDescription} rows={3} />
@@ -287,11 +302,14 @@ export function AssetGrid({
   onOpen,
   selected,
   onTag,
+  dragIds,
 }: {
   assets: AssetItem[];
   onOpen: (asset: AssetItem) => void;
   selected?: string[];
   onTag?: (tag: string) => void;
+  /** Cho phép kéo asset (vd thả vào thư mục): trả về các id được kéo theo khi bắt đầu kéo asset này */
+  dragIds?: (asset: AssetItem) => string[];
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -301,6 +319,15 @@ export function AssetGrid({
         return (
           <div
             key={asset.id}
+            draggable={!!dragIds}
+            onDragStart={
+              dragIds &&
+              ((e) => {
+                const ids = dragIds(asset);
+                e.dataTransfer.setData(ASSET_DRAG_TYPE, JSON.stringify(ids));
+                e.dataTransfer.effectAllowed = "move";
+              })
+            }
             className={cx("overflow-hidden rounded-xl bg-surface ring-1", order >= 0 ? "ring-2 ring-brand-500" : "ring-zinc-200/80")}
           >
             <button type="button" onClick={() => onOpen(asset)} className="relative block w-full">
@@ -362,29 +389,70 @@ export function AssetsLibrary() {
   const params = useSearchParams();
   const [filter, setFilter] = useState({ q: "", tag: params.get("tag") ?? "" });
   const [kind, setKind] = useState(params.get("kind") ?? "");
+  const [folder, setFolder] = useState(params.get("folder") ?? "");
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [editing, setEditing] = useState<AssetItem | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Chế độ chọn nhiều để chuyển hàng loạt vào thư mục
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [moveTo, setMoveTo] = useState("");
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const query = new URLSearchParams({ limit: String(limit) });
   if (filter.q) query.set("q", filter.q);
   if (filter.tag) query.set("tag", filter.tag);
   if (kind) query.set("kind", kind);
+  if (folder) query.set("folder", folder);
   const { data, error, loading, reload } = useApi<Page<AssetItem>>(`/api/assets?${query}`, {
     refreshMs: 3000,
     shouldRefresh: (page) => page.items.some(isAnalyzing),
   });
   const failed = useApi<Page<AssetItem>>("/api/assets?status=failed&limit=1");
   const stats = useApi<Stats>("/api/stats", { refreshMs: 3000, shouldRefresh: (s) => s.assetsAnalyzing > 0 });
+  const folders = useFolders();
   const { reload: reloadFailed } = failed;
   const { reload: reloadStats } = stats;
+  const { reload: reloadFolders } = folders;
   const refresh = useCallback(() => {
     void reload();
     void reloadFailed();
     void reloadStats();
-  }, [reload, reloadFailed, reloadStats]);
+    void reloadFolders();
+  }, [reload, reloadFailed, reloadStats, reloadFolders]);
   const { uploads, start, clear } = useUploads("/api/assets", refresh);
+  const folderList = folders.data?.items ?? [];
+  const currentFolder = folderList.find((f) => f.id === folder) ?? null;
+  const chooseFolder = (next: string) => {
+    setFolder(next);
+    setLimit(PAGE_SIZE);
+    // Giữ thư mục trên đường dẫn để tải lại trang vẫn ở đúng thư mục
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("folder", next);
+    else url.searchParams.delete("folder");
+    window.history.replaceState(null, "", url);
+  };
+
+  const move = async (ids: string[], folderId: string | null) => {
+    if (!ids.length) return;
+    setMoving(true);
+    setMoveError(null);
+    try {
+      await api("/api/assets/move", { method: "POST", json: { ids, folderId } });
+      setSelected([]);
+      refresh();
+    } catch (e) {
+      setMoveError((e as Error).message);
+    } finally {
+      setMoving(false);
+    }
+  };
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected([]);
+  };
   const onFilter = useCallback((next: { q: string; tag: string }) => {
     setFilter(next);
     setLimit(PAGE_SIZE);
@@ -392,7 +460,8 @@ export function AssetsLibrary() {
 
   const addFiles = (files: FileList | null) => {
     const list = [...(files ?? [])].filter(isMedia);
-    if (list.length) void start(list);
+    // Tải lên khi đang mở một thư mục thì asset vào luôn thư mục đó
+    if (list.length) void start(list, currentFolder ? { folderId: currentFolder.id } : {});
   };
   const retryFailed = async () => {
     await api("/api/assets/analyze", { method: "POST", json: { failed: true } });
@@ -402,6 +471,8 @@ export function AssetsLibrary() {
   return (
     <div
       onDragOver={(e) => {
+        // Chỉ hiện vùng thả khi kéo file từ máy, không phải khi kéo asset vào thư mục
+        if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
         setDragging(true);
       }}
@@ -409,7 +480,7 @@ export function AssetsLibrary() {
       onDrop={(e) => {
         e.preventDefault();
         setDragging(false);
-        addFiles(e.dataTransfer.files);
+        if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
       }}
     >
       <PageHeader
@@ -418,15 +489,18 @@ export function AssetsLibrary() {
         actions={
           <>
             <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
+            <Button variant={selecting ? "primary" : "secondary"} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+              {selecting ? "Xong" : "Chọn nhiều"}
+            </Button>
             <Button variant="primary" onClick={() => fileInput.current?.click()}>
-              Tải ảnh/video/audio lên
+              {currentFolder ? `Tải lên vào “${currentFolder.name}”` : "Tải ảnh/video/audio lên"}
             </Button>
           </>
         }
       />
       {dragging && (
         <div className="mb-4 rounded-xl border-2 border-dashed border-brand-500 bg-brand-50 py-8 text-center text-sm font-medium text-brand-700">
-          Thả ảnh, video hoặc audio vào đây để tải lên
+          Thả ảnh, video hoặc audio vào đây để tải lên{currentFolder ? ` thư mục “${currentFolder.name}”` : ""}
         </div>
       )}
       <UploadList uploads={uploads} onClear={clear} />
@@ -444,6 +518,33 @@ export function AssetsLibrary() {
           </Button>
         </div>
       )}
+      <FolderBar
+        folders={folders.data}
+        total={folders.data ? folders.data.unfiled + folderList.reduce((n, f) => n + f.assetCount, 0) : null}
+        value={folder}
+        onChange={chooseFolder}
+        onChanged={refresh}
+        onDropAssets={(ids, folderId) => void move(ids, folderId)}
+      />
+      {selecting && (
+        <div className="sticky top-2 z-20 mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-surface px-3 py-2 text-sm shadow-md ring-1 ring-brand-200">
+          <span className="font-medium text-zinc-800">Đã chọn {selected.length} asset</span>
+          {data && data.items.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setSelected(selected.length === data.items.length ? [] : data.items.map((a) => a.id))}>
+              {selected.length === data.items.length ? "Bỏ chọn tất cả" : "Chọn tất cả đang hiện"}
+            </Button>
+          )}
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            <span className="text-zinc-500">Chuyển vào</span>
+            <FolderSelect folders={folderList} value={moveTo} onChange={setMoveTo} noneLabel="Chưa phân loại (bỏ khỏi thư mục)" className="w-auto!" />
+            <Button size="sm" variant="primary" busy={moving} disabled={!selected.length} onClick={() => void move(selected, moveTo || null)}>
+              Chuyển
+            </Button>
+          </span>
+          <ErrorBox message={moveError} />
+        </div>
+      )}
+      {!selecting && moveError && <ErrorBox message={moveError} />}
       <LibraryFilters kind="assets" q={filter.q} tag={filter.tag} onChange={onFilter} placeholder="Tìm theo tên, mô tả, chữ trong ảnh...">
         <KindSelect
           value={kind}
@@ -458,7 +559,18 @@ export function AssetsLibrary() {
         <Loading />
       ) : data?.items.length ? (
         <>
-          <AssetGrid assets={data.items} onOpen={setEditing} onTag={(tag) => onFilter({ q: filter.q, tag })} />
+          <AssetGrid
+            assets={data.items}
+            selected={selecting ? selected : undefined}
+            onOpen={
+              selecting
+                ? (a) => setSelected((s) => (s.includes(a.id) ? s.filter((id) => id !== a.id) : [...s, a.id]))
+                : setEditing
+            }
+            onTag={(tag) => onFilter({ q: filter.q, tag })}
+            // Kéo một asset đang được chọn thì kéo theo cả nhóm đã chọn
+            dragIds={(a) => (selecting && selected.includes(a.id) ? selected : [a.id])}
+          />
           {data.total > data.items.length && (
             <div className="mt-6 text-center">
               <Button onClick={() => setLimit((l) => l + PAGE_SIZE)}>Xem thêm ({data.total - data.items.length})</Button>
@@ -466,12 +578,16 @@ export function AssetsLibrary() {
           )}
         </>
       ) : (
-        <EmptyState title={filter.q || filter.tag || kind ? "Không có asset phù hợp" : "Chưa có asset nào"}>
-          Kéo thả ảnh/video/audio vào trang hoặc bấm “Tải ảnh/video/audio lên”. AI sẽ tự đọc chữ và tóm tắt nội dung từng asset.
+        <EmptyState
+          title={filter.q || filter.tag || kind ? "Không có asset phù hợp" : currentFolder ? "Thư mục trống" : folder === "none" ? "Không có asset chưa phân loại" : "Chưa có asset nào"}
+        >
+          {currentFolder
+            ? "Kéo thả file vào trang để tải lên thư mục này, hoặc kéo asset có sẵn (ở “Tất cả”) thả vào tên thư mục."
+            : "Kéo thả ảnh/video/audio vào trang hoặc bấm “Tải ảnh/video/audio lên”. AI sẽ tự đọc chữ và tóm tắt nội dung từng asset."}
         </EmptyState>
       )}
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`Chi tiết ${editing ? KIND_LABEL[editing.kind] : ""}`} wide>
-        {editing && <AssetEditor key={editing.id} initial={editing} onClose={() => setEditing(null)} onChanged={refresh} />}
+        {editing && <AssetEditor key={editing.id} initial={editing} folders={folderList} onClose={() => setEditing(null)} onChanged={refresh} />}
       </Modal>
     </div>
   );
@@ -489,10 +605,13 @@ export function AssetPicker({
 }) {
   const [filter, setFilter] = useState({ q: "", tag: "" });
   const [kind, setKind] = useState("image,video");
+  const [folder, setFolder] = useState("");
+  const folders = useFolders();
   const query = new URLSearchParams({ limit: "120" });
   if (filter.q) query.set("q", filter.q);
   if (filter.tag) query.set("tag", filter.tag);
   if (kind) query.set("kind", kind);
+  if (folder) query.set("folder", folder);
   const { data, loading, error } = useApi<Page<AssetItem>>(`/api/assets?${query}`);
   const onFilter = useCallback((next: { q: string; tag: string }) => setFilter(next), []);
 
@@ -509,6 +628,9 @@ export function AssetPicker({
           <option value="image">Chỉ ảnh</option>
           <option value="video">Chỉ video</option>
         </select>
+        {!!folders.data?.items.length && (
+          <FolderSelect folders={folders.data.items} value={folder} onChange={setFolder} allLabel="Mọi thư mục" className="w-auto!" />
+        )}
         {!single && selected.length > 0 && (
           <Button size="sm" variant="ghost" onClick={() => onChange([])}>
             Bỏ chọn ({selected.length})

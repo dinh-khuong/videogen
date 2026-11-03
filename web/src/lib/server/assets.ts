@@ -29,6 +29,7 @@ type AssetRow = {
   analysis_status: AnalysisStatus;
   analysis_error: string | null;
   analyzed_at: string | null;
+  folder_id: string | null;
   created_at: string;
   used_in: number;
 };
@@ -67,6 +68,7 @@ function toItems(rows: AssetRow[]): AssetItem[] {
     analysisStatus: r.analysis_status,
     analysisError: r.analysis_error,
     analyzedAt: r.analyzed_at,
+    folderId: r.folder_id,
     createdAt: r.created_at,
   }));
 }
@@ -77,6 +79,8 @@ export type AssetQuery = {
   kind?: string;
   ids?: string[];
   status?: string;
+  /** id thư mục, hoặc "none" = asset chưa thuộc thư mục nào */
+  folder?: string;
   limit?: number;
   offset?: number;
 };
@@ -104,6 +108,12 @@ function where(query: AssetQuery): { sql: string; params: unknown[] } {
   if (query.status) {
     clauses.push("a.analysis_status IN (SELECT value FROM json_each(?))");
     params.push(JSON.stringify(query.status.split(",")));
+  }
+  if (query.folder === "none") {
+    clauses.push("a.folder_id IS NULL");
+  } else if (query.folder) {
+    clauses.push("a.folder_id = ?");
+    params.push(query.folder);
   }
   if (query.ids) {
     clauses.push("a.id IN (SELECT value FROM json_each(?))");
@@ -178,6 +188,7 @@ export type NewAsset = {
   description: string;
   source: string;
   sourceUrl?: string | null;
+  folderId?: string | null;
 };
 
 /**
@@ -214,11 +225,11 @@ export async function addAssets(items: NewAsset[]): Promise<{ id: string; existe
           db()
             .prepare(
               `INSERT INTO assets (id, kind, file, thumbnail, title, description, source, source_url, width, height,
-                 duration, size_bytes, sha1, analysis_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+                 duration, size_bytes, sha1, folder_id, analysis_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
             )
             .run(p.id, info.kind, file, thumb, p.item.title, p.item.description, p.item.source, p.item.sourceUrl ?? null,
-              info.width ?? null, info.height ?? null, info.duration ?? null, p.item.size, p.item.sha1);
+              info.width ?? null, info.height ?? null, info.duration ?? null, p.item.size, p.item.sha1, p.item.folderId ?? null);
           setTags("asset", p.id, parseHashtags(p.item.description));
         })();
       } catch (e) {
@@ -238,16 +249,16 @@ export async function addAssets(items: NewAsset[]): Promise<{ id: string; existe
 
 export function updateAsset(
   id: string,
-  patch: { title?: string; description?: string; aiSummary?: string; ocrText?: string },
+  patch: { title?: string; description?: string; aiSummary?: string; ocrText?: string; folderId?: string | null },
 ): AssetItem | null {
   const current = getAsset(id);
   if (!current) return null;
   const description = patch.description ?? current.description;
   db().transaction(() => {
     db()
-      .prepare("UPDATE assets SET title = ?, description = ?, ai_summary = ?, ocr_text = ?, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE assets SET title = ?, description = ?, ai_summary = ?, ocr_text = ?, folder_id = ?, updated_at = ? WHERE id = ?")
       .run(patch.title ?? current.title, description, patch.aiSummary ?? current.aiSummary, patch.ocrText ?? current.ocrText,
-        nowIso(), id);
+        patch.folderId === undefined ? current.folderId : patch.folderId, nowIso(), id);
     setTags("asset", id, parseHashtags(description));
   })();
   return getAsset(id);
