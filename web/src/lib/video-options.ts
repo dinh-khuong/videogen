@@ -57,8 +57,14 @@ export const FPT_VOICES: Voice[] = [
   { value: "fpt:minhquang", label: "Minh Quang (nam, miền Nam)" },
 ];
 
-/** Tên giọng hợp lệ: edge-tts (vi-VN-HoaiMyNeural), gTTS (gtts:vi) hoặc FPT.AI (fpt:banmaiace). */
-export const VOICE_RE = /^(?:(?:gtts|fpt):[a-zA-Z-]{2,20}|[a-z]{2,3}-[A-Z]{2,3}-\w+)$/;
+/**
+ * Giọng ZeroTTS (mô hình giọng Việt chạy trên máy, cần `pip install zerotts`). Danh sách đầy đủ lấy từ mô hình
+ * qua /api/voices/zerotts; đây là giọng mặc định hiện khi chưa lấy được danh sách.
+ */
+export const ZEROTTS_VOICES: Voice[] = [{ value: "zerotts:maichi", label: "Mai Chi (ZeroTTS)" }];
+
+/** Tên giọng hợp lệ: edge-tts (vi-VN-HoaiMyNeural), gTTS (gtts:vi), FPT.AI (fpt:banmaiace) hoặc ZeroTTS (zerotts:maichi). */
+export const VOICE_RE = /^(?:(?:gtts|fpt):[a-zA-Z-]{2,20}|zerotts:[\w-]{1,40}|[a-z]{2,3}-[A-Z]{2,3}-\w+)$/;
 
 export const VOICE_EFFECTS = {
   none: "Không",
@@ -188,8 +194,9 @@ export function languageOf(value: string | undefined): Language {
 
 export function voiceLabel(value: string | null | undefined): string {
   if (!value) return "";
-  const all = [...LANGUAGES.flatMap((l) => [...l.voices, gttsVoice(l.value), gttsMaleVoice(l.value)]), ...MULTILINGUAL_VOICES, ...FPT_VOICES];
+  const all = [...LANGUAGES.flatMap((l) => [...l.voices, gttsVoice(l.value), gttsMaleVoice(l.value)]), ...MULTILINGUAL_VOICES, ...FPT_VOICES, ...ZEROTTS_VOICES];
   for (const v of all) if (v.value === value) return v.label;
+  if (value.startsWith("zerotts:")) return `${value.slice(8)} (ZeroTTS)`;
   return value;
 }
 

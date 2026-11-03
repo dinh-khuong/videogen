@@ -15,6 +15,7 @@ Lệnh dành cho web app:
     python -m videogen probe file... [--thumbnail-dir dir]
     python -m videogen analyze --spec spec.json   # phân tích asset, phát sự kiện JSON trên stdout
     python -m videogen voice-sample --voice vi-VN-NamMinhNeural --out mau.mp3   # nghe thử giọng
+    python -m videogen zerotts-voices     # danh sách giọng của mô hình ZeroTTS, in JSON
     python -m videogen import-dataset not-lain/meme-dataset   # nhập ảnh dataset Hugging Face vào Assets
     python -m videogen doctor             # kiểm tra cấu hình, in JSON
 """
@@ -23,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor", "voice-sample", "import-dataset"}
+SUBCOMMANDS = {"make", "job", "probe", "analyze", "doctor", "voice-sample", "zerotts-voices", "import-dataset"}
 
 
 ANALYSIS_CACHE = ".videogen-analysis.json"
@@ -96,7 +97,7 @@ def cmd_make(argv: list[str]) -> int:
                         help="Tỉ lệ khung hình: 16:9 (YouTube), 9:16 (TikTok/Shorts), 1:1")
     parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ lời bình (mặc định: tiếng Việt)")
     parser.add_argument("--voice", help="Giọng đọc: edge-tts (vd vi-VN-NamMinhNeural), gtts:vi (chị Google) "
-                                        "hoặc fpt:banmaiace (FPT.AI, cần FPT_AI_API_KEY). Ghi đè TTS_VOICE")
+                                        "fpt:banmaiace (FPT.AI, cần FPT_AI_API_KEY) hoặc zerotts:maichi (ZeroTTS, chạy trên máy). Ghi đè TTS_VOICE")
     parser.add_argument("--rate", help="Tốc độ đọc, vd --rate=+10%% hoặc --rate=-5%% (ghi đè TTS_RATE)")
     parser.add_argument("--pitch", help="Cao độ giọng, vd --pitch=+5Hz (trong hơn) hoặc --pitch=-8Hz (trầm hơn)")
     parser.add_argument("--voice2", help="Giọng thứ hai đọc xen kẽ các bước chẵn, vd vi-VN-NamMinhNeural")
@@ -281,6 +282,19 @@ def cmd_voice_sample(argv: list[str]) -> int:
     return 0
 
 
+def cmd_zerotts_voices(argv: list[str]) -> int:
+    """Danh sách giọng của mô hình ZeroTTS (lần đầu sẽ tải mô hình). In JSON {"ok", "voices": [...]}."""
+    from .tts import zerotts_voices
+
+    try:
+        voices = zerotts_voices()
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "voices": voices}, ensure_ascii=False))
+    return 0
+
+
 def cmd_import_dataset(argv: list[str]) -> int:
     from .dataset_import import main as import_main
 
@@ -325,6 +339,9 @@ def cmd_doctor(argv: list[str]) -> int:
         report["video_providers"] = active_video_providers(settings)
         report["voice"] = settings.tts_voice
         report["fpt_tts"] = bool(settings.fpt_api_key)
+        from .tts import zerotts_available
+
+        report["zerotts"] = zerotts_available()
         from .analyze import ocr_available
 
         report["ocr"] = ocr_available(settings)
@@ -359,6 +376,7 @@ def main(argv: list[str] | None = None) -> None:
     handler = {
         "make": cmd_make, "job": cmd_job, "probe": cmd_probe, "analyze": cmd_analyze, "doctor": cmd_doctor,
         "voice-sample": cmd_voice_sample,
+        "zerotts-voices": cmd_zerotts_voices,
         "import-dataset": cmd_import_dataset,
     }[command]
     sys.exit(handler(argv))

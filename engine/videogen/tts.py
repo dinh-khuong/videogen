@@ -3,7 +3,8 @@
 Chính: edge-tts (giọng Microsoft Neural, miễn phí, không cần API key).
 Thêm: "gtts:vi" (giọng "chị Google" quen thuộc trên các kênh meme/kiến thức), "gtts:vi-male" ("anh Google": cùng
 giọng đó hạ trầm thành giọng nam), "fpt:<giọng>" (FPT.AI, giọng Việt
-tự nhiên, cần FPT_AI_API_KEY) và hiệu ứng giọng (dễ thương, sóc chuột, trầm, robot, radio, vang) bằng ffmpeg. Ngoài giọng bản địa còn có các giọng
+tự nhiên, cần FPT_AI_API_KEY), "zerotts:<giọng>" (ZeroTTS: mô hình giọng Việt chạy ngay trên máy bằng CPU,
+không cần Internet sau lần tải mô hình đầu tiên ~900 MB; cần `pip install zerotts`) và hiệu ứng giọng (dễ thương, sóc chuột, trầm, robot, radio, vang) bằng ffmpeg. Ngoài giọng bản địa còn có các giọng
 "Multilingual" (vd en-US-AvaMultilingualNeural) đọc được nhiều ngôn ngữ, kể cả tiếng Việt.
 edge-tts trả về thời điểm của từng từ: lưu cạnh file mp3 (<tên>.words.json) để phụ đề khớp chính xác với giọng đọc.
 Dự phòng: gTTS (Google Translate TTS, miễn phí) khi edge-tts lỗi liên tục —
@@ -13,6 +14,7 @@ import asyncio
 import json
 import re
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -139,6 +141,77 @@ def _fpt_synthesize(text: str, voice: str, rate: str, out_path: Path, api_key: s
     raise RuntimeError("FPT.AI chưa trả về file audio sau 60 giây")
 
 
+ZEROTTS_GAP_SEC = 0.12  # khoảng lặng giữa các đoạn khi chia câu dài
+_zerotts_lock = threading.Lock()  # mô hình nặng CPU: tạo lần lượt từng câu, nạp mô hình một lần
+_zerotts_model = None
+
+
+def zerotts_available() -> bool:
+    try:
+        import zerotts  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _zerotts():
+    """Nạp mô hình ZeroTTS một lần (lần đầu tải trọng số từ Hugging Face, sau đó dùng cache)."""
+    global _zerotts_model
+    if _zerotts_model is None:
+        try:
+            from zerotts import ZeroTTS
+        except ImportError as e:
+            raise ConfigError("Giọng ZeroTTS cần cài thư viện: pip install zerotts (trong môi trường Python của engine)") from e
+        settings = load_settings()
+        print(f"      🔊 Đang nạp mô hình ZeroTTS ({settings.zerotts_model}), lần đầu sẽ tải ~900 MB...", flush=True)
+        _zerotts_model = ZeroTTS.from_pretrained(settings.zerotts_model, intra_op_num_threads=settings.zerotts_threads)
+    return _zerotts_model
+
+
+def zerotts_voices() -> list[dict]:
+    """Các giọng có sẵn trong mô hình ZeroTTS: [{"name", "label", "gender"}]."""
+    with _zerotts_lock:
+        tts = _zerotts()
+        voices = []
+        for name in tts.list_voices():
+            try:
+                v = tts.load_voice(name)
+                voices.append({"name": name, "label": v.display_name, "gender": v.gender, "description": v.description})
+            except Exception:
+                voices.append({"name": name, "label": name, "gender": "", "description": ""})
+        return voices
+
+
+def _zerotts_synthesize(text: str, voice: str, out_path: Path) -> None:
+    """ZeroTTS: đọc số/ngày/viết tắt thành chữ, chia câu dài thành đoạn ngắn (mô hình học trên từng câu), ghép lại.
+    Không có thời điểm từng từ: phụ đề chia theo độ dài câu."""
+    from zerotts import normalize_vi_text
+    from zerotts.audio import concat_with_silence
+    from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
+
+    from .probe import ffmpeg_exe
+
+    text = normalize_vi_text(text)
+    segments = [s for s in (clean_segment_punctuation(c) for c in chunk_text(normalize_punctuation(text), max_chunk_sec=15)) if s]
+    with _zerotts_lock:
+        tts = _zerotts()
+        if voice not in tts.list_voices():
+            raise ConfigError(f"Mô hình ZeroTTS không có giọng '{voice}' (có: {', '.join(tts.list_voices())})")
+        audio = concat_with_silence([tts.synthesize(s, voice=voice) for s in segments or [text]], ZEROTTS_GAP_SEC, tts.sample_rate)
+        if not audio.size:
+            raise RuntimeError("ZeroTTS không tạo được audio")
+        wav = out_path.with_suffix(".zerotts.wav")
+        tts.save_audio(audio, str(wav))
+    tmp_path = out_path.with_suffix(".part.mp3")
+    try:
+        subprocess.run([ffmpeg_exe(), "-v", "error", "-y", "-i", str(wav), "-c:a", "libmp3lame", "-q:a", "3", str(tmp_path)],
+                       check=True, capture_output=True)
+    finally:
+        wav.unlink(missing_ok=True)
+    words_path(out_path).unlink(missing_ok=True)
+    tmp_path.replace(out_path)
+
+
 def _atempo(factor: float) -> list[str]:
     """atempo chỉ nhận 0.5-2: tách thành nhiều bước."""
     steps = []
@@ -189,9 +262,9 @@ def gtts_lang(name: str) -> str:
 
 
 def provider_of(voice: str) -> str:
-    """edge (mặc định) | gtts ("gtts:vi") | fpt ("fpt:banmaiace")."""
+    """edge (mặc định) | gtts ("gtts:vi") | fpt ("fpt:banmaiace") | zerotts ("zerotts:maichi")."""
     prefix, _, rest = voice.partition(":")
-    return prefix if rest and prefix in ("gtts", "fpt") else "edge"
+    return prefix if rest and prefix in ("gtts", "fpt", "zerotts") else "edge"
 
 
 async def _synthesize_all(
@@ -225,11 +298,20 @@ async def _synthesize_all(
                     raise
                 except Exception as e:
                     print(f"      ⚠️  FPT.AI lỗi cho '{job.path.stem}' ({e}), chuyển sang gTTS.", flush=True)
+            elif provider == "zerotts":
+                # Lỗi cấu hình (chưa cài, sai tên giọng) báo ngay thay vì âm thầm đổi sang giọng khác
+                try:
+                    await asyncio.to_thread(_zerotts_synthesize, job.text, name, raw)
+                    made_by = "zerotts"
+                except ConfigError:
+                    raise
+                except Exception as e:
+                    print(f"      ⚠️  ZeroTTS lỗi cho '{job.path.stem}' ({e}), chuyển sang gTTS.", flush=True)
             if made_by == "gtts":
                 lang = gtts_lang(name) if provider == "gtts" else fallback_lang or job.voice.split("-")[0] or "vi"
                 await asyncio.to_thread(_gtts_synthesize, job.text, lang, raw)
         # Hậu xử lý: hiệu ứng giọng, cộng tốc độ/cao độ với giọng không tự hỗ trợ
-        # (edge-tts tự đổi cả hai, FPT.AI chỉ tự đổi tốc độ, gTTS không đổi được gì)
+        # (edge-tts tự đổi cả hai, FPT.AI chỉ tự đổi tốc độ, gTTS và ZeroTTS không đổi được gì)
         filters = audio_filters(
             effect,
             tempo=1.0 if made_by in ("edge", "fpt") else tempo,
