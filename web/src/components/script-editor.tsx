@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { api, useApi } from "@/lib/client";
 import type { AssetItem, JobDetail, JobInput, JobItem, Page, Script, ScriptStep } from "@/lib/types";
 import { DEFAULT_VOICE, LEGACY_STYLE, VIDEO_TYPES, languageOf, type VideoType, type VoiceSettings } from "@/lib/video-options";
@@ -58,6 +58,8 @@ function ScriptEditorForm({
   const [picking, setPicking] = useState<number | null>(null);
   const [music, setMusic] = useState({ musicId: defaults.musicId ?? "", volume: defaults.musicVolume ?? 0.12 });
   const [busy, setBusy] = useState(false);
+  // Next giữ trang cũ ẩn (cacheComponents) nên phải tự tắt busy; transition giữ spinner tới khi chuyển trang xong
+  const [navigating, startNavigation] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const ids = [...new Set(script.steps.map((s) => s.library_image).filter(Boolean))] as string[];
@@ -103,7 +105,10 @@ function ScriptEditorForm({
           musicVolume: music.volume,
         } satisfies Partial<JobInput>,
       });
-      router.push(`/jobs/${job.id}`);
+      startNavigation(() => {
+        setBusy(false);
+        router.push(`/jobs/${job.id}`);
+      });
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -228,7 +233,7 @@ function ScriptEditorForm({
         <Button variant="ghost" onClick={onCancel}>
           Hủy
         </Button>
-        <Button variant="primary" busy={busy} onClick={submit}>
+        <Button variant="primary" busy={busy || navigating} onClick={submit}>
           Tạo lại video
         </Button>
       </div>

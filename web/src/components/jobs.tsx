@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { api, formatDate, formatRunTime, secondsSince, useApi, useDocumentTitle } from "@/lib/client";
 import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
 import { COLOR_FILTERS, LENGTHS, PACINGS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
@@ -233,6 +233,8 @@ function FeedbackBox({ job }: { job: JobDetail }) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Next giữ trang cũ ẩn (cacheComponents) nên phải tự tắt busy; transition giữ spinner tới khi chuyển trang xong
+  const [navigating, startNavigation] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,7 +246,10 @@ function FeedbackBox({ job }: { job: JobDetail }) {
         method: "POST",
         json: { ...job.input, topic: job.topic, script: null, sourceVideoId: null, director: true, feedback: text.trim(), baseJobId: job.id },
       });
-      router.push(`/jobs/${next.id}`);
+      startNavigation(() => {
+        setBusy(false);
+        router.push(`/jobs/${next.id}`);
+      });
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -279,7 +284,7 @@ function FeedbackBox({ job }: { job: JobDetail }) {
         />
         <ErrorBox message={error} />
         <div className="flex justify-end">
-          <Button type="submit" variant="primary" busy={busy} disabled={!text.trim()}>
+          <Button type="submit" variant="primary" busy={busy || navigating} disabled={!text.trim()}>
             Gửi góp ý và làm lại
           </Button>
         </div>

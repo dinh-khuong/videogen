@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
 import type { AssetItem, Contact, EngineHealth, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
 import {
@@ -239,6 +239,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const [s, setS] = useState<FormState>(initial);
   const [editingTone, setEditingTone] = useState(() => !TONES.some((t) => t.value === initial.tone));
   const [busy, setBusy] = useState(false);
+  // Next giữ trang cũ ẩn (cacheComponents) nên phải tự tắt busy; transition giữ spinner tới khi chuyển trang xong
+  const [navigating, startNavigation] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setS((prev) => ({ ...prev, [key]: value }));
 
@@ -324,7 +326,10 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         created = [...created, await api<JobItem>("/api/jobs", { method: "POST", json: { ...common, topic } })];
       }
       saveSettings(s);
-      router.push(created.length === 1 ? `/jobs/${created[0].id}` : "/jobs");
+      startNavigation(() => {
+        setBusy(false);
+        router.push(created.length === 1 ? `/jobs/${created[0].id}` : "/jobs");
+      });
     } catch (err) {
       const done = created.length ? `Đã tạo ${created.length}/${topics.length} video. ` : "";
       setError(done + (err as Error).message);
@@ -654,7 +659,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       <ErrorBox message={error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
         {tooMany && <p className="text-sm text-red-600">Tối đa {MAX_BATCH} video mỗi lần.</p>}
-        <Button type="submit" variant="primary" busy={busy} disabled={!topics.length || tooMany} className="px-6">
+        <Button type="submit" variant="primary" busy={busy || navigating} disabled={!topics.length || tooMany} className="px-6">
           {topics.length > 1 ? `Tạo ${topics.length} video` : "Tạo video"}
         </Button>
       </div>
