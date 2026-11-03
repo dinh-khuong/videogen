@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { formatDuration, timeAgo } from "@/lib/client";
+import { formatDuration, formatRunTime, timeAgo } from "@/lib/client";
 import type { JobItem, VideoItem } from "@/lib/types";
 import { JobStatusBadge, ProgressBar, cx } from "./ui";
 
@@ -63,10 +63,10 @@ export function JobRow({ job }: { job: JobItem }) {
       ) : null}
       <p className="mt-1 truncate text-xs text-zinc-500">
         {active
-          ? `${job.stage ? `${STAGES[job.stage] ?? job.stage} · ` : ""}${job.message ?? ""}`
+          ? `${job.stage ? `${STAGES[job.stage] ?? job.stage} · ` : ""}${job.message ?? ""}${job.estimatedSeconds ? ` · Dự kiến ~${formatRunTime(job.estimatedSeconds)}` : ""}`
           : job.status === "failed"
             ? job.error?.split("\n").pop()
-            : timeAgo(job.finishedAt ?? job.createdAt)}
+            : `${timeAgo(job.finishedAt ?? job.createdAt)}${job.durationSeconds ? ` · Chạy trong ${formatRunTime(job.durationSeconds)}` : ""}`}
       </p>
     </Link>
   );

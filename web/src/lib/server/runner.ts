@@ -28,6 +28,8 @@ type Running = {
   lastStage: string | null;
   pending: { progress: number; stage: string | null; message: string | null } | null;
   flushTimer: NodeJS.Timeout | null;
+  /** Mốc thời gian lúc engine bắt đầu chạy (Date.now()), để tính thời gian chạy thực tế lúc kết thúc. */
+  startedAt: number;
 };
 
 /**
@@ -151,6 +153,7 @@ class JobRunner {
       lastStage: null,
       pending: null,
       flushTimer: null,
+      startedAt: Date.now(),
     };
     this.running.set(id, state);
     if (child.pid) updateJob(id, { pid: child.pid });
@@ -214,20 +217,21 @@ class JobRunner {
     if (state.done) return;
     state.done = true;
     if (state.flushTimer) clearTimeout(state.flushTimer);
+    const duration_seconds = Math.round((Date.now() - state.startedAt) / 1000);
     try {
       if (state.canceled) {
-        updateJob(id, { status: "canceled", message: "Đã hủy", finished_at: nowIso(), pid: null });
+        updateJob(id, { status: "canceled", message: "Đã hủy", finished_at: nowIso(), duration_seconds, pid: null });
       } else if (code === 0 && state.result) {
         updateJob(id, { stage: "save", message: "Đang lưu vào thư viện", progress: 1 });
         const videoId = await ingestResult(getJobRow(id)!, state.result);
-        updateJob(id, { status: "succeeded", video_id: videoId, message: "Hoàn tất", finished_at: nowIso(), pid: null });
+        updateJob(id, { status: "succeeded", video_id: videoId, message: "Hoàn tất", finished_at: nowIso(), duration_seconds, pid: null });
       } else {
         const error = state.error || state.tail.slice(-6).join("\n") || `Engine thoát với mã ${code}`;
-        updateJob(id, { status: "failed", error, finished_at: nowIso(), pid: null });
+        updateJob(id, { status: "failed", error, finished_at: nowIso(), duration_seconds, pid: null });
       }
     } catch (e) {
       state.log.write(`LỖI lưu kết quả: ${(e as Error).stack}\n`);
-      updateJob(id, { status: "failed", error: `Lỗi lưu kết quả: ${(e as Error).message}`, finished_at: nowIso(), pid: null });
+      updateJob(id, { status: "failed", error: `Lỗi lưu kết quả: ${(e as Error).message}`, finished_at: nowIso(), duration_seconds, pid: null });
     } finally {
       state.log.end();
       this.running.delete(id);

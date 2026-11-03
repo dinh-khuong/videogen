@@ -117,6 +117,23 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** Giây đã trôi qua kể từ một mốc thời gian ISO đến hiện tại. */
+export function secondsSince(iso: string): number {
+  return (Date.now() - new Date(iso).getTime()) / 1000;
+}
+
+/** "4 phút 12 giây" / "1 giờ 5 phút" — thời gian chạy job, dễ đọc hơn mm:ss khi kéo dài nhiều phút/giờ. */
+export function formatRunTime(seconds: number | null | undefined): string {
+  if (seconds == null) return "";
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h} giờ ${m} phút`;
+  if (m > 0) return `${m} phút${sec ? ` ${sec} giây` : ""}`;
+  return `${sec} giây`;
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (!bytes) return "";
   if (bytes < 1e6) return `${Math.round(bytes / 1e3)} KB`;

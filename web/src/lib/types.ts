@@ -239,6 +239,10 @@ export type JobItem = {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Thời gian job đã chạy thực tế (giây), ghi lại khi job kết thúc */
+  durationSeconds: number | null;
+  /** Ước tính thời gian chạy (giây), tính từ lịch sử job tương tự lúc tạo job */
+  estimatedSeconds: number | null;
 };
 
 export type JobDetail = JobItem & { log: string; video: VideoItem | null; agent: AgentEvent[] };

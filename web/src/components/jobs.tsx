@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { api, formatDate, useApi, useDocumentTitle } from "@/lib/client";
+import { api, formatDate, formatRunTime, secondsSince, useApi, useDocumentTitle } from "@/lib/client";
 import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
 import { COLOR_FILTERS, LENGTHS, PACINGS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
@@ -90,6 +90,18 @@ function StageSteps({ job }: { job: JobDetail }) {
         );
       })}
     </ol>
+  );
+}
+
+/** Đã chạy bao lâu và còn khoảng bao lâu nữa (so với ước tính); tự cập nhật mỗi lần job được tải lại. */
+function RunningTime({ startedAt, estimatedSeconds }: { startedAt: string; estimatedSeconds: number | null }) {
+  const elapsed = secondsSince(startedAt);
+  const remaining = estimatedSeconds != null ? estimatedSeconds - elapsed : null;
+  return (
+    <p className="mt-2 text-xs text-zinc-500">
+      Đã chạy {formatRunTime(elapsed)}
+      {remaining != null && (remaining > 5 ? ` · còn khoảng ${formatRunTime(remaining)}` : " · sắp xong")}
+    </p>
   );
 }
 
@@ -356,6 +368,8 @@ export function JobDetailView({ id }: { id: string }) {
           <span className="text-xs text-zinc-500">
             Tạo lúc {formatDate(job.createdAt)}
             {job.finishedAt && ` · Xong lúc ${formatDate(job.finishedAt)}`}
+            {job.durationSeconds != null && ` · Chạy trong ${formatRunTime(job.durationSeconds)}`}
+            {active && job.estimatedSeconds != null && ` · Dự kiến ~${formatRunTime(job.estimatedSeconds)}`}
           </span>
         </div>
         {job.status !== "queued" && <StageSteps job={job} />}
@@ -367,6 +381,7 @@ export function JobDetailView({ id }: { id: string }) {
             </div>
             <ProgressBar value={job.progress} />
             {job.status === "queued" && <p className="mt-2 text-xs text-zinc-500">Job sẽ chạy khi các job trước hoàn tất.</p>}
+            {job.status === "running" && job.startedAt && <RunningTime startedAt={job.startedAt} estimatedSeconds={job.estimatedSeconds} />}
           </div>
         )}
         {job.status === "failed" && job.error && <ErrorBox message={job.error} />}
