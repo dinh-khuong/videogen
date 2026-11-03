@@ -12,6 +12,7 @@ máy chủ edge-tts đôi khi từ chối ngẫu nhiên (NoAudioReceived).
 """
 import asyncio
 import json
+import os
 import re
 import subprocess
 import threading
@@ -154,6 +155,19 @@ def zerotts_available() -> bool:
     return True
 
 
+def _zerotts_model_dir(model: str) -> str:
+    """Thư mục mô hình chứa file thật. Cache Hugging Face lưu file dạng symlink tới các thư mục blobs khác nhau,
+    onnxruntime mới từ chối file .data nằm ngoài thư mục của .onnx ("External data path escapes model directory"),
+    nên tải mô hình vào một thư mục riêng (local_dir) thay vì dùng thẳng cache."""
+    if Path(model).expanduser().is_dir():
+        return model
+    from huggingface_hub import snapshot_download
+    from zerotts.hub import _ALLOW_PATTERNS
+
+    local_dir = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "zerotts" / model.replace("/", "--")
+    return snapshot_download(repo_id=model, local_dir=str(local_dir), allow_patterns=_ALLOW_PATTERNS)
+
+
 def _zerotts():
     """Nạp mô hình ZeroTTS một lần (lần đầu tải trọng số từ Hugging Face, sau đó dùng cache)."""
     global _zerotts_model
@@ -164,7 +178,7 @@ def _zerotts():
             raise ConfigError("Giọng ZeroTTS cần cài thư viện: pip install zerotts (trong môi trường Python của engine)") from e
         settings = load_settings()
         print(f"      🔊 Đang nạp mô hình ZeroTTS ({settings.zerotts_model}), lần đầu sẽ tải ~900 MB...", flush=True)
-        _zerotts_model = ZeroTTS.from_pretrained(settings.zerotts_model, intra_op_num_threads=settings.zerotts_threads)
+        _zerotts_model = ZeroTTS.from_pretrained(_zerotts_model_dir(settings.zerotts_model), intra_op_num_threads=settings.zerotts_threads)
     return _zerotts_model
 
 

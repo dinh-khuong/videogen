@@ -70,7 +70,7 @@ class Settings:
         # FPT.AI Text to Speech (giọng Việt tự nhiên): https://console.fpt.ai
         self.fpt_api_key = _get("FPT_AI_API_KEY")
         # ZeroTTS (giọng Việt chạy ngay trên máy, CPU): repo Hugging Face hoặc thư mục mô hình đã tải sẵn
-        self.zerotts_model = _get("ZEROTTS_MODEL", "danhcao/ZeroTTS")
+        self.zerotts_model = _get("ZEROTTS_MODEL", "zeroweight-ai/ZeroTTS")
         self.zerotts_threads = int(_get("ZEROTTS_THREADS", "4"))
 
         self.font_path = _get("FONT_PATH")
