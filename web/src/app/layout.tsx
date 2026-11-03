@@ -42,7 +42,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="min-h-full font-sans">
-        <MediaGuard />
+        <Suspense fallback={null}>
+          <MediaGuard />
+        </Suspense>
         <div className="flex min-h-screen">
           <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col gap-6 border-r border-zinc-200 bg-surface px-3 py-5 md:flex">
             <Brand />

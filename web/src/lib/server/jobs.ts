@@ -275,7 +275,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
   let logo: string | null = null;
   if (style.logoId) {
     logo = assetFilePath(style.logoId, "image");
-    if (!logo || !fs.existsSync(logo)) throw new Error("Ảnh logo đã bị xóa khỏi Assets");
+    if (!logo || !fs.existsSync(/* turbopackIgnore: true */ logo)) throw new Error("Ảnh logo đã bị xóa khỏi Assets");
   }
   spec.style = {
     pacing: style.pacing,
