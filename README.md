@@ -96,6 +96,13 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - Có tiến độ theo từng giai đoạn, log của engine, nút hủy (dừng cả ffmpeg) và nút chạy lại.
   - Nếu server tắt giữa chừng, job đang chạy được đánh dấu lỗi để chạy lại.
 - **Assets và thư viện video**:
+  - **Thư mục kiểu Google Drive**: thư mục lồng nhiều cấp, cây thư mục bên trái, đường dẫn (breadcrumb), dạng lưới hoặc danh sách, sắp xếp theo ngày/tên/dung lượng.
+    - **Kéo thả**: kéo asset hoặc thư mục thả vào thư mục khác (ô thư mục, cây bên trái, hay một cấp trên đường dẫn); kéo một món đang chọn thì kéo cả nhóm. Giữ món kéo trên một nhánh cây để nó tự mở ra.
+    - **Kéo file hoặc cả thư mục từ máy** vào trang (hoặc thả đúng vào một thư mục) để tải lên; thư mục từ máy được tạo lại đúng cấu trúc. Nút **Mới** có Thư mục mới, Tải file lên, Tải thư mục lên.
+    - **Chuột phải** để mở, tạo thư mục con, đổi tên, đổi màu, gắn sao, chuyển tới..., tải về, phân tích lại, xóa. Thư mục gắn sao hiện ở mục "Có gắn sao".
+    - Chọn nhiều bằng ô tròn trên thẻ, Ctrl/⌘ + bấm, Shift + bấm; phím tắt Ctrl/⌘ + A, Delete, F2 (đổi tên), Shift + N (thư mục mới), Alt + ↑ (lên thư mục cha). Chuyển nhầm thì bấm **Hoàn tác**.
+    - Xóa thư mục: chọn giữ nội dung (chuyển lên thư mục cha) hoặc xóa luôn cả asset bên trong. Tìm kiếm khi đang mở một thư mục thì tìm cả thư mục con.
+    - Khi tạo video ở chế độ *AI tự chọn từ Assets*, có thể **giới hạn trong thư mục** (tính cả thư mục con), dùng riêng hoặc cùng với tag.
   - Mỗi asset/video có mô tả. Hashtag trong mô tả (`#caphe #huongdan`) tự thành tag để lọc.
   - Ảnh tìm được khi tạo video được lưu vào Assets, kèm mô tả, hashtag và nguồn.
   - File trùng nội dung chỉ lưu một lần.
