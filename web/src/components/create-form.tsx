@@ -113,6 +113,7 @@ function sanitize(p: Partial<Settings>): Settings {
   const lang = languageOf(p.voice?.language);
   const voiceOk = (v: unknown): v is string => typeof v === "string" && VOICE_RE.test(v);
   const pick = <T,>(value: unknown, ok: (v: unknown) => boolean, fallback: T): T => (ok(value) ? (value as T) : fallback);
+  const libraryMode = pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode);
   return {
     director: typeof p.director === "boolean" ? p.director : DEFAULTS.director,
     voice: {
@@ -132,14 +133,15 @@ function sanitize(p: Partial<Settings>): Settings {
     layoutIndex: pick(p.layoutIndex, (v) => typeof v === "number" && v >= 0 && v < LAYOUTS.length, 0),
     bgVideoId: typeof p.bgVideoId === "string" ? p.bgVideoId : "",
     imageStyle: pick(p.imageStyle, (v) => v === "auto" || v === "cover" || v === "frame", DEFAULTS.imageStyle),
-    webImages: typeof p.webImages === "boolean" ? p.webImages : DEFAULTS.webImages,
+    // Không dùng Assets mà cũng không tìm trên mạng thì video chỉ có nền chữ: "chỉ tìm trên mạng" luôn bật tìm
+    webImages: libraryMode === "off" ? true : typeof p.webImages === "boolean" ? p.webImages : DEFAULTS.webImages,
     webMedia: pick(p.webMedia, (v) => v === "image" || v === "video" || v === "auto", DEFAULTS.webMedia),
     clipsPerStep: pick(p.clipsPerStep, (v) => typeof v === "number" && v >= 1 && v <= 6, DEFAULTS.clipsPerStep),
     visualInterval: numberText(p.visualInterval, /^\d{0,2}(\.\d)?$/, MIN_VISUAL_INTERVAL, MAX_VISUAL_INTERVAL),
     memeImages: numberText(p.memeImages, /^\d{0,2}$/, 0, MAX_MEMES),
     memeVideos: numberText(p.memeVideos, /^\d{0,2}$/, 0, MAX_MEMES),
     searchEngine: pick(p.searchEngine, (v) => typeof v === "string" && Object.hasOwn(SEARCH_ENGINES, v), DEFAULTS.searchEngine),
-    libraryMode: pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode),
+    libraryMode,
     libraryTags: Array.isArray(p.libraryTags)
       ? p.libraryTags.filter((t): t is string => typeof t === "string").slice(0, 20)
       : // cài đặt lưu từ bản cũ (một tag)
@@ -269,6 +271,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const layout = LAYOUTS[s.layoutIndex];
   const bgVideos = useApi<Page<AssetItem>>(layout.layout === "split" ? "/api/assets?kind=video&limit=200" : null);
   const tags = useApi<TagCount[]>(s.libraryMode === "auto" ? "/api/tags" : null);
+  // Không tìm trên mạng thì thư viện là nguồn hình duy nhất: báo sớm nếu nó đang trống
+  const library = useApi<Page<AssetItem>>(s.libraryMode === "auto" && !s.webImages ? "/api/assets?kind=image,video&limit=1" : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
   const health = useApi<EngineHealth>(s.webImages ? "/api/health" : null);
   const engineReady = health.data?.search_engines;
@@ -296,7 +300,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       videoType: p.videoType,
       length: p.length,
       tone: p.tone,
-      webImages: true,
+      // Mẫu chỉnh phong cách; chỉ ép tìm trên mạng khi không còn nguồn hình nào khác
+      webImages: prev.libraryMode === "off" ? true : prev.webImages,
       webMedia: p.webMedia,
       clipsPerStep: p.clipsPerStep,
       voice: { ...prev.voice, ...p.voice },
@@ -578,10 +583,30 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
           <Choice active={s.libraryMode === "selected"} onClick={() => set("libraryMode", "selected")} title="Dùng asset tôi chọn">
             Ảnh/video bạn chọn là nội dung chính, AI viết lời bình dựa trên nội dung và chữ trong chúng.
           </Choice>
-          <Choice active={s.libraryMode === "off"} onClick={() => set("libraryMode", "off")} title="Chỉ tìm trên mạng">
+          <Choice active={s.libraryMode === "off"} onClick={() => setS((prev) => ({ ...prev, libraryMode: "off", webImages: true }))} title="Chỉ tìm trên mạng">
             Không dùng Assets; AI tự đặt từ khóa và tìm clip/ảnh cho từng bước.
           </Choice>
         </div>
+
+        {s.libraryMode !== "off" && (
+          <div className="space-y-2">
+            <Toggle
+              checked={!s.webImages}
+              onChange={(v) => set("webImages", !v)}
+              label="Chỉ lấy trong thư viện Assets, không tìm trên mạng"
+              hint="Bước nào chưa có hình sẽ dùng asset khớp nhất trong thư viện (dùng lại nếu thiếu) thay vì nền chữ. Đạo diễn AI cũng không tìm thêm trên mạng."
+            />
+            {!s.webImages && s.libraryMode === "auto" && library.data?.total === 0 && (
+              <p className="text-sm text-amber-700">
+                Thư viện chưa có ảnh/video nào: hãy tải lên ở trang{" "}
+                <Link href="/assets" className="underline">
+                  Assets
+                </Link>{" "}
+                trước khi tạo video.
+              </p>
+            )}
+          </div>
+        )}
 
         {s.libraryMode === "auto" && (
           <div>
@@ -618,24 +643,18 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
               <option value="cover">Luôn phủ kín khung hình (làm nền)</option>
             </select>
           </Field>
-          <Field
-            label="Tìm trên mạng cho bước chưa có asset"
-            hint="Clip chỉ lấy từ nguồn được phép dùng lại (Pexels, Pixabay, Wikimedia Commons, YouTube Creative Commons) và tự ghi nguồn vào mô tả video."
-          >
-            <select
-              className={inputClass}
-              value={s.webImages ? s.webMedia : "off"}
-              onChange={(e) => {
-                const v = e.target.value;
-                setS((prev) => ({ ...prev, webImages: v !== "off", webMedia: v === "off" ? prev.webMedia : (v as WebMedia) }));
-              }}
+          {s.webImages && (
+            <Field
+              label={s.libraryMode === "off" ? "Tìm gì trên mạng" : "Tìm trên mạng cho bước chưa có asset"}
+              hint="Clip chỉ lấy từ nguồn được phép dùng lại (Pexels, Pixabay, Wikimedia Commons, YouTube Creative Commons) và tự ghi nguồn vào mô tả video."
             >
-              <option value="video">Ưu tiên clip video (thiếu thì dùng ảnh) — sinh động nhất</option>
-              <option value="auto">AI tự chọn ảnh hay clip video cho từng bước</option>
-              <option value="image">Chỉ ảnh</option>
-              <option value="off">Không tìm (bước thiếu asset dùng nền chữ)</option>
-            </select>
-          </Field>
+              <select className={inputClass} value={s.webMedia} onChange={(e) => set("webMedia", e.target.value as WebMedia)}>
+                <option value="video">Ưu tiên clip video (thiếu thì dùng ảnh) — sinh động nhất</option>
+                <option value="auto">AI tự chọn ảnh hay clip video cho từng bước</option>
+                <option value="image">Chỉ ảnh</option>
+              </select>
+            </Field>
+          )}
           {s.webImages && (
             <Field
               label="Công cụ tìm ảnh"

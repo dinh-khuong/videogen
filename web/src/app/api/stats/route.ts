@@ -1,19 +1,22 @@
+import { and, count, inArray, isNotNull, lte } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { route, json } from "@/lib/server/http";
+import { assets, contacts, jobs, videos } from "@/lib/server/schema";
 import type { Stats } from "@/lib/types";
 
 export const GET = route(async () => {
-  const count = (sql: string, ...params: unknown[]) => (db().prepare(sql).get(...params) as { n: number }).n;
+  const d = db();
   const stats: Stats = {
-    videos: count("SELECT COUNT(*) AS n FROM videos"),
-    assets: count("SELECT COUNT(*) AS n FROM assets"),
-    assetsAnalyzing: count("SELECT COUNT(*) AS n FROM assets WHERE analysis_status IN ('pending', 'running')"),
-    contacts: count("SELECT COUNT(*) AS n FROM contacts"),
-    jobsActive: count("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued', 'running')"),
-    followUpsDue: count(
-      "SELECT COUNT(*) AS n FROM contacts WHERE follow_up_at IS NOT NULL AND follow_up_at <= ?",
-      new Date().toISOString().slice(0, 10),
-    ),
+    videos: d.select({ n: count() }).from(videos).get()!.n,
+    assets: d.select({ n: count() }).from(assets).get()!.n,
+    assetsAnalyzing: d.select({ n: count() }).from(assets).where(inArray(assets.analysisStatus, ["pending", "running"])).get()!.n,
+    contacts: d.select({ n: count() }).from(contacts).get()!.n,
+    jobsActive: d.select({ n: count() }).from(jobs).where(inArray(jobs.status, ["queued", "running"])).get()!.n,
+    followUpsDue: d
+      .select({ n: count() })
+      .from(contacts)
+      .where(and(isNotNull(contacts.followUpAt), lte(contacts.followUpAt, new Date().toISOString().slice(0, 10))))
+      .get()!.n,
   };
   return json(stats);
 });

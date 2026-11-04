@@ -1,10 +1,10 @@
 import "server-only";
 import crypto from "node:crypto";
+import { and, count, desc, eq, getTableColumns, isNotNull, like, lte, or, sql, type SQL } from "drizzle-orm";
 import { parseHashtags } from "@/lib/hashtags";
 import {
   ACTIVITY_TYPES,
   CONTACT_STATUSES,
-  type Activity,
   type ActivityType,
   type Contact,
   type ContactDetail,
@@ -13,29 +13,19 @@ import {
 } from "@/lib/types";
 import { db, nowIso } from "./db";
 import { HttpError } from "./files";
-import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
+import { contactActivities, contactVideos, contacts, videos } from "./schema";
+import { hasAnyTag, setTags, tagsFor } from "./tags";
 import { toVideoItems } from "./videos";
 
-type ContactRow = {
-  id: string;
-  name: string;
-  company: string;
-  phone: string;
-  email: string;
-  status: ContactStatus;
-  source: string;
-  notes: string;
-  follow_up_at: string | null;
-  created_at: string;
-  updated_at: string;
-  video_count: number;
-  last_activity_at: string | null;
-};
+type ContactRow = typeof contacts.$inferSelect & { videoCount: number; lastActivityAt: string | null };
 
-const SELECT = `SELECT c.*,
-  (SELECT COUNT(*) FROM contact_videos cv WHERE cv.contact_id = c.id) AS video_count,
-  (SELECT MAX(a.created_at) FROM contact_activities a WHERE a.contact_id = c.id) AS last_activity_at
-  FROM contacts c`;
+// Tiểu truy vấn tương quan viết bằng SQL thô: Drizzle bỏ tên bảng khỏi cột trong trường select của truy vấn một bảng,
+// nên một cột như ${contacts.id} ở đây sẽ thành "id" trần và mất tương quan với bảng ngoài.
+const withStats = {
+  ...getTableColumns(contacts),
+  videoCount: sql<number>`(SELECT COUNT(*) FROM contact_videos cv WHERE cv.contact_id = contacts.id)`,
+  lastActivityAt: sql<string | null>`(SELECT MAX(a.created_at) FROM contact_activities a WHERE a.contact_id = contacts.id)`,
+};
 
 function toContacts(rows: ContactRow[]): Contact[] {
   const tags = tagsFor("contact", rows.map((r) => r.id));
@@ -49,66 +39,58 @@ function toContacts(rows: ContactRow[]): Contact[] {
     source: r.source,
     notes: r.notes,
     tags: tags.get(r.id) ?? [],
-    followUpAt: r.follow_up_at,
-    videoCount: r.video_count,
-    lastActivityAt: r.last_activity_at,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    followUpAt: r.followUpAt,
+    videoCount: r.videoCount,
+    lastActivityAt: r.lastActivityAt,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   }));
 }
 
 export type ContactQuery = { q?: string; status?: string; tag?: string; due?: boolean; limit?: number; offset?: number };
 
 export function listContacts(query: ContactQuery = {}): Page<Contact> {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
+  const conditions: (SQL | undefined)[] = [];
   if (query.q) {
-    clauses.push("(c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.notes LIKE ?)");
-    params.push(...Array(5).fill(`%${query.q}%`));
+    const pattern = `%${query.q}%`;
+    conditions.push(
+      or(like(contacts.name, pattern), like(contacts.company, pattern), like(contacts.phone, pattern), like(contacts.email, pattern), like(contacts.notes, pattern)),
+    );
   }
-  if (query.status && query.status in CONTACT_STATUSES) {
-    clauses.push("c.status = ?");
-    params.push(query.status);
-  }
-  if (query.tag) {
-    clauses.push(tagFilterSql("contact", "c"));
-    params.push(tagFilterParam(query.tag));
-  }
-  if (query.due) {
-    clauses.push("c.follow_up_at IS NOT NULL AND c.follow_up_at <= ?");
-    params.push(new Date().toISOString().slice(0, 10));
-  }
-  const sql = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+  if (query.status && query.status in CONTACT_STATUSES) conditions.push(eq(contacts.status, query.status as ContactStatus));
+  if (query.tag) conditions.push(hasAnyTag("contact", contacts.id, query.tag));
+  if (query.due) conditions.push(and(isNotNull(contacts.followUpAt), lte(contacts.followUpAt, new Date().toISOString().slice(0, 10))));
+  const where = and(...conditions);
   const limit = Math.min(Math.max(query.limit ?? 100, 1), 500);
-  const rows = db()
-    .prepare(`${SELECT}${sql} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`)
-    .all(...params, limit, query.offset ?? 0) as ContactRow[];
-  const { total } = db().prepare(`SELECT COUNT(*) AS total FROM contacts c${sql}`).get(...params) as { total: number };
+  const rows = db().select(withStats).from(contacts).where(where).orderBy(desc(contacts.updatedAt)).limit(limit).offset(query.offset ?? 0).all();
+  const { total } = db().select({ total: count() }).from(contacts).where(where).get()!;
   return { items: toContacts(rows), total };
 }
 
 export function getContact(id: string): Contact | null {
-  const row = db().prepare(`${SELECT} WHERE c.id = ?`).get(id) as ContactRow | undefined;
+  const row = db().select(withStats).from(contacts).where(eq(contacts.id, id)).get();
   return row ? toContacts([row])[0] : null;
 }
 
 export function getContactDetail(id: string): ContactDetail | null {
   const contact = getContact(id);
   if (!contact) return null;
-  const activities = (
+  const activities = db()
+    .select({ id: contactActivities.id, type: contactActivities.type, content: contactActivities.content, createdAt: contactActivities.createdAt })
+    .from(contactActivities)
+    .where(eq(contactActivities.contactId, id))
+    .orderBy(desc(contactActivities.createdAt))
+    .all();
+  const linked = toVideoItems(
     db()
-      .prepare("SELECT id, type, content, created_at FROM contact_activities WHERE contact_id = ? ORDER BY created_at DESC")
-      .all(id) as { id: string; type: ActivityType; content: string; created_at: string }[]
-  ).map((a): Activity => ({ id: a.id, type: a.type, content: a.content, createdAt: a.created_at }));
-  const videos = toVideoItems(
-    db()
-      .prepare(
-        `SELECT v.* FROM contact_videos cv JOIN videos v ON v.id = cv.video_id
-         WHERE cv.contact_id = ? ORDER BY cv.created_at DESC`,
-      )
-      .all(id) as Parameters<typeof toVideoItems>[0],
+      .select(getTableColumns(videos))
+      .from(contactVideos)
+      .innerJoin(videos, eq(videos.id, contactVideos.videoId))
+      .where(eq(contactVideos.contactId, id))
+      .orderBy(desc(contactVideos.createdAt))
+      .all(),
   );
-  return { ...contact, activities, videos };
+  return { ...contact, activities, videos: linked };
 }
 
 export type ContactInput = Partial<{
@@ -125,7 +107,7 @@ export type ContactInput = Partial<{
 function clean(input: ContactInput, current?: Contact) {
   const name = (input.name ?? current?.name ?? "").trim();
   if (!name) throw new HttpError(400, "Tên khách hàng không được để trống");
-  const status = input.status ?? current?.status ?? "lead";
+  const status = (input.status ?? current?.status ?? "lead") as ContactStatus;
   if (!(status in CONTACT_STATUSES)) throw new HttpError(400, "Trạng thái không hợp lệ");
   const followUpAt = input.followUpAt === undefined ? (current?.followUpAt ?? null) : input.followUpAt || null;
   if (followUpAt && !/^\d{4}-\d{2}-\d{2}$/.test(followUpAt)) throw new HttpError(400, "Ngày hẹn không hợp lệ");
@@ -144,15 +126,10 @@ function clean(input: ContactInput, current?: Contact) {
 export function createContact(input: ContactInput): Contact {
   const c = clean(input);
   const id = crypto.randomUUID();
-  db().transaction(() => {
-    db()
-      .prepare(
-        `INSERT INTO contacts (id, name, company, phone, email, status, source, notes, follow_up_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, c.name, c.company, c.phone, c.email, c.status, c.source, c.notes, c.followUpAt);
+  db().transaction((tx) => {
+    tx.insert(contacts).values({ id, ...c }).run();
     setTags("contact", id, parseHashtags(c.notes));
-  })();
+  });
   return getContact(id)!;
 }
 
@@ -160,29 +137,24 @@ export function updateContact(id: string, input: ContactInput): Contact | null {
   const current = getContact(id);
   if (!current) return null;
   const c = clean(input, current);
-  db().transaction(() => {
-    db()
-      .prepare(
-        `UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, status = ?, source = ?, notes = ?,
-         follow_up_at = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(c.name, c.company, c.phone, c.email, c.status, c.source, c.notes, c.followUpAt, nowIso(), id);
+  db().transaction((tx) => {
+    tx.update(contacts).set({ ...c, updatedAt: nowIso() }).where(eq(contacts.id, id)).run();
     setTags("contact", id, parseHashtags(c.notes));
     if (current.status !== c.status) {
-      addActivityRow(id, "note", `Đổi trạng thái: ${CONTACT_STATUSES[current.status]} → ${CONTACT_STATUSES[c.status as ContactStatus]}`);
+      addActivityRow(id, "note", `Đổi trạng thái: ${CONTACT_STATUSES[current.status]} → ${CONTACT_STATUSES[c.status]}`);
     }
-  })();
+  });
   return getContact(id);
 }
 
 export function deleteContact(id: string): boolean {
-  return db().prepare("DELETE FROM contacts WHERE id = ?").run(id).changes > 0;
+  return db().delete(contacts).where(eq(contacts.id, id)).run().changes > 0;
 }
 
 function addActivityRow(contactId: string, type: ActivityType, content: string): string {
   const id = crypto.randomUUID();
-  db().prepare("INSERT INTO contact_activities (id, contact_id, type, content) VALUES (?, ?, ?, ?)").run(id, contactId, type, content);
-  db().prepare("UPDATE contacts SET updated_at = ? WHERE id = ?").run(nowIso(), contactId);
+  db().insert(contactActivities).values({ id, contactId, type, content }).run();
+  db().update(contacts).set({ updatedAt: nowIso() }).where(eq(contacts.id, contactId)).run();
   return id;
 }
 
@@ -194,15 +166,15 @@ export function addActivity(contactId: string, type: string, content: string): v
 }
 
 export function deleteActivity(id: string): boolean {
-  return db().prepare("DELETE FROM contact_activities WHERE id = ?").run(id).changes > 0;
+  return db().delete(contactActivities).where(eq(contactActivities.id, id)).run().changes > 0;
 }
 
 export function linkVideo(contactId: string, videoId: string): void {
-  const exists = db().prepare("SELECT 1 FROM videos WHERE id = ?").get(videoId);
+  const exists = db().select({ one: sql`1` }).from(videos).where(eq(videos.id, videoId)).get();
   if (!exists || !getContact(contactId)) throw new HttpError(404, "Không tìm thấy khách hàng hoặc video");
-  db().prepare("INSERT OR IGNORE INTO contact_videos (contact_id, video_id) VALUES (?, ?)").run(contactId, videoId);
+  db().insert(contactVideos).values({ contactId, videoId }).onConflictDoNothing().run();
 }
 
 export function unlinkVideo(contactId: string, videoId: string): void {
-  db().prepare("DELETE FROM contact_videos WHERE contact_id = ? AND video_id = ?").run(contactId, videoId);
+  db().delete(contactVideos).where(and(eq(contactVideos.contactId, contactId), eq(contactVideos.videoId, videoId))).run();
 }

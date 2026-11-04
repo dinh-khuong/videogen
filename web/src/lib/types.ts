@@ -33,6 +33,8 @@ export type AssetItem = {
   /** Thư mục chứa asset, null = chưa phân loại */
   folderId: string | null;
   createdAt: string;
+  /** Lần cuối được chọn cho một job hoặc dùng trong video của bạn; chỉ có khi lấy danh sách với sort=recent */
+  lastUsedAt: string | null;
 };
 
 /** Màu thư mục (giống Drive) */

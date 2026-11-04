@@ -2,39 +2,25 @@ import "server-only";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { and, asc, count, desc, eq, getTableColumns, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
 import { ASSET_HASHTAG_MIN, ensureHashtags, parseHashtags, textHashtags, withHashtags } from "@/lib/hashtags";
-import type { AnalysisStatus, AssetItem, AssetKind, Page } from "@/lib/types";
-import { db, nowIso } from "./db";
+import type { AssetItem, AssetKind, Page } from "@/lib/types";
+import { db, inList, nowIso } from "./db";
 import { probe } from "./engine";
 import { HttpError, moveFile, removeMedia } from "./files";
 import { MEDIA_DIR, TMP_DIR, mediaPath, mediaUrl } from "./paths";
-import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
+import { assets, jobs, videoAssets, videos } from "./schema";
+import { hasAnyTag, setTags, tagsFor } from "./tags";
 
-type AssetRow = {
-  id: string;
-  kind: AssetKind;
-  file: string;
-  thumbnail: string | null;
-  title: string;
-  description: string;
-  source: string;
-  source_url: string | null;
-  width: number | null;
-  height: number | null;
-  duration: number | null;
-  size_bytes: number | null;
-  ocr_text: string;
-  ai_summary: string;
-  ai_tags: string;
-  analysis_status: AnalysisStatus;
-  analysis_error: string | null;
-  analyzed_at: string | null;
-  folder_id: string | null;
-  created_at: string;
-  used_in: number;
+type AssetRow = typeof assets.$inferSelect & {
+  usedIn: number;
+  /** Chỉ có khi truy vấn sắp xếp theo "recent" */
+  lastUsedAt?: string | null;
 };
 
-const SELECT = `SELECT a.*, (SELECT COUNT(DISTINCT va.video_id) FROM video_assets va WHERE va.asset_id = a.id) AS used_in FROM assets a`;
+// Tiểu truy vấn tương quan viết bằng SQL thô: Drizzle bỏ tên bảng khỏi cột trong trường select của truy vấn một bảng,
+// nên một cột như ${assets.id} ở đây sẽ thành "id" trần và mất tương quan với bảng ngoài.
+const usedIn = sql<number>`(SELECT COUNT(DISTINCT va.video_id) FROM video_assets va WHERE va.asset_id = assets.id)`;
 
 function parseTags(json: string): string[] {
   try {
@@ -56,35 +42,41 @@ function toItems(rows: AssetRow[]): AssetItem[] {
     description: r.description,
     tags: tags.get(r.id) ?? [],
     source: r.source,
-    sourceUrl: r.source_url,
+    sourceUrl: r.sourceUrl,
     width: r.width,
     height: r.height,
     duration: r.duration,
-    sizeBytes: r.size_bytes,
-    usedIn: r.used_in,
-    ocrText: r.ocr_text,
-    aiSummary: r.ai_summary,
-    aiTags: parseTags(r.ai_tags),
-    analysisStatus: r.analysis_status,
-    analysisError: r.analysis_error,
-    analyzedAt: r.analyzed_at,
-    folderId: r.folder_id,
-    createdAt: r.created_at,
+    sizeBytes: r.sizeBytes,
+    usedIn: r.usedIn,
+    ocrText: r.ocrText,
+    aiSummary: r.aiSummary,
+    aiTags: parseTags(r.aiTags),
+    analysisStatus: r.analysisStatus,
+    analysisError: r.analysisError,
+    analyzedAt: r.analyzedAt,
+    folderId: r.folderId,
+    createdAt: r.createdAt,
+    lastUsedAt: r.lastUsedAt ?? null,
   }));
 }
 
-/** SQL con trả về các thư mục trong json `?` và mọi thư mục con cháu của chúng. */
-export const SUBTREE_SQL = `WITH RECURSIVE sub(id) AS (
-  SELECT value FROM json_each(?)
-  UNION SELECT f.id FROM asset_folders f JOIN sub ON f.parent_id = sub.id
-) SELECT id FROM sub`;
+/** Câu lệnh trả về id các thư mục trong danh sách và mọi thư mục con cháu của chúng (dùng trong `IN (...)` hoặc `db.all`). */
+export function subtreeSql(folderIds: string[]): SQL {
+  return sql`WITH RECURSIVE sub(id) AS (
+    SELECT value FROM json_each(${JSON.stringify(folderIds)})
+    UNION SELECT f.id FROM asset_folders f JOIN sub ON f.parent_id = sub.id
+  ) SELECT id FROM sub`;
+}
 
 export const ASSET_SORTS = {
-  new: "a.created_at DESC",
-  old: "a.created_at ASC",
-  name: "a.title COLLATE NOCASE ASC, a.created_at DESC",
-  size: "a.size_bytes DESC, a.created_at DESC",
+  new: [desc(assets.createdAt)],
+  old: [asc(assets.createdAt)],
+  name: [sql`${assets.title} COLLATE NOCASE ASC`, desc(assets.createdAt)],
+  size: [desc(assets.sizeBytes), desc(assets.createdAt)],
 } as const;
+
+/** Sắp xếp "recent" (asset dùng gần nhất lên đầu) có truy vấn riêng, xem recentAssets. */
+const SORT_RECENT = "recent";
 
 export type AssetQuery = {
   q?: string;
@@ -103,69 +95,102 @@ export type AssetQuery = {
   offset?: number;
 };
 
-function where(query: AssetQuery): { sql: string; params: unknown[] } {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
+function where(query: AssetQuery): SQL | undefined {
+  const conditions: (SQL | undefined)[] = [];
   if (query.q) {
     // Tìm cả trong tóm tắt AI và chữ đọc được trong asset
-    clauses.push("(a.title LIKE ? OR a.description LIKE ? OR a.ai_summary LIKE ? OR a.ocr_text LIKE ?)");
-    params.push(...Array(4).fill(`%${query.q}%`));
+    const pattern = `%${query.q}%`;
+    conditions.push(or(like(assets.title, pattern), like(assets.description, pattern), like(assets.aiSummary, pattern), like(assets.ocrText, pattern)));
   }
-  if (query.tag) {
-    clauses.push(tagFilterSql("asset", "a"));
-    params.push(tagFilterParam(query.tag));
-  }
+  if (query.tag) conditions.push(hasAnyTag("asset", assets.id, query.tag));
   if (query.kind) {
     // một loại ("audio") hoặc nhiều loại cách nhau bằng dấu phẩy ("image,video")
     const kinds = query.kind.split(",").filter((k) => k === "image" || k === "video" || k === "audio");
-    if (kinds.length) {
-      clauses.push("a.kind IN (SELECT value FROM json_each(?))");
-      params.push(JSON.stringify(kinds));
-    }
+    if (kinds.length) conditions.push(inList(assets.kind, kinds));
   }
-  if (query.status) {
-    clauses.push("a.analysis_status IN (SELECT value FROM json_each(?))");
-    params.push(JSON.stringify(query.status.split(",")));
-  }
+  if (query.status) conditions.push(inList(assets.analysisStatus, query.status.split(",")));
   if (query.folder === "none") {
-    clauses.push("a.folder_id IS NULL");
+    conditions.push(isNull(assets.folderId));
   } else if (query.folder && query.recursive) {
-    clauses.push(`a.folder_id IN (${SUBTREE_SQL})`);
-    params.push(JSON.stringify([query.folder]));
+    conditions.push(sql`${assets.folderId} IN (${subtreeSql([query.folder])})`);
   } else if (query.folder) {
-    clauses.push("a.folder_id = ?");
-    params.push(query.folder);
+    conditions.push(eq(assets.folderId, query.folder));
   }
-  if (query.folders?.length) {
-    clauses.push(`a.folder_id IN (${SUBTREE_SQL})`);
-    params.push(JSON.stringify(query.folders));
-  }
-  if (query.ids) {
-    clauses.push("a.id IN (SELECT value FROM json_each(?))");
-    params.push(JSON.stringify(query.ids));
-  }
-  return { sql: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "", params };
+  if (query.folders?.length) conditions.push(sql`${assets.folderId} IN (${subtreeSql(query.folders)})`);
+  if (query.ids) conditions.push(inList(assets.id, query.ids));
+  return and(...conditions);
+}
+
+/**
+ * Asset kèm lần cuối được dùng: lúc người dùng chọn nó cho một job (kể cả job chưa xong), hoặc lúc video có nó ra đời.
+ * Ảnh/clip hệ thống tìm trên mạng không tính ở vế sau, nếu không chúng tràn ngập danh sách "dùng gần đây".
+ */
+function recentAssets(condition: SQL | undefined, limit: number, offset: number): AssetRow[] {
+  const d = db();
+  // Alias các cột của hai CTE phải khác nhau: Drizzle viết cột của CTE không kèm tên bảng
+  const picks = d.$with("picks").as(
+    d
+      .select({ assetId: sql<string>`je.value`.as("picked_asset"), at: sql<string>`MAX(j.created_at)`.as("picked_at") })
+      .from(sql`${jobs} j, json_each(j.input, '$.assetIds') je`)
+      .groupBy(sql`je.value`),
+  );
+  const made = d.$with("made").as(
+    d
+      .select({ assetId: sql<string>`${videoAssets.assetId}`.as("made_asset"), at: sql<string>`MAX(${videos.createdAt})`.as("made_at") })
+      .from(videoAssets)
+      .innerJoin(videos, eq(videos.id, videoAssets.videoId))
+      .groupBy(videoAssets.assetId),
+  );
+  return d
+    .with(picks, made)
+    .select({
+      ...getTableColumns(assets),
+      usedIn,
+      lastUsedAt: sql<string | null>`NULLIF(MAX(COALESCE(${picks.at}, ''), CASE WHEN ${assets.source} = 'upload' THEN COALESCE(${made.at}, '') ELSE '' END), '')`.as(
+        "last_used_at",
+      ),
+    })
+    .from(assets)
+    .leftJoin(picks, eq(picks.assetId, assets.id))
+    .leftJoin(made, eq(made.assetId, assets.id))
+    .where(condition)
+    .orderBy(sql`last_used_at DESC`, desc(assets.createdAt))
+    .limit(limit)
+    .offset(offset)
+    .all();
 }
 
 export function listAssets(query: AssetQuery = {}): Page<AssetItem> {
-  const { sql, params } = where(query);
+  const condition = where(query);
   const limit = Math.min(Math.max(query.limit ?? 60, 1), 500);
-  const order = query.sort && Object.hasOwn(ASSET_SORTS, query.sort) ? ASSET_SORTS[query.sort as keyof typeof ASSET_SORTS] : ASSET_SORTS.new;
-  const rows = db()
-    .prepare(`${SELECT}${sql} ORDER BY ${order} LIMIT ? OFFSET ?`)
-    .all(...params, limit, query.offset ?? 0) as AssetRow[];
-  const { total } = db().prepare(`SELECT COUNT(*) AS total FROM assets a${sql}`).get(...params) as { total: number };
+  const offset = query.offset ?? 0;
+  const rows =
+    query.sort === SORT_RECENT
+      ? recentAssets(condition, limit, offset)
+      : db()
+          .select({ ...getTableColumns(assets), usedIn })
+          .from(assets)
+          .where(condition)
+          .orderBy(...(query.sort && Object.hasOwn(ASSET_SORTS, query.sort) ? ASSET_SORTS[query.sort as keyof typeof ASSET_SORTS] : ASSET_SORTS.new))
+          .limit(limit)
+          .offset(offset)
+          .all();
+  const { total } = db().select({ total: count() }).from(assets).where(condition).get()!;
   return { items: toItems(rows), total };
 }
 
 export function getAsset(id: string): AssetItem | null {
-  const row = db().prepare(`${SELECT} WHERE a.id = ?`).get(id) as AssetRow | undefined;
+  const row = db()
+    .select({ ...getTableColumns(assets), usedIn })
+    .from(assets)
+    .where(eq(assets.id, id))
+    .get();
   return row ? toItems([row])[0] : null;
 }
 
 /** Đường dẫn file của asset (kiểm tra loại nếu cần), null nếu không có. */
 export function assetFilePath(id: string, kind?: AssetKind): string | null {
-  const row = db().prepare("SELECT file, kind FROM assets WHERE id = ?").get(id) as { file: string; kind: AssetKind } | undefined;
+  const row = db().select({ file: assets.file, kind: assets.kind }).from(assets).where(eq(assets.id, id)).get();
   if (!row || (kind && row.kind !== kind)) return null;
   return mediaPath(row.file);
 }
@@ -183,26 +208,28 @@ export type EngineAsset = {
 
 /** Asset kèm mô tả, tóm tắt AI và chữ trong asset, để đưa vào spec của engine. */
 export function assetsForEngine(query: AssetQuery): EngineAsset[] {
-  const { sql, params } = where(query);
   const rows = db()
-    .prepare(`SELECT a.* FROM assets a${sql} ORDER BY a.created_at DESC LIMIT ?`)
-    .all(...params, query.limit ?? 150) as AssetRow[];
+    .select()
+    .from(assets)
+    .where(where(query))
+    .orderBy(desc(assets.createdAt))
+    .limit(query.limit ?? 150)
+    .all();
   const tags = tagsFor("asset", rows.map((r) => r.id));
   return rows.map((r) => ({
     id: r.id,
     path: mediaPath(r.file),
     kind: r.kind,
     description: [r.title, r.description].filter(Boolean).join(" — "),
-    tags: [...new Set([...(tags.get(r.id) ?? []), ...parseTags(r.ai_tags)])],
-    summary: r.ai_summary,
-    ocr_text: r.ocr_text,
+    tags: [...new Set([...(tags.get(r.id) ?? []), ...parseTags(r.aiTags)])],
+    summary: r.aiSummary,
+    ocr_text: r.ocrText,
     duration: r.duration,
   }));
 }
 
 export function findAssetBySha1(sha1: string): string | null {
-  const row = db().prepare("SELECT id FROM assets WHERE sha1 = ?").get(sha1) as { id: string } | undefined;
-  return row?.id ?? null;
+  return db().select({ id: assets.id }).from(assets).where(eq(assets.sha1, sha1)).get()?.id ?? null;
 }
 
 export type NewAsset = {
@@ -247,17 +274,28 @@ export async function addAssets(items: NewAsset[]): Promise<{ id: string; existe
       await moveFile(named[k], path.join(MEDIA_DIR, file));
       if (info.thumbnail && thumb) await moveFile(info.thumbnail, path.join(MEDIA_DIR, thumb));
       try {
-        db().transaction(() => {
-          db()
-            .prepare(
-              `INSERT INTO assets (id, kind, file, thumbnail, title, description, source, source_url, width, height,
-                 duration, size_bytes, sha1, folder_id, analysis_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-            )
-            .run(p.id, info.kind, file, thumb, p.item.title, p.item.description, p.item.source, p.item.sourceUrl ?? null,
-              info.width ?? null, info.height ?? null, info.duration ?? null, p.item.size, p.item.sha1, p.item.folderId ?? null);
+        db().transaction((tx) => {
+          tx.insert(assets)
+            .values({
+              id: p.id,
+              kind: info.kind,
+              file,
+              thumbnail: thumb,
+              title: p.item.title,
+              description: p.item.description,
+              source: p.item.source,
+              sourceUrl: p.item.sourceUrl ?? null,
+              width: info.width ?? null,
+              height: info.height ?? null,
+              duration: info.duration ?? null,
+              sizeBytes: p.item.size,
+              sha1: p.item.sha1,
+              folderId: p.item.folderId ?? null,
+              analysisStatus: "pending",
+            })
+            .run();
           setTags("asset", p.id, parseHashtags(p.item.description));
-        })();
+        });
       } catch (e) {
         await removeMedia(file, thumb);
         // Hai request cùng thêm một file: bản kia đã thắng, dùng lại asset đó
@@ -280,22 +318,27 @@ export function updateAsset(
   const current = getAsset(id);
   if (!current) return null;
   const description = patch.description ?? current.description;
-  db().transaction(() => {
-    db()
-      .prepare("UPDATE assets SET title = ?, description = ?, ai_summary = ?, ocr_text = ?, folder_id = ?, updated_at = ? WHERE id = ?")
-      .run(patch.title ?? current.title, description, patch.aiSummary ?? current.aiSummary, patch.ocrText ?? current.ocrText,
-        patch.folderId === undefined ? current.folderId : patch.folderId, nowIso(), id);
+  db().transaction((tx) => {
+    tx.update(assets)
+      .set({
+        title: patch.title ?? current.title,
+        description,
+        aiSummary: patch.aiSummary ?? current.aiSummary,
+        ocrText: patch.ocrText ?? current.ocrText,
+        folderId: patch.folderId === undefined ? current.folderId : patch.folderId,
+        updatedAt: nowIso(),
+      })
+      .where(eq(assets.id, id))
+      .run();
     setTags("asset", id, parseHashtags(description));
-  })();
+  });
   return getAsset(id);
 }
 
 export async function deleteAsset(id: string): Promise<boolean> {
-  const row = db().prepare("SELECT file, thumbnail FROM assets WHERE id = ?").get(id) as
-    | { file: string; thumbnail: string | null }
-    | undefined;
+  const row = db().select({ file: assets.file, thumbnail: assets.thumbnail }).from(assets).where(eq(assets.id, id)).get();
   if (!row) return false;
-  db().prepare("DELETE FROM assets WHERE id = ?").run(id);
+  db().delete(assets).where(eq(assets.id, id)).run();
   await removeMedia(row.file, row.thumbnail);
   return true;
 }
@@ -304,28 +347,26 @@ export async function deleteAsset(id: string): Promise<boolean> {
 
 /** Đưa asset về hàng đợi phân tích. ids rỗng + failedOnly: mọi asset phân tích lỗi. Trả về số asset được xếp hàng. */
 export function queueAnalysis(ids: string[], failedOnly = false): number {
+  const pending = { analysisStatus: "pending", analysisError: null } as const;
   if (failedOnly && !ids.length) {
-    return db().prepare("UPDATE assets SET analysis_status = 'pending', analysis_error = NULL WHERE analysis_status = 'failed'").run()
-      .changes;
+    return db().update(assets).set(pending).where(eq(assets.analysisStatus, "failed")).run().changes;
   }
-  return db()
-    .prepare(
-      `UPDATE assets SET analysis_status = 'pending', analysis_error = NULL
-       WHERE id IN (SELECT value FROM json_each(?)) AND analysis_status != 'running'`,
-    )
-    .run(JSON.stringify(ids)).changes;
+  return db().update(assets).set(pending).where(and(inList(assets.id, ids), ne(assets.analysisStatus, "running"))).run().changes;
 }
 
 /** Nhận nguyên tử tối đa `limit` asset đang chờ, chuyển sang 'running'. */
 export function claimPendingAssets(limit: number): { id: string; path: string; kind: AssetKind; title: string; description: string }[] {
-  return db().transaction(() => {
-    const rows = db()
-      .prepare("SELECT id, file, kind, title, description FROM assets WHERE analysis_status = 'pending' ORDER BY created_at LIMIT ?")
-      .all(limit) as { id: string; file: string; kind: AssetKind; title: string; description: string }[];
-    const mark = db().prepare("UPDATE assets SET analysis_status = 'running', analysis_error = NULL WHERE id = ?");
-    for (const r of rows) mark.run(r.id);
+  return db().transaction((tx) => {
+    const rows = tx
+      .select({ id: assets.id, file: assets.file, kind: assets.kind, title: assets.title, description: assets.description })
+      .from(assets)
+      .where(eq(assets.analysisStatus, "pending"))
+      .orderBy(asc(assets.createdAt))
+      .limit(limit)
+      .all();
+    for (const r of rows) tx.update(assets).set({ analysisStatus: "running", analysisError: null }).where(eq(assets.id, r.id)).run();
     return rows.map((r) => ({ id: r.id, path: mediaPath(r.file), kind: r.kind, title: r.title, description: r.description }));
-  })();
+  });
 }
 
 export function saveAnalysis(result: {
@@ -338,12 +379,17 @@ export function saveAnalysis(result: {
 }): void {
   if (result.status === "done") {
     const saved = db()
-      .prepare(
-        `UPDATE assets SET analysis_status = 'done', analysis_error = NULL, ocr_text = ?, ai_summary = ?, ai_tags = ?, analyzed_at = ?
-         WHERE id = ? AND analysis_status = 'running'`,
-      )
-      .run((result.ocr_text ?? "").slice(0, 4000), (result.summary ?? "").slice(0, 2000), JSON.stringify(result.tags ?? []),
-        nowIso(), result.id);
+      .update(assets)
+      .set({
+        analysisStatus: "done",
+        analysisError: null,
+        ocrText: (result.ocr_text ?? "").slice(0, 4000),
+        aiSummary: (result.summary ?? "").slice(0, 2000),
+        aiTags: JSON.stringify(result.tags ?? []),
+        analyzedAt: nowIso(),
+      })
+      .where(and(eq(assets.id, result.id), eq(assets.analysisStatus, "running")))
+      .run();
     if (saved.changes) topUpHashtags(result.id, result.tags ?? []);
   } else {
     failAnalysis([result.id], result.error || "Lỗi không xác định");
@@ -358,9 +404,7 @@ const SPARSE_DESCRIPTION_HASHTAGS = 3;
  * đồng thời thành tag để lọc. Chỉ thêm vào, không đụng tới chữ đã có; mô tả người dùng tự viết cho asset tải lên giữ nguyên.
  */
 function topUpHashtags(id: string, aiTags: string[]): void {
-  const row = db().prepare("SELECT description, source FROM assets WHERE id = ?").get(id) as
-    | { description: string; source: string }
-    | undefined;
+  const row = db().select({ description: assets.description, source: assets.source }).from(assets).where(eq(assets.id, id)).get();
   if (!row || row.source === "upload") return;
   // Bản cũ ghi dòng "Từ khóa tìm kiếm: ..." (từ khóa tiếng Anh) thay cho hashtag: bỏ dòng đó, các từ của nó thành hashtag
   const legacy = row.description.match(/\n?Từ khóa tìm kiếm: ([^\n]*)/);
@@ -369,35 +413,34 @@ function topUpHashtags(id: string, aiTags: string[]): void {
   if (!legacy && existing.length >= SPARSE_DESCRIPTION_HASHTAGS) return;
   const description = withHashtags(base, ensureHashtags([existing], [aiTags, textHashtags(legacy?.[1])], ASSET_HASHTAG_MIN));
   if (description === row.description.trim()) return;
-  db().transaction(() => {
-    db().prepare("UPDATE assets SET description = ?, updated_at = ? WHERE id = ?").run(description, nowIso(), id);
+  db().transaction((tx) => {
+    tx.update(assets).set({ description, updatedAt: nowIso() }).where(eq(assets.id, id)).run();
     setTags("asset", id, parseHashtags(description));
-  })();
+  });
 }
 
 export function failAnalysis(ids: string[], error: string): void {
   db()
-    .prepare(
-      `UPDATE assets SET analysis_status = 'failed', analysis_error = ?, analyzed_at = ?
-       WHERE id IN (SELECT value FROM json_each(?)) AND analysis_status = 'running'`,
-    )
-    .run(error.slice(0, 1000), nowIso(), JSON.stringify(ids));
+    .update(assets)
+    .set({ analysisStatus: "failed", analysisError: error.slice(0, 1000), analyzedAt: nowIso() })
+    .where(and(inList(assets.id, ids), eq(assets.analysisStatus, "running")))
+    .run();
 }
 
 /** Asset đang 'running' khi server tắt: đưa lại hàng đợi. */
 export function requeueInterruptedAnalysis(): void {
-  db().prepare("UPDATE assets SET analysis_status = 'pending' WHERE analysis_status = 'running'").run();
+  db().update(assets).set({ analysisStatus: "pending" }).where(eq(assets.analysisStatus, "running")).run();
 }
 
 /** Số asset còn chờ/đang phân tích trong phạm vi (ids, tag hoặc thư mục; không có gì = toàn thư viện). */
 export function countUnanalyzed(scope: { ids?: string[]; tag?: string | null; folders?: string[] }): number {
   // Chỉ ảnh/video: audio không được AI chọn cho từng bước nên job không cần chờ
-  const { sql, params } = where({
+  const condition = where({
     ids: scope.ids,
     tag: scope.tag ?? undefined,
     folders: scope.folders,
     kind: "image,video",
     status: "pending,running",
   });
-  return (db().prepare(`SELECT COUNT(*) AS n FROM assets a${sql}`).get(...params) as { n: number }).n;
+  return db().select({ n: count() }).from(assets).where(condition).get()!.n;
 }

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { and, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { normalizeTag } from "@/lib/hashtags";
 import type { AgentEvent, JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
 import {
@@ -23,26 +24,10 @@ import { db } from "./db";
 import { HttpError } from "./files";
 import { folderExists } from "./folders";
 import { JOBS_DIR } from "./paths";
+import { contacts, jobs } from "./schema";
 import { getVideo, getVideoDetail } from "./videos";
 
-export type JobRow = {
-  id: string;
-  status: JobStatus;
-  topic: string;
-  input: string;
-  progress: number;
-  stage: string | null;
-  message: string | null;
-  error: string | null;
-  video_id: string | null;
-  contact_id: string | null;
-  pid: number | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  duration_seconds: number | null;
-  estimated_seconds: number | null;
-};
+export type JobRow = typeof jobs.$inferSelect;
 
 export function jobDir(id: string): string {
   return path.join(JOBS_DIR, id);
@@ -58,28 +43,24 @@ function toItem(r: JobRow): JobItem {
     stage: r.stage,
     message: r.message,
     error: r.error,
-    videoId: r.video_id,
-    contactId: r.contact_id,
-    createdAt: r.created_at,
-    startedAt: r.started_at,
-    finishedAt: r.finished_at,
-    durationSeconds: r.duration_seconds,
-    estimatedSeconds: r.estimated_seconds,
+    videoId: r.videoId,
+    contactId: r.contactId,
+    createdAt: r.createdAt,
+    startedAt: r.startedAt,
+    finishedAt: r.finishedAt,
+    durationSeconds: r.durationSeconds,
+    estimatedSeconds: r.estimatedSeconds,
   };
 }
 
 export function getJobRow(id: string): JobRow | undefined {
-  return db().prepare("SELECT * FROM jobs WHERE id = ?").get(id) as JobRow | undefined;
+  return db().select().from(jobs).where(eq(jobs.id, id)).get();
 }
 
 export function listJobs(query: { status?: string; limit?: number } = {}): JobItem[] {
-  const active = query.status === "active";
-  const rows = db()
-    .prepare(
-      `SELECT * FROM jobs ${active ? "WHERE status IN ('queued', 'running')" : query.status ? "WHERE status = ?" : ""}
-       ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(...(query.status && !active ? [query.status] : []), Math.min(query.limit ?? 50, 500)) as JobRow[];
+  const filter: SQL | undefined =
+    query.status === "active" ? inArray(jobs.status, ["queued", "running"]) : query.status ? eq(jobs.status, query.status as JobStatus) : undefined;
+  const rows = db().select().from(jobs).where(filter).orderBy(desc(jobs.createdAt)).limit(Math.min(query.limit ?? 50, 500)).all();
   return rows.map(toItem);
 }
 
@@ -128,7 +109,7 @@ export function getJobDetail(id: string): JobDetail | null {
   return {
     ...toItem(row),
     log: tailFile(path.join(jobDir(id), "log.txt")),
-    video: row.video_id ? getVideo(row.video_id) : null,
+    video: row.videoId ? getVideo(row.videoId) : null,
     agent: readAgentEvents(id),
   };
 }
@@ -188,6 +169,17 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     const found = assetsForEngine({ ids: assetIds, kind: VISUAL_KINDS, limit: assetIds.length });
     if (found.length !== assetIds.length) throw new HttpError(400, "Một số asset đã chọn không còn trong thư viện (hoặc là audio)");
   }
+  if (libraryMode === "auto" && raw.webImages === false && !script) {
+    // Tắt tìm trên mạng: hình chỉ có thể đến từ thư viện, nên thư viện (trong phạm vi tag/thư mục đã chọn) phải có gì đó
+    const folders = libraryFoldersOf(raw).filter(folderExists);
+    const found = assetsForEngine({
+      tag: libraryTagsOf(raw).join(",") || undefined,
+      folders: folders.length ? folders : undefined,
+      kind: VISUAL_KINDS,
+      limit: 1,
+    });
+    if (!found.length) throw new HttpError(400, "Thư viện Assets chưa có ảnh/video nào trong phạm vi đã chọn nên không thể tắt tìm trên mạng");
+  }
   const musicId = raw.musicId || null;
   if (musicId && !assetFilePath(musicId, "audio")) throw new HttpError(400, "Không tìm thấy nhạc nền trong Assets");
   const musicVolume = Math.min(Math.max(Number(raw.musicVolume ?? DEFAULT_MUSIC_VOLUME) || 0, 0.01), 1);
@@ -196,7 +188,7 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     throw new HttpError(400, "Bố cục chia đôi cần chọn một video nền trong Assets");
   }
   const contactId = raw.contactId || null;
-  if (contactId && !db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(contactId)) {
+  if (contactId && !db().select({ one: sql`1` }).from(contacts).where(eq(contacts.id, contactId)).get()) {
     throw new HttpError(400, "Không tìm thấy khách hàng");
   }
   const feedback = String(raw.feedback ?? "").trim().slice(0, MAX_FEEDBACK_CHARS) || null;
@@ -280,7 +272,7 @@ export function libraryFoldersOf(input: Partial<JobInput>): string[] {
 /** Kịch bản (kèm id asset từng bước) của video do job tạo ra, dùng làm bản gốc khi sửa theo góp ý. */
 function baseScript(jobId: string): Script | null {
   const row = getJobRow(jobId);
-  return row?.video_id ? (getVideoDetail(row.video_id)?.script ?? null) : null;
+  return row?.videoId ? (getVideoDetail(row.videoId)?.script ?? null) : null;
 }
 
 /** Lấy tối đa chừng này job gần nhất đã xong để ước tính thời gian (đủ để bắt được vài job giống nhau, không chậm). */
@@ -303,15 +295,15 @@ function similarity(a: JobInput, b: JobInput): number {
 /** Ước tính thời gian chạy (giây) cho một job mới, dựa trên thời gian thực tế của job tương tự đã chạy xong gần đây. */
 export function estimateSeconds(input: JobInput): number | null {
   const rows = db()
-    .prepare(
-      `SELECT input, duration_seconds FROM jobs
-       WHERE status = 'succeeded' AND duration_seconds IS NOT NULL
-       ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(ESTIMATE_SAMPLE_LIMIT) as { input: string; duration_seconds: number }[];
+    .select({ input: jobs.input, durationSeconds: jobs.durationSeconds })
+    .from(jobs)
+    .where(and(eq(jobs.status, "succeeded"), isNotNull(jobs.durationSeconds)))
+    .orderBy(desc(jobs.createdAt))
+    .limit(ESTIMATE_SAMPLE_LIMIT)
+    .all();
   if (!rows.length) return null;
 
-  const scored = rows.map((r) => ({ duration: r.duration_seconds, score: similarity(JSON.parse(r.input) as JobInput, input) }));
+  const scored = rows.map((r) => ({ duration: r.durationSeconds!, score: similarity(JSON.parse(r.input) as JobInput, input) }));
   const bestScore = Math.max(...scored.map((s) => s.score));
   let pool = scored.filter((s) => s.score >= bestScore - 1).map((s) => s.duration);
   if (pool.length < ESTIMATE_MIN_SIMILAR) pool = scored.map((s) => s.duration);
@@ -323,8 +315,9 @@ export function estimateSeconds(input: JobInput): number | null {
 export function createJob(input: JobInput): JobItem {
   const id = crypto.randomUUID();
   db()
-    .prepare("INSERT INTO jobs (id, topic, input, contact_id, message, estimated_seconds) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, input.topic, JSON.stringify(input), input.contactId ?? null, "Đang chờ", estimateSeconds(input));
+    .insert(jobs)
+    .values({ id, topic: input.topic, input: JSON.stringify(input), contactId: input.contactId ?? null, message: "Đang chờ", estimatedSeconds: estimateSeconds(input) })
+    .run();
   return toItem(getJobRow(id)!);
 }
 
@@ -407,7 +400,8 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     const order = new Map(ids.map((id, i) => [id, i]));
     spec.library = assets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   } else if (input.libraryMode === "auto") {
-    // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
+    // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề.
+    // Tắt tìm trên mạng thì thư viện là nguồn hình duy nhất: asset chưa có thông tin vẫn tốt hơn nền chữ
     const limit = input.director ? DIRECTOR_LIBRARY_LIMIT : 300;
     const folders = libraryFoldersOf(input);
     spec.library = assetsForEngine({
@@ -416,7 +410,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
       kind: VISUAL_KINDS,
       limit,
     }).filter(
-      (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
+      (a) => !input.webImages || a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
   const base = spec.base_script as Script | undefined;
@@ -446,7 +440,7 @@ const ANALYSIS_WAIT_MS = 3 * 60_000;
 
 /** Job có nên chờ phân tích asset không (chỉ khi AI cần đọc thông tin asset để viết kịch bản). */
 export function waitsForAnalysis(row: JobRow): boolean {
-  if (Date.now() - Date.parse(row.created_at) > ANALYSIS_WAIT_MS) return false;
+  if (Date.now() - Date.parse(row.createdAt) > ANALYSIS_WAIT_MS) return false;
   const input = JSON.parse(row.input) as JobInput;
   if (input.script) return false;
   if (input.libraryMode === "selected") return countUnanalyzed({ ids: selectedAssetIds(input) }) > 0;
@@ -460,15 +454,14 @@ export async function deleteJob(id: string): Promise<boolean> {
   const row = getJobRow(id);
   if (!row) return false;
   if (row.status === "running" || row.status === "queued") throw new HttpError(409, "Hãy hủy job trước khi xóa");
-  db().prepare("DELETE FROM jobs WHERE id = ?").run(id);
+  db().delete(jobs).where(eq(jobs.id, id)).run();
   await fsp.rm(jobDir(id), { recursive: true, force: true });
   return true;
 }
 
 export function updateJob(id: string, fields: Partial<Omit<JobRow, "id">>): void {
-  const keys = Object.keys(fields);
-  if (!keys.length) return;
-  db()
-    .prepare(`UPDATE jobs SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`)
-    .run(...keys.map((k) => fields[k as keyof typeof fields] ?? null), id);
+  if (!Object.keys(fields).length) return;
+  // Trường để undefined được ghi thành NULL (Drizzle mặc định bỏ qua undefined)
+  const values = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, value ?? null]));
+  db().update(jobs).set(values).where(eq(jobs.id, id)).run();
 }

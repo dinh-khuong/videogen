@@ -1,21 +1,33 @@
 import "server-only";
 import crypto from "node:crypto";
+import { and, count, eq, isNull, sql } from "drizzle-orm";
 import { FOLDER_COLORS, type AssetFolder, type FolderColor, type FolderList } from "@/lib/types";
-import { SUBTREE_SQL, deleteAsset } from "./assets";
-import { db, nowIso } from "./db";
+import { deleteAsset, subtreeSql } from "./assets";
+import { db, inList, nowIso } from "./db";
 import { HttpError } from "./files";
+import { assetFolders, assets } from "./schema";
 
-type FolderRow = {
-  id: string;
-  name: string;
-  parent_id: string | null;
-  color: string | null;
-  starred: number;
-  created_at: string;
-  updated_at: string;
-  asset_count: number;
-  asset_bytes: number;
-};
+/** Mọi thư mục kèm số asset nằm trực tiếp trong đó và tổng dung lượng. */
+function readFolders() {
+  return db()
+    .select({
+      id: assetFolders.id,
+      name: assetFolders.name,
+      parentId: assetFolders.parentId,
+      color: assetFolders.color,
+      starred: assetFolders.starred,
+      createdAt: assetFolders.createdAt,
+      updatedAt: assetFolders.updatedAt,
+      assetCount: count(assets.id),
+      assetBytes: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)`,
+    })
+    .from(assetFolders)
+    .leftJoin(assets, eq(assets.folderId, assetFolders.id))
+    .groupBy(assetFolders.id)
+    .orderBy(sql`${assetFolders.name} COLLATE NOCASE`)
+    .all();
+}
+type FolderRow = ReturnType<typeof readFolders>[number];
 
 const MAX_NAME = 80;
 const MAX_DEPTH = 20;
@@ -35,28 +47,22 @@ function cleanColor(color: unknown): FolderColor | null {
 
 /** Mọi thư mục kèm số asset (trực tiếp và tính cả thư mục con), dung lượng, và số asset ở gốc. */
 export function listFolders(): FolderList {
-  const rows = db()
-    .prepare(
-      `SELECT f.id, f.name, f.parent_id, f.color, f.starred, f.created_at, f.updated_at,
-         COUNT(a.id) AS asset_count, COALESCE(SUM(a.size_bytes), 0) AS asset_bytes
-       FROM asset_folders f LEFT JOIN assets a ON a.folder_id = f.id
-       GROUP BY f.id ORDER BY f.name COLLATE NOCASE`,
-    )
-    .all() as FolderRow[];
+  const rows = readFolders();
   const lib = db()
-    .prepare(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(size_bytes), 0) AS bytes,
-         COALESCE(SUM(CASE WHEN folder_id IS NULL THEN 1 ELSE 0 END), 0) AS unfiled
-       FROM assets`,
-    )
-    .get() as { total: number; bytes: number; unfiled: number };
+    .select({
+      total: count(),
+      bytes: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)`,
+      unfiled: sql<number>`COALESCE(SUM(CASE WHEN ${assets.folderId} IS NULL THEN 1 ELSE 0 END), 0)`,
+    })
+    .from(assets)
+    .get()!;
 
   // Cộng dồn số asset/dung lượng từ thư mục con lên thư mục cha
   const children = new Map<string | null, FolderRow[]>();
-  for (const r of rows) children.set(r.parent_id, [...(children.get(r.parent_id) ?? []), r]);
+  for (const r of rows) children.set(r.parentId, [...(children.get(r.parentId) ?? []), r]);
   const totals = new Map<string, { assets: number; bytes: number }>();
   const visit = (r: FolderRow, depth: number): { assets: number; bytes: number } => {
-    const sum = { assets: r.asset_count, bytes: r.asset_bytes };
+    const sum = { assets: r.assetCount, bytes: r.assetBytes };
     if (depth < MAX_DEPTH * 2) {
       for (const c of children.get(r.id) ?? []) {
         const t = visit(c, depth + 1);
@@ -73,14 +79,14 @@ export function listFolders(): FolderList {
     items: rows.map((r) => ({
       id: r.id,
       name: r.name,
-      parentId: r.parent_id,
+      parentId: r.parentId,
       color: r.color && Object.hasOwn(FOLDER_COLORS, r.color) ? (r.color as FolderColor) : null,
       starred: !!r.starred,
-      assetCount: r.asset_count,
+      assetCount: r.assetCount,
       totalAssets: totals.get(r.id)!.assets,
       totalBytes: totals.get(r.id)!.bytes,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     })),
     unfiled: lib.unfiled,
     totalAssets: lib.total,
@@ -93,7 +99,7 @@ export function getFolder(id: string): AssetFolder | null {
 }
 
 export function folderExists(id: string): boolean {
-  return !!db().prepare("SELECT 1 FROM asset_folders WHERE id = ?").get(id);
+  return !!db().select({ one: sql`1` }).from(assetFolders).where(eq(assetFolders.id, id)).get();
 }
 
 /** Kiểm tra id thư mục gửi lên: null/"" = gốc thư viện (không thuộc thư mục nào). */
@@ -106,29 +112,25 @@ export function checkFolderId(value: unknown): string | null {
 /** Id các thư mục và mọi thư mục con cháu của chúng. */
 export function folderSubtree(ids: string[]): string[] {
   if (!ids.length) return [];
-  return (db().prepare(SUBTREE_SQL).all(JSON.stringify(ids)) as { id: string }[]).map((r) => r.id);
+  return db().all<{ id: string }>(subtreeSql(ids)).map((r) => r.id);
 }
 
 /** Độ sâu của thư mục (thư mục ở gốc = 1). */
 function depthOf(id: string | null): number {
   let depth = 0;
-  const parent = db().prepare("SELECT parent_id FROM asset_folders WHERE id = ?");
   for (let cur = id; cur && depth <= MAX_DEPTH + 1; depth++) {
-    cur = (parent.get(cur) as { parent_id: string | null } | undefined)?.parent_id ?? null;
+    cur = db().select({ parentId: assetFolders.parentId }).from(assetFolders).where(eq(assetFolders.id, cur)).get()?.parentId ?? null;
   }
   return depth;
 }
 
 /** Độ sâu của cây thư mục con dưới thư mục (chỉ thư mục đó = 1). */
 function subtreeHeight(id: string): number {
-  const row = db()
-    .prepare(
-      `WITH RECURSIVE sub(id, d) AS (
-         SELECT ?, 1 UNION ALL SELECT f.id, sub.d + 1 FROM asset_folders f JOIN sub ON f.parent_id = sub.id WHERE sub.d < 100
-       ) SELECT MAX(d) AS h FROM sub`,
-    )
-    .get(id) as { h: number };
-  return row.h;
+  const row = db().get<{ h: number }>(sql`
+    WITH RECURSIVE sub(id, d) AS (
+      SELECT ${id}, 1 UNION ALL SELECT f.id, sub.d + 1 FROM asset_folders f JOIN sub ON f.parent_id = sub.id WHERE sub.d < 100
+    ) SELECT MAX(d) AS h FROM sub`);
+  return row!.h;
 }
 
 export function createFolder(input: { name?: unknown; parentId?: unknown; color?: unknown; reuse?: unknown }): AssetFolder {
@@ -138,12 +140,14 @@ export function createFolder(input: { name?: unknown; parentId?: unknown; color?
   if (input.reuse === true) {
     // Tải cả thư mục từ máy lên: thư mục cùng tên đã có thì dùng lại, không tạo bản trùng
     const existing = db()
-      .prepare("SELECT id FROM asset_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ?")
-      .get(name, parentId) as { id: string } | undefined;
+      .select({ id: assetFolders.id })
+      .from(assetFolders)
+      .where(and(sql`${assetFolders.name} = ${name} COLLATE NOCASE`, parentId === null ? isNull(assetFolders.parentId) : eq(assetFolders.parentId, parentId)))
+      .get();
     if (existing) return getFolder(existing.id)!;
   }
   const id = crypto.randomUUID();
-  db().prepare("INSERT INTO asset_folders (id, name, parent_id, color) VALUES (?, ?, ?, ?)").run(id, name, parentId, cleanColor(input.color));
+  db().insert(assetFolders).values({ id, name, parentId, color: cleanColor(input.color) }).run();
   return getFolder(id)!;
 }
 
@@ -153,31 +157,16 @@ export function updateFolder(
   patch: { name?: unknown; color?: unknown; starred?: unknown; parentId?: unknown },
 ): AssetFolder | null {
   if (!folderExists(id)) return null;
-  const sets: string[] = [];
-  const params: unknown[] = [];
-  if (patch.name !== undefined) {
-    sets.push("name = ?");
-    params.push(cleanName(patch.name));
-  }
-  if (patch.color !== undefined) {
-    sets.push("color = ?");
-    params.push(cleanColor(patch.color));
-  }
-  if (patch.starred !== undefined) {
-    sets.push("starred = ?");
-    params.push(patch.starred ? 1 : 0);
-  }
+  const set: Partial<typeof assetFolders.$inferInsert> = {};
+  if (patch.name !== undefined) set.name = cleanName(patch.name);
+  if (patch.color !== undefined) set.color = cleanColor(patch.color);
+  if (patch.starred !== undefined) set.starred = patch.starred ? 1 : 0;
   if (patch.parentId !== undefined) {
     const parentId = checkFolderId(patch.parentId);
     checkFolderMove(id, parentId);
-    sets.push("parent_id = ?");
-    params.push(parentId);
+    set.parentId = parentId;
   }
-  if (sets.length) {
-    db()
-      .prepare(`UPDATE asset_folders SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`)
-      .run(...params, nowIso(), id);
-  }
+  if (Object.keys(set).length) db().update(assetFolders).set({ ...set, updatedAt: nowIso() }).where(eq(assetFolders.id, id)).run();
   return getFolder(id);
 }
 
@@ -194,33 +183,28 @@ function checkFolderMove(id: string, parentId: string | null): void {
  * withContents = true thì xóa vĩnh viễn cả thư mục con và asset bên trong.
  */
 export async function deleteFolder(id: string, withContents = false): Promise<boolean> {
-  const row = db().prepare("SELECT parent_id FROM asset_folders WHERE id = ?").get(id) as { parent_id: string | null } | undefined;
+  const row = db().select({ parentId: assetFolders.parentId }).from(assetFolders).where(eq(assetFolders.id, id)).get();
   if (!row) return false;
   if (withContents) {
-    const subtree = folderSubtree([id]);
-    const assets = db()
-      .prepare("SELECT id FROM assets WHERE folder_id IN (SELECT value FROM json_each(?))")
-      .all(JSON.stringify(subtree)) as { id: string }[];
-    for (const a of assets) await deleteAsset(a.id);
+    const inside = db().select({ id: assets.id }).from(assets).where(inList(assets.folderId, folderSubtree([id]))).all();
+    for (const a of inside) await deleteAsset(a.id);
     // ON DELETE CASCADE xóa luôn thư mục con
-    db().prepare("DELETE FROM asset_folders WHERE id = ?").run(id);
+    db().delete(assetFolders).where(eq(assetFolders.id, id)).run();
     return true;
   }
-  db().transaction(() => {
+  db().transaction((tx) => {
     const now = nowIso();
-    db().prepare("UPDATE assets SET folder_id = ?, updated_at = ? WHERE folder_id = ?").run(row.parent_id, now, id);
-    db().prepare("UPDATE asset_folders SET parent_id = ?, updated_at = ? WHERE parent_id = ?").run(row.parent_id, now, id);
-    db().prepare("DELETE FROM asset_folders WHERE id = ?").run(id);
-  })();
+    tx.update(assets).set({ folderId: row.parentId, updatedAt: now }).where(eq(assets.folderId, id)).run();
+    tx.update(assetFolders).set({ parentId: row.parentId, updatedAt: now }).where(eq(assetFolders.parentId, id)).run();
+    tx.delete(assetFolders).where(eq(assetFolders.id, id)).run();
+  });
   return true;
 }
 
 /** Chuyển nhiều asset vào thư mục (folderId = null: ra gốc thư viện). Trả về số asset đã chuyển. */
 export function moveAssets(ids: string[], folderId: string | null): number {
   if (!ids.length) return 0;
-  return db()
-    .prepare("UPDATE assets SET folder_id = ?, updated_at = ? WHERE id IN (SELECT value FROM json_each(?))")
-    .run(folderId, nowIso(), JSON.stringify(ids)).changes;
+  return db().update(assets).set({ folderId, updatedAt: nowIso() }).where(inList(assets.id, ids)).run().changes;
 }
 
 /** Chuyển nhiều thư mục vào thư mục khác (null = ra gốc). Kiểm tra hết trước khi chuyển. */
@@ -231,10 +215,9 @@ export function moveFolders(ids: string[], parentId: string | null): number {
   unique = unique.filter((id) => !inside.has(id));
   if (!unique.length) return 0;
   for (const id of unique) checkFolderMove(id, parentId);
-  const update = db().prepare("UPDATE asset_folders SET parent_id = ?, updated_at = ? WHERE id = ?");
-  db().transaction(() => {
+  db().transaction((tx) => {
     const now = nowIso();
-    for (const id of unique) update.run(parentId, now, id);
-  })();
+    for (const id of unique) tx.update(assetFolders).set({ parentId, updatedAt: now }).where(eq(assetFolders.id, id)).run();
+  });
   return unique.length;
 }

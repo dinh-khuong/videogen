@@ -137,7 +137,7 @@ function describeInput(job: JobDetail): string[] {
     `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
     `Assets: ${{ off: "không dùng", auto: `AI tự chọn${libraryTagsLabel(i)}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,
-    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : "không"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}${i.webImages && i.searchEngine && i.searchEngine !== "auto" ? ` · tìm ảnh bằng ${SEARCH_ENGINES[i.searchEngine]?.label ?? i.searchEngine}` : ""}`,
+    `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : i.libraryMode === "off" ? "không" : "không (chỉ lấy trong thư viện Assets)"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}${i.webImages && i.searchEngine && i.searchEngine !== "auto" ? ` · tìm ảnh bằng ${SEARCH_ENGINES[i.searchEngine]?.label ?? i.searchEngine}` : ""}`,
   ];
   if (i.videoType || i.length) {
     lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);

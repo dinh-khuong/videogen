@@ -79,6 +79,10 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - *AI tự chọn từ Assets* (mặc định): AI đọc mô tả, tóm tắt và chữ trong từng asset rồi tự gán asset phù hợp cho từng bước. Bước nào không có asset khớp thì tìm ảnh trên mạng.
   - *Dùng asset tôi chọn*: các asset bạn chọn là nội dung chính. AI viết lời bình dựa trên nội dung và chữ đọc được trong từng asset (vd tên món, giá), theo đúng thứ tự bạn chọn.
   - Asset của bạn hiển thị **trọn vẹn trong khung** (không bị cắt) trên nền mờ. Clip video được tắt tiếng và tự lặp nếu ngắn hơn lời bình. Ảnh tìm trên mạng phủ kín khung.
+  - **Chỉ lấy trong thư viện, không tìm trên mạng**: công tắc dưới hai chế độ trên (tương ứng `"webImages": false` ở API). Bước nào AI chưa gán được hình (hoặc ít hình hơn tần suất đổi hình bạn đặt)
+    thì engine lấy asset khớp nhất trong thư viện, ưu tiên cái chưa dùng, dùng lại khi thư viện không đủ, thay vì để nền chữ; Đạo diễn AI cũng không gọi `search_web`
+    (meme không dùng để lấp chỗ trống). Thư viện trống (theo tag/thư mục đã chọn) thì API từ chối tạo video.
+  - **Dùng gần đây**: ở bộ chọn asset khi tạo video, asset bạn vừa chọn cho một job (kể cả job chưa xong), hoặc ảnh/clip bạn tải lên đã có trong video, được đưa lên đầu (tối đa 12). API: `GET /api/assets?sort=recent`, kết quả có `lastUsedAt`.
 - **Clip video trên mạng** cho các bước chưa có asset: chọn "AI tự chọn ảnh hay clip" (AI dùng clip cho phần lớn các bước, chỉ dùng ảnh cho chân dung, sơ đồ, bảng giá...), "Ưu tiên clip video" hoặc "Chỉ ảnh".
   - Mỗi bước ghép **nhiều clip nối tiếp** (1–6, mặc định 3) với chuyển cảnh mềm; mở đầu và kết thúc là montage cắt nhanh từ clip của các bước.
   - **Tần suất hình**: ô "Đổi ảnh/clip mỗi (giây)" trong form để cứ N giây đổi sang ảnh/clip mới (bỏ trống = tự động). Số hình mỗi bước tính theo thời lượng lời bình
@@ -292,9 +296,27 @@ web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
   src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)
   src/lib/video-options.ts   # danh sách giọng, ngôn ngữ, loại video, phong cách, mẫu nhanh (dùng chung client/server)
-  src/lib/server/            # db (SQLite + migration), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, tokens (token API truyền cho engine), repo
+  src/lib/server/            # db + schema (SQLite qua Drizzle ORM), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, tokens (token API truyền cho engine), repo
+  drizzle/                   # file migration SQL do drizzle-kit sinh (áp dụng tự động khi server mở database)
 data/                        # dữ liệu local (tự tạo khi chạy)
 ```
+
+## Database (Drizzle ORM)
+
+Cấu trúc bảng nằm ở một chỗ duy nhất: `web/src/lib/server/schema.ts`. Thay đổi schema:
+
+```bash
+cd web
+# sửa schema.ts, rồi sinh file migration vào web/drizzle/ (commit cùng thay đổi)
+npm run db:generate
+# xem/sửa dữ liệu bằng giao diện web (Drizzle Studio); DATA_DIR giống paths.ts
+npm run db:studio
+```
+
+Khi server mở `data/app.db` nó tự áp dụng các migration còn thiếu, không cần chạy lệnh nào. Database tạo bằng hệ migration cũ (đánh số bằng `PRAGMA user_version`) được nâng lên schema cuối của hệ cũ
+(`legacy-migrations.ts`, đã đóng băng) rồi ghi nhận migration nền `0000_baseline` là đã áp dụng, nên dữ liệu hiện có giữ nguyên. Truy vấn dùng query builder của Drizzle (`db().select()...`);
+truy vấn đặc biệt (CTE đệ quy, `json_each`) dùng thẻ `sql`. Đừng dùng cột bảng trong trường select viết bằng `sql` của truy vấn một bảng khi tiểu truy vấn cần tham chiếu bảng ngoài: Drizzle bỏ tên bảng
+khỏi các cột đó, hãy viết tiểu truy vấn đó bằng SQL thô như `assets.ts` và `contacts.ts` đang làm.
 
 ## Lưu ý
 

@@ -13,6 +13,8 @@ export const TMP_DIR = path.join(DATA_DIR, "tmp");
 /** File tạo lại được (vd mẫu nghe thử giọng đọc), xóa thoải mái. */
 export const CACHE_DIR = path.join(DATA_DIR, "cache");
 export const DB_PATH = path.join(DATA_DIR, "app.db");
+/** File migration SQL do drizzle-kit sinh (web/drizzle), áp dụng khi mở database. */
+export const MIGRATIONS_DIR = path.resolve(/* turbopackIgnore: true */ process.cwd(), "drizzle");
 
 export const ENGINE_DIR = path.resolve(/* turbopackIgnore: true */ process.env.ENGINE_DIR || path.join(PROJECT_ROOT, "engine"));
 

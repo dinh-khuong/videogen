@@ -1,29 +1,17 @@
 import "server-only";
 import crypto from "node:crypto";
 import path from "node:path";
+import { and, asc, count, desc, eq, like, or, type SQL } from "drizzle-orm";
 import { parseHashtags } from "@/lib/hashtags";
 import type { Page, Script, VideoDetail, VideoItem } from "@/lib/types";
 import { getAsset } from "./assets";
 import { db, nowIso } from "./db";
 import { moveFile, removeMedia } from "./files";
 import { MEDIA_DIR, mediaUrl } from "./paths";
-import { setTags, tagFilterParam, tagFilterSql, tagsFor } from "./tags";
+import { contactVideos, contacts, videoAssets, videos } from "./schema";
+import { hasAnyTag, setTags, tagsFor } from "./tags";
 
-type VideoRow = {
-  id: string;
-  file: string;
-  thumbnail: string | null;
-  title: string;
-  description: string;
-  kind: "generated";
-  duration: number | null;
-  width: number | null;
-  height: number | null;
-  size_bytes: number | null;
-  script: string | null;
-  job_id: string | null;
-  created_at: string;
-};
+type VideoRow = typeof videos.$inferSelect;
 
 export function toVideoItems(rows: VideoRow[]): VideoItem[] {
   const tags = tagsFor("video", rows.map((r) => r.id));
@@ -38,36 +26,27 @@ export function toVideoItems(rows: VideoRow[]): VideoItem[] {
     duration: r.duration,
     width: r.width,
     height: r.height,
-    sizeBytes: r.size_bytes,
-    jobId: r.job_id,
-    createdAt: r.created_at,
+    sizeBytes: r.sizeBytes,
+    jobId: r.jobId,
+    createdAt: r.createdAt,
   }));
 }
 
 export type VideoQuery = { q?: string; tag?: string; limit?: number; offset?: number };
 
 export function listVideos(query: VideoQuery = {}): Page<VideoItem> {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
-  if (query.q) {
-    clauses.push("(v.title LIKE ? OR v.description LIKE ?)");
-    params.push(`%${query.q}%`, `%${query.q}%`);
-  }
-  if (query.tag) {
-    clauses.push(tagFilterSql("video", "v"));
-    params.push(tagFilterParam(query.tag));
-  }
-  const sql = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+  const conditions: (SQL | undefined)[] = [];
+  if (query.q) conditions.push(or(like(videos.title, `%${query.q}%`), like(videos.description, `%${query.q}%`)));
+  if (query.tag) conditions.push(hasAnyTag("video", videos.id, query.tag));
+  const where = and(...conditions);
   const limit = Math.min(Math.max(query.limit ?? 48, 1), 500);
-  const rows = db()
-    .prepare(`SELECT v.* FROM videos v${sql} ORDER BY v.created_at DESC LIMIT ? OFFSET ?`)
-    .all(...params, limit, query.offset ?? 0) as VideoRow[];
-  const { total } = db().prepare(`SELECT COUNT(*) AS total FROM videos v${sql}`).get(...params) as { total: number };
+  const rows = db().select().from(videos).where(where).orderBy(desc(videos.createdAt)).limit(limit).offset(query.offset ?? 0).all();
+  const { total } = db().select({ total: count() }).from(videos).where(where).get()!;
   return { items: toVideoItems(rows), total };
 }
 
 function getRow(id: string): VideoRow | undefined {
-  return db().prepare("SELECT * FROM videos WHERE id = ?").get(id) as VideoRow | undefined;
+  return db().select().from(videos).where(eq(videos.id, id)).get();
 }
 
 export function getVideo(id: string): VideoItem | null {
@@ -78,31 +57,31 @@ export function getVideo(id: string): VideoItem | null {
 export function getVideoDetail(id: string): VideoDetail | null {
   const row = getRow(id);
   if (!row) return null;
-  const assets = (
-    db().prepare("SELECT asset_id, step, position FROM video_assets WHERE video_id = ? ORDER BY step, position").all(id) as {
-      asset_id: string;
-      step: number;
-      position: number;
-    }[]
-  )
+  const assets = db()
+    .select({ assetId: videoAssets.assetId, step: videoAssets.step, position: videoAssets.position })
+    .from(videoAssets)
+    .where(eq(videoAssets.videoId, id))
+    .orderBy(asc(videoAssets.step), asc(videoAssets.position))
+    .all()
     .map((r) => {
-      const asset = getAsset(r.asset_id);
+      const asset = getAsset(r.assetId);
       return asset ? { ...asset, step: r.step, position: r.position } : null;
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
-  const contacts = db()
-    .prepare(
-      `SELECT c.id, c.name, c.company FROM contact_videos cv JOIN contacts c ON c.id = cv.contact_id
-       WHERE cv.video_id = ? ORDER BY c.name`,
-    )
-    .all(id) as VideoDetail["contacts"];
+  const linked = db()
+    .select({ id: contacts.id, name: contacts.name, company: contacts.company })
+    .from(contactVideos)
+    .innerJoin(contacts, eq(contacts.id, contactVideos.contactId))
+    .where(eq(contactVideos.videoId, id))
+    .orderBy(asc(contacts.name))
+    .all();
   let script: Script | null = null;
   try {
     script = row.script ? (JSON.parse(row.script) as Script) : null;
   } catch {
     script = null;
   }
-  return { ...toVideoItems([row])[0], script, assets, contacts };
+  return { ...toVideoItems([row])[0], script, assets, contacts: linked };
 }
 
 export type NewVideo = {
@@ -133,13 +112,22 @@ export async function moveVideoFiles(video: NewVideo): Promise<{ id: string; fil
 
 export function insertVideo(video: NewVideo, files: { id: string; file: string; thumb: string | null }): void {
   db()
-    .prepare(
-      `INSERT INTO videos (id, file, thumbnail, title, description, kind, duration, width, height, size_bytes, script, job_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(files.id, files.file, files.thumb, video.title, video.description, video.kind, video.duration ?? null,
-      video.width ?? null, video.height ?? null, video.size, video.script ? JSON.stringify(video.script) : null,
-      video.jobId ?? null);
+    .insert(videos)
+    .values({
+      id: files.id,
+      file: files.file,
+      thumbnail: files.thumb,
+      title: video.title,
+      description: video.description,
+      kind: video.kind,
+      duration: video.duration ?? null,
+      width: video.width ?? null,
+      height: video.height ?? null,
+      sizeBytes: video.size,
+      script: video.script ? JSON.stringify(video.script) : null,
+      jobId: video.jobId ?? null,
+    })
+    .run();
   setTags("video", files.id, parseHashtags(video.description));
 }
 
@@ -148,17 +136,17 @@ export function updateVideo(id: string, patch: { title?: string; description?: s
   if (!current) return null;
   const title = patch.title ?? current.title;
   const description = patch.description ?? current.description;
-  db().transaction(() => {
-    db().prepare("UPDATE videos SET title = ?, description = ?, updated_at = ? WHERE id = ?").run(title, description, nowIso(), id);
+  db().transaction((tx) => {
+    tx.update(videos).set({ title, description, updatedAt: nowIso() }).where(eq(videos.id, id)).run();
     setTags("video", id, parseHashtags(description));
-  })();
+  });
   return getVideo(id);
 }
 
 export async function deleteVideo(id: string): Promise<boolean> {
   const row = getRow(id);
   if (!row) return false;
-  db().prepare("DELETE FROM videos WHERE id = ?").run(id);
+  db().delete(videos).where(eq(videos.id, id)).run();
   await removeMedia(row.file, row.thumbnail);
   return true;
 }

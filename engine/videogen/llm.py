@@ -232,6 +232,25 @@ def shortlist(topic: str, library: list[LibraryAsset], limit: int = AUTO_LIBRARY
     return [a for i, a in enumerate(library) if i in keep]
 
 
+def pick_assets(text: str, library: list[LibraryAsset], used: dict[str, int], count: int = 1,
+                exclude: tuple[str, ...] | list[str] = ()) -> list[LibraryAsset]:
+    """Asset hợp nhất với đoạn chữ khi không được tìm trên mạng. Có từ trùng với `text` thì đứng trước, rồi ít bị
+    dùng nhất (để các bước không lặp hình), rồi nhiều từ trùng nhất; bằng điểm thì giữ thứ tự thư viện.
+    Ghi nhận lượt dùng vào `used`; không trả về asset trong `exclude` và không trùng nhau."""
+    words = _tokens(text) - _HASHTAG_STOP
+    ranked = []
+    for i, asset in enumerate(library):
+        if asset.id in exclude:
+            continue
+        hits = len(words & _tokens(asset.search_text()))
+        ranked.append((hits == 0, used.get(asset.id, 0), -hits, i, asset))
+    ranked.sort(key=lambda r: r[:4])
+    picked = [r[4] for r in ranked[:max(count, 0)]]
+    for asset in picked:
+        used[asset.id] = used.get(asset.id, 0) + 1
+    return picked
+
+
 def normalize_hashtags(values) -> list[str]:
     tags: list[str] = []
     for v in values or []:

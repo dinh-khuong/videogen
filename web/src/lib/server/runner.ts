@@ -3,12 +3,14 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { and, asc, eq } from "drizzle-orm";
 import { analyzer } from "./analyzer";
 import { db, nowIso } from "./db";
 import { EVENT_PREFIX, engineArgs, engineEnv, killTree } from "./engine";
 import { ingestResult, type EngineResult } from "./ingest";
-import { buildSpec, getJobRow, jobDir, updateJob, waitsForAnalysis, type JobRow } from "./jobs";
+import { buildSpec, getJobRow, jobDir, updateJob, waitsForAnalysis } from "./jobs";
 import { ENGINE_DIR, PYTHON_BIN, TMP_DIR, ensureDirs } from "./paths";
+import { jobs } from "./schema";
 
 const CONCURRENCY = Math.max(1, Number(process.env.JOB_CONCURRENCY) || 1);
 const PROGRESS_WRITE_MS = 600;
@@ -46,13 +48,13 @@ class JobRunner {
     this.started = true;
     ensureDirs();
     // Job đang chạy dở khi server tắt không thể tiếp tục (tiến trình engine của nó đã dừng)
-    const stale = db().prepare("SELECT id, pid FROM jobs WHERE status = 'running'").all() as { id: string; pid: number | null }[];
+    const stale = db().select({ id: jobs.id, pid: jobs.pid }).from(jobs).where(eq(jobs.status, "running")).all();
     for (const job of stale) {
       if (job.pid && isAlive(job.pid)) continue;
       updateJob(job.id, {
         status: "failed",
         error: "Server đã dừng khi job đang chạy. Bấm \"Chạy lại\" để thử lại.",
-        finished_at: nowIso(),
+        finishedAt: nowIso(),
         pid: null,
       });
     }
@@ -84,8 +86,10 @@ class JobRunner {
       return true;
     }
     const res = db()
-      .prepare("UPDATE jobs SET status = 'canceled', finished_at = ?, message = 'Đã hủy' WHERE id = ? AND status = 'queued'")
-      .run(nowIso(), id);
+      .update(jobs)
+      .set({ status: "canceled", finishedAt: nowIso(), message: "Đã hủy" })
+      .where(and(eq(jobs.id, id), eq(jobs.status, "queued")))
+      .run();
     return res.changes > 0;
   }
 
@@ -95,7 +99,7 @@ class JobRunner {
       this.waitTimer = null;
     }
     if (this.running.size >= CONCURRENCY) return;
-    const queued = db().prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at").all() as JobRow[];
+    const queued = db().select().from(jobs).where(eq(jobs.status, "queued")).orderBy(asc(jobs.createdAt)).all();
     let waiting = false;
     for (const row of queued) {
       if (this.running.size >= CONCURRENCY) break;
@@ -113,11 +117,10 @@ class JobRunner {
   private launch(id: string): void {
     // Nhận job một cách nguyên tử để không bao giờ chạy trùng một job
     const claimed = db()
-      .prepare(
-        `UPDATE jobs SET status = 'running', started_at = ?, progress = 0, stage = 'script',
-         message = 'Đang khởi động engine', error = NULL WHERE id = ? AND status = 'queued'`,
-      )
-      .run(nowIso(), id);
+      .update(jobs)
+      .set({ status: "running", startedAt: nowIso(), progress: 0, stage: "script", message: "Đang khởi động engine", error: null })
+      .where(and(eq(jobs.id, id), eq(jobs.status, "queued")))
+      .run();
     if (!claimed.changes) return;
     const row = getJobRow(id)!;
     const dir = jobDir(id);
@@ -128,7 +131,7 @@ class JobRunner {
       specPath = path.join(dir, "spec.json");
       fs.writeFileSync(specPath, JSON.stringify(buildSpec(row), null, 2));
     } catch (e) {
-      updateJob(id, { status: "failed", error: (e as Error).message, finished_at: nowIso() });
+      updateJob(id, { status: "failed", error: (e as Error).message, finishedAt: nowIso() });
       return;
     }
 
@@ -217,21 +220,21 @@ class JobRunner {
     if (state.done) return;
     state.done = true;
     if (state.flushTimer) clearTimeout(state.flushTimer);
-    const duration_seconds = Math.round((Date.now() - state.startedAt) / 1000);
+    const durationSeconds = Math.round((Date.now() - state.startedAt) / 1000);
     try {
       if (state.canceled) {
-        updateJob(id, { status: "canceled", message: "Đã hủy", finished_at: nowIso(), duration_seconds, pid: null });
+        updateJob(id, { status: "canceled", message: "Đã hủy", finishedAt: nowIso(), durationSeconds, pid: null });
       } else if (code === 0 && state.result) {
         updateJob(id, { stage: "save", message: "Đang lưu vào thư viện", progress: 1 });
         const videoId = await ingestResult(getJobRow(id)!, state.result);
-        updateJob(id, { status: "succeeded", video_id: videoId, message: "Hoàn tất", finished_at: nowIso(), duration_seconds, pid: null });
+        updateJob(id, { status: "succeeded", videoId, message: "Hoàn tất", finishedAt: nowIso(), durationSeconds, pid: null });
       } else {
         const error = state.error || state.tail.slice(-6).join("\n") || `Engine thoát với mã ${code}`;
-        updateJob(id, { status: "failed", error, finished_at: nowIso(), duration_seconds, pid: null });
+        updateJob(id, { status: "failed", error, finishedAt: nowIso(), durationSeconds, pid: null });
       }
     } catch (e) {
       state.log.write(`LỖI lưu kết quả: ${(e as Error).stack}\n`);
-      updateJob(id, { status: "failed", error: `Lỗi lưu kết quả: ${(e as Error).message}`, finished_at: nowIso(), duration_seconds, pid: null });
+      updateJob(id, { status: "failed", error: `Lỗi lưu kết quả: ${(e as Error).message}`, finishedAt: nowIso(), durationSeconds, pid: null });
     } finally {
       state.log.end();
       this.running.delete(id);
