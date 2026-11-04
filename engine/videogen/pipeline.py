@@ -691,10 +691,10 @@ def run(
             start, end = span["start"], span["end"]
             if line.get("camera"):
                 camera.append((start, line["camera"]))
-            if line.get("sfx"):
-                sounds.append((max(0.0, start - 0.05), line["sfx"]))
-            if line.get("sound") in sound_files:
+            if line.get("sound") in sound_files:  # tiếng thật trong thư viện thay cho sfx tổng hợp
                 sounds.append((max(0.0, start - 0.05), sound_files[line["sound"]]))
+            elif line.get("sfx"):
+                sounds.append((max(0.0, start - 0.05), line["sfx"]))
             show = max(head + start, not_before)
             sticker = stickers.get(j)
             if sticker and head + end + 0.5 - show > 0.8:

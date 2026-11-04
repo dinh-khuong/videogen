@@ -121,7 +121,8 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - **Audio** (mp3, m4a, aac, wav, ogg, flac, opus) nằm chung trang Assets, có ảnh sóng âm và tóm tắt AI (từ tên + mô tả, vd thể loại, tâm trạng). Khi tạo video (hoặc tạo lại từ kịch bản đã sửa), chọn một audio làm **nhạc nền**: nhạc lặp suốt video, chỉnh được âm lượng, mờ dần ở cuối.
   - **Âm thanh hiệu ứng từ Assets**: ngoài nhạc nền, bật "Cho AI chèn âm thanh từ thư viện Assets" (Đạo diễn AI) để AI tự tìm
     (công cụ `search_sounds`) và gắn tiếng ngắn (audio dài tối đa 10 giây: tiếng động, meme sound, vỗ tay...) vào đúng câu
-    thoại cần nhấn, thay cho hiệu ứng tổng hợp có sẵn khi có tiếng khớp. Đặt tên/mô tả cho từng audio để AI chọn đúng. Âm
+    thoại cần nhấn (khoảng một nửa số câu). Khi thư viện có âm thanh, AI không dùng hiệu ứng tổng hợp nữa: sfx nó lỡ chọn được
+    đổi sang tiếng thư viện tương ứng (vd boom → tiếng "vine boom"), không có tiếng khớp thì bỏ. Đặt tên/mô tả cho từng audio để AI chọn đúng. Âm
     thanh nào được dùng hiện trong "Assets dùng trong video" (nhãn "Âm thanh · bước N") và được giữ khi sửa kịch bản tạo lại.
   - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép. Tiêu đề do AI tự đặt, không chép nguyên văn chủ đề (trùng thì AI phải viết lại);
     hashtag là hashtag đăng mạng xã hội (6–10 cái), không phải từ khóa tìm ảnh, và được bổ sung nếu AI viết thiếu.

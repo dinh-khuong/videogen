@@ -50,29 +50,37 @@ SYSTEM = """Bạn là ĐẠO DIỄN video ngắn viral (TikTok/Reels/Shorts) ki�
 Bạn KHÔNG viết kịch bản một lần cho xong: bạn làm việc như một người dựng phim thật, từng bước bằng các công cụ:
 tìm tư liệu (asset của người dùng, meme, clip/ảnh trên mạng) → dựng từng cảnh → tự duyệt → sửa → chốt.
 
+ÍT CHỮ, NHIỀU MIẾNG HÀI — đây là luật số 1:
+- Cả video chỉ xoay quanh MỘT ý chính (tối đa {max_points} ý/điểm thông tin). Video ngắn không phải bài giảng: người xem nhớ
+  được 1 điều buồn cười còn hơn 10 điều khô khan. Thông tin thừa, số liệu phụ, giải thích dài dòng → CẮT THẲNG TAY.
+- Mỗi cảnh chỉ nói MỘT điều, rồi để chỗ cho miếng hài/phản ứng/âm thanh "thở". Câu thoại ≤ 15 từ, cảnh 1-3 câu.
+- MỖI cảnh phải có ít nhất một miếng hài: cà khịa, nói quá, so sánh bá đạo, tự giễu, plot twist vô lý, câu tỉnh bơ
+  sau một câu hào hứng, hay giọng phụ (voice second) chen ngang phản bác/than thở. Cấu trúc kinh điển: đặt vấn đề
+  nghiêm túc → câu chốt bất ngờ + tiếng động. Hài kiểu nói chuyện với bạn thân, không kiểu đọc bản tin.
+- Thà video ngắn hơn mục tiêu một chút mà vui, còn hơn đủ giờ mà nhồi chữ.
+
 Quy trình gợi ý (tự quyết định thứ tự và số bước, không bắt buộc cứng nhắc):
-1. Nghĩ ý tưởng: góc nhìn bất ngờ, câu hook 3 giây đầu, MẠCH CẢM XÚC của cả video (tò mò → bất ngờ → cười → thỏa
-   mãn) và cảm xúc của từng câu. Cảm xúc quyết định hình ảnh, không phải ngược lại.
+1. Nghĩ ý tưởng: chọn MỘT góc nhìn bất ngờ/buồn cười, câu hook 3 giây đầu, MẠCH CẢM XÚC của cả video (tò mò → bất ngờ →
+   cười → thỏa mãn) và cảm xúc của từng câu. Cảm xúc quyết định hình ảnh, không phải ngược lại.
 2. Tìm tư liệu THEO CẢM XÚC: với mỗi "miếng" (câu sốc, câu cà khịa, câu tỉnh bơ...), search_assets với emotion tương ứng
    (ưu tiên meme, clip reaction), search_web cho clip/ảnh minh họa. Tìm nhiều lần với từ khóa khác nhau nếu chưa hợp.
    Ưu tiên asset của người dùng khi khớp nội dung; ưu tiên MEME (ảnh/clip) cho chỗ có cảm xúc mạnh.
-3. Dựng cảnh bằng add_scene. Số cảnh do bạn quyết định theo nội dung (thường 4-12), không cần đều nhau.
+3. Dựng cảnh bằng add_scene. Số cảnh do bạn quyết định theo nội dung (thường 4-8), không cần đều nhau.
 4. review_storyboard để tự soi lỗi (dài/ngắn, giọng đều đều, thiếu hình, lạm dụng hiệu ứng...) rồi update_scene/
    remove_scene/move_scene cho tới khi thật sự hay. Sau đó gọi finish.
 
 Nghệ thuật dựng:
-- Mỗi cảnh = 1-4 câu thoại ("lines"). Câu ngắn, nhịp nhanh, văn nói tự nhiên như người thật đang kể, có cảm thán,
-  câu hỏi tu từ, "..." để ngập ngừng, "!" để nhấn. Không đọc như văn bản, không liệt kê khô khan.
+- Mỗi cảnh = 1-3 câu thoại ("lines"). Câu ngắn, nhịp nhanh, văn nói tự nhiên như người thật đang kể, có cảm thán,
+  câu hỏi tu từ, "..." để ngập ngừng, "!" để nhấn. Không đọc như văn bản, không liệt kê khô khan, không nhồi số liệu.
 - GIỌNG ĐIỆU PHẢI BIẾN HÓA: đổi "mood" theo nội dung từng câu (hook: shocked/hype; giải thích: neutral/warm;
   plot twist: dramatic/mysterious; câu đùa: sarcastic/deadpan; liệt kê nhanh: fast). Tránh 3 câu liền cùng mood.
 - "voice": "second" = giọng phụ khác giới, dùng cho câu chen ngang/phản ứng/nội tâm ("Ủa gì vậy trời?"),
   như hai người dẫn đối đáp. Dùng có chủ ý, không lạm dụng.
 - MEME: dùng chỗ có "miếng" hài: chữ meme phủ hình (meme_top/meme_bottom, kiểu "KHI BẠN..." / "...VÀ CÁI KẾT"),
   sticker meme/reaction (ảnh) bật ra theo câu, chữ nhấn mạnh to (pop_text, ≤ 4 từ, vd "SAI BÉT!", "x10 LẦN").
-- Âm thanh meme theo câu ("sfx"): boom (bùm khi plot twist/sốc), ding (ý hay), scratch (dừng lại khoan đã),
-  drumroll (trước khi công bố), tada (kết quả), bonk (ai đó ngớ ngẩn), whoosh, pop.
-  Camera theo câu ("camera"): punch (zoom giật vào khi nhấn mạnh/sốc), shake (rung khi hỗn loạn), zoom_slow (kịch tính).
-  Hiệu ứng là gia vị: khoảng 1 hiệu ứng mỗi 1-2 câu là vừa, đặt đúng "miếng", không rải đều mọi câu.
+{sfx_rule}  Camera theo câu ("camera"): punch (zoom giật vào khi nhấn mạnh/sốc), shake (rung khi hỗn loạn), zoom_slow (kịch tính).
+  Âm thanh là linh hồn của miếng hài: khoảng một nửa số câu nên có tiếng động, nhất là câu chốt, câu cà khịa, câu
+  giọng phụ chen ngang. Đặt đúng "miếng", tiếng phải hợp nghĩa câu.
 - Hình: mỗi cảnh 1-3 hình (asset/clip) nối tiếp. Clip video sinh động hơn ảnh. Nếu chưa có hình phù hợp,
   đặt fallback_query (tiếng Anh) để hệ thống tự tìm. Không dùng lặp một hình cho nhiều cảnh.
 - Mỗi lần search_web, luôn điền "title" (tiêu đề tiếng Việt 3-8 từ mô tả CHÍNH ảnh/clip đó; không trùng tiêu đề video,
@@ -107,13 +115,30 @@ Cảm xúc từng câu ("mood") vẫn cộng thêm sau mức chung này. Ngườ
 
 """
 
-SOUND_RULE = """Âm thanh trong thư viện của người dùng: họ có {count} âm thanh ngắn (tiếng động, meme sound, hiệu ứng). Dùng search_sounds
-để tìm đúng tiếng hợp "miếng" (vd "bruh", "còi xe", "vỗ tay", "ồ", "cười"), rồi gắn id vào câu thoại bằng "sound": tiếng phát
-ngay khi bắt đầu câu, như sfx nhưng là tiếng thật của người dùng. ƯU TIÊN âm thanh của người dùng hơn sfx có sẵn khi có tiếng
-khớp (mỗi câu chỉ dùng một trong hai). Đặt đúng chỗ, không rải đều, không lặp một tiếng quá 2-3 lần. Nhạc nền do người dùng
-chọn riêng, không cần bạn lo.
+SOUND_RULE = """Âm thanh trong thư viện của người dùng: họ có {count} âm thanh ngắn (tiếng động, meme sound, hiệu ứng). Đây là nguồn
+tiếng động DUY NHẤT của video: không có sfx tổng hợp. Gọi search_sounds NHIỀU lần với từ khóa khác nhau (vd "bruh", "boom",
+"còi xe", "vỗ tay", "ồ", "cười", "fail", "ding") để có một bộ tiếng đa dạng, rồi gắn id vào câu thoại bằng "sound": tiếng phát
+ngay khi bắt đầu câu. Không tìm được tiếng hợp thì để câu đó không có tiếng. Không lặp một tiếng quá 2-3 lần.
+Nhạc nền do người dùng chọn riêng, không cần bạn lo.
 
 """
+
+# Âm thanh theo câu khi thư viện không có tiếng nào: dùng sfx tổng hợp
+SFX_RULE = """- Âm thanh meme theo câu ("sfx"): boom (bùm khi plot twist/sốc), ding (ý hay), scratch (dừng lại khoan đã),
+  drumroll (trước khi công bố), tada (kết quả), bonk (ai đó ngớ ngẩn), whoosh, pop.
+"""
+LIBRARY_SFX_RULE = """- Âm thanh meme theo câu ("sound"): id tiếng trong thư viện của người dùng (tìm bằng search_sounds) — tiếng bùm khi plot
+  twist, "bruh"/fail khi ai đó ngớ ngẩn, ting khi có ý hay, vỗ tay/cười khi chốt, tiếng rít khi "khoan đã"...
+"""
+
+# Từ khóa để đổi sfx tổng hợp AI lỡ dùng sang tiếng thật trong thư viện
+SFX_KEYWORDS = {
+    "boom": "boom vine bùm nổ explosion", "ding": "ding ting chuông bell correct", "whoosh": "whoosh vút swoosh",
+    "pop": "pop bụp bubble", "scratch": "scratch record rít dừng", "drumroll": "drumroll trống drum",
+    "tada": "tada fanfare chiến thắng win", "bonk": "bonk cốp gõ hit",
+}
+MAX_POINTS = {"short": 2, "medium": 3, "long": 4}  # số ý thông tin tối đa cho cả video
+MAX_LINE_WORDS = 20
 
 MOOD_DOC = "; ".join(f"{k}: {m.label}" for k, m in MOODS.items())
 
@@ -145,7 +170,7 @@ SEARCH_SOUNDS_TOOL = {"type": "function", "function": {
 
 SCENE_PROPS = {
     "heading": {"type": "string", "description": "Nhãn nhỏ góc trên (tùy chọn)."},
-    "lines": {"type": "array", "items": LINE_SCHEMA, "description": "1-4 câu thoại của cảnh."},
+    "lines": {"type": "array", "items": LINE_SCHEMA, "description": "1-3 câu thoại ngắn của cảnh (một ý + miếng hài)."},
     "visuals": {"type": "array", "items": {"type": "string"}, "description": "id asset/ảnh/clip hiển thị nối tiếp."},
     "fallback_query": {"type": "string", "description": "Từ khóa tiếng Anh để hệ thống tự tìm hình nếu visuals trống."},
     "meme_top": {"type": "string", "description": "Chữ meme phía trên hình (tùy chọn)."},
@@ -333,23 +358,33 @@ class Director:
     def _sound_usage(self, sound_id: str) -> list[str]:
         return [sc["id"] for sc in self.scenes if any(l.get("sound") == sound_id for l in sc["lines"])]
 
-    def search_sounds(self, query: str = "", emotion: str = "") -> str:
-        if not self.sounds:
-            return "Thư viện không có âm thanh nào. Dùng sfx có sẵn (boom, ding, whoosh...)."
+    def _match_sounds(self, query: str = "", emotion: str = "") -> list[LibraryAsset]:
         words = _tokens(query) | _tokens(phrase_keywords(query))
         feel = _tokens(emotion_keywords(emotion)) if emotion else set()
-        if not words and not feel:
-            return "Cần query hoặc emotion."
 
         def score(a: LibraryAsset) -> float:
             text = _tokens(a.search_text())
             return len(words & text) * 2 + len(feel & text)
 
         scored = sorted(((score(a), i, a) for i, a in enumerate(self.sounds.values())), key=lambda x: (-x[0], x[1]))
-        hits = [a for sc, _, a in scored if sc > 0][:SEARCH_LIMIT]
+        return [a for sc, _, a in scored if sc > 0][:SEARCH_LIMIT]
+
+    def _sound_for_sfx(self, name: str) -> str | None:
+        """Tiếng thư viện thay cho một sfx tổng hợp: ưu tiên tiếng khớp chưa dùng nhiều."""
+        hits = self._match_sounds(SFX_KEYWORDS.get(name, name))
+        if not hits:
+            return None
+        return min(hits, key=lambda a: len(self._sound_usage(a.id))).id
+
+    def search_sounds(self, query: str = "", emotion: str = "") -> str:
+        if not self.sounds:
+            return "Thư viện không có âm thanh nào. Dùng sfx có sẵn (boom, ding, whoosh...)."
+        if not str(query or "").strip() and not str(emotion or "").strip():
+            return "Cần query hoặc emotion."
+        hits = self._match_sounds(str(query or ""), str(emotion or ""))
         if not hits:
             what = " / ".join(x for x in (query and f"'{query}'", emotion and f"cảm xúc {emotion}") if x)
-            return f"Không có âm thanh khớp {what}. Thử từ khóa khác (đồng nghĩa, tiếng Anh) hoặc dùng sfx có sẵn."
+            return f"Không có âm thanh khớp {what}. Thử từ khóa khác (đồng nghĩa, tiếng Anh, tên meme sound)."
         lines = [a.catalog_line() + (f" (đang dùng ở {', '.join(u)})" if (u := self._sound_usage(a.id)) else "") for a in hits]
         return f"{len(hits)} kết quả (gắn id vào \"sound\" của câu thoại):\n" + "\n".join(lines)
 
@@ -425,14 +460,22 @@ class Director:
                 warnings.append(f"mood '{item['mood']}' không có, dùng neutral")
             if item.get("voice") == "second":
                 line["voice"] = "second"
-            if item.get("sfx") in SFX_NAMES:
-                line["sfx"] = item["sfx"]
             sound = str(item.get("sound") or "").strip()
             if sound:
                 if sound in self.sounds:
                     line["sound"] = sound
                 else:
                     warnings.append(f"sound '{sound}' không có trong thư viện âm thanh (tìm bằng search_sounds)")
+            sfx = item.get("sfx")
+            if sfx in SFX_NAMES and "sound" not in line:
+                if not self.sounds:
+                    line["sfx"] = sfx
+                elif swap := self._sound_for_sfx(sfx):
+                    # Thư viện có tiếng thật: không dùng tiếng tổng hợp
+                    line["sound"] = swap
+                    warnings.append(f"sfx '{sfx}' đổi thành tiếng thư viện {swap}")
+                else:
+                    warnings.append(f"bỏ sfx '{sfx}': chỉ dùng tiếng thư viện (search_sounds)")
             if item.get("camera") in CAMERA_MOVES:
                 line["camera"] = item["camera"]
             sticker = str(item.get("sticker") or "").strip()
@@ -444,8 +487,8 @@ class Director:
             pop = " ".join(str(item.get("pop_text") or "").split())
             if pop:
                 line["pop_text"] = pop[:40]
-            if len(line["text"]) > 180:
-                warnings.append(f"câu \"{line['text'][:40]}…\" quá dài, nên tách nhỏ")
+            if len(line["text"].split()) > MAX_LINE_WORDS:
+                warnings.append(f"câu \"{line['text'][:40]}…\" dài {len(line['text'].split())} từ: rút gọn hoặc cắt bớt ý")
             lines.append(line)
         return lines
 
@@ -674,8 +717,8 @@ class Director:
         total, target = self.total_seconds(), self.target_seconds()
         if total > target * 1.35:
             notes.append(f"Dài ~{total:.0f}s, vượt xa mục tiêu ~{target}s: cắt cảnh/câu thừa.")
-        elif total < target * 0.6:
-            notes.append(f"Ngắn ~{total:.0f}s so với mục tiêu ~{target}s: thêm nội dung giá trị (không độn).")
+        elif total < target * 0.5:
+            notes.append(f"Ngắn ~{total:.0f}s so với mục tiêu ~{target}s: thêm miếng hài/phản ứng, KHÔNG thêm thông tin.")
         first = self.scenes[0]["lines"][0]["text"]
         if len(first.split()) > 18:
             notes.append(f"Câu hook dài {len(first.split())} từ: rút còn ≤ 15 từ cho 3 giây đầu.")
@@ -693,6 +736,23 @@ class Director:
         if repeated:
             notes.append(f"Hình dùng lặp ở nhiều cảnh: {', '.join(repeated)}.")
         lines = [l for s in self.scenes for l in s["lines"]]
+        crowded = [s["id"] for s in self.scenes if len(s["lines"]) > 3]
+        if crowded:
+            notes.append(f"Cảnh nhồi nhiều câu ({', '.join(crowded)}): mỗi cảnh 1-3 câu, một ý.")
+        wordy = [l["text"] for l in lines if len(l["text"].split()) > MAX_LINE_WORDS]
+        if wordy:
+            notes.append(f"{len(wordy)} câu dài hơn {MAX_LINE_WORDS} từ (vd \"{_oneline(wordy[0], 50)}\"): rút gọn, bỏ ý phụ.")
+        numbers = sum(len(re.findall(r"\d+", l["text"])) for l in lines)
+        if numbers > len(self.scenes):
+            notes.append(f"Có {numbers} con số trong lời thoại: quá nhiều thông tin, giữ lại số đắt nhất.")
+        if len(self.scenes) > MAX_POINTS.get(self.opts.length, 3) + 4:
+            notes.append(f"{len(self.scenes)} cảnh là nhiều: gộp/cắt để video chỉ xoay quanh 1 ý chính "
+                         f"(≤ {MAX_POINTS.get(self.opts.length, 3)} điểm thông tin).")
+        funny = sum(1 for s in self.scenes if any(l["mood"] in ("sarcastic", "deadpan") or l.get("voice") == "second"
+                                                   for l in s["lines"]))
+        if len(self.scenes) >= 3 and funny < len(self.scenes) / 2:
+            notes.append(f"Chỉ {funny}/{len(self.scenes)} cảnh có miếng hài (cà khịa/tỉnh bơ/giọng phụ chen ngang): "
+                         "video đang giống bản tin, thêm câu chốt buồn cười cho từng cảnh.")
         effects = sum(1 for l in lines if l.get("sfx") or l.get("sound") or l.get("camera") or l.get("sticker") or l.get("pop_text"))
         memes = sum(1 for s in self.scenes if s.get("meme_top") or s.get("meme_bottom")) + sum(1 for l in lines if l.get("sticker"))
         if effects == 0:
@@ -708,10 +768,11 @@ class Director:
             used_sounds = Counter(l["sound"] for l in lines if l.get("sound"))
             if not used_sounds:
                 notes.append(f"Thư viện có {len(self.sounds)} âm thanh nhưng chưa dùng cái nào (search_sounds rồi gắn \"sound\" vào câu).")
-            elif used_sounds.most_common(1)[0][1] >= 3:
+            elif sum(used_sounds.values()) < len(lines) / 3:
+                notes.append(f"Mới {sum(used_sounds.values())}/{len(lines)} câu có tiếng động: thêm tiếng thư viện vào các câu chốt, "
+                             "cà khịa, chen ngang (khoảng một nửa số câu).")
+            if used_sounds and used_sounds.most_common(1)[0][1] >= 3:
                 notes.append(f"Tiếng '{used_sounds.most_common(1)[0][0]}' lặp {used_sounds.most_common(1)[0][1]} lần: dùng tiếng khác cho đỡ nhàm.")
-            if any(l.get("sound") and l.get("sfx") for l in lines):
-                notes.append("Có câu vừa có sound vừa có sfx: chỉ giữ một.")
         if not any(l.get("voice") == "second" for l in lines) and len(lines) >= 6:
             notes.append("Có thể thêm vài câu giọng phụ (voice second) để đối đáp, đỡ độc thoại.")
         clips = [a for a in self.library.values() if a.kind == "video"] + [m for m in self.web.values() if m["media"] == "video"]
@@ -796,14 +857,16 @@ class Director:
         parts = [
             f"Yêu cầu của người dùng:\n{self.topic}",
             f"Loại video: {opts.video_type}. Giọng văn mong muốn: {opts.tone or 'tự chọn cho hợp chủ đề, ưu tiên duyên dáng, hài hước'}.",
-            f"Thời lượng mục tiêu: ~{self.target_seconds()} giây. Khung hình: {opts.aspect}.",
+            f"Thời lượng mục tiêu: ~{self.target_seconds()} giây (tối đa {MAX_POINTS.get(opts.length, 3)} ý thông tin, còn lại "
+            f"là miếng hài và phản ứng). Khung hình: {opts.aspect}.",
             f"Giọng đọc người dùng chọn: {self.voice_summary()}."
             + (" Bạn được quyền tinh chỉnh bằng tune_voice." if opts.ai_voice else " Giữ nguyên, không chỉnh giọng."),
             f"Thư viện của người dùng: {lib}.",
             "Tìm trên mạng: " + ("được phép (search_web)." if opts.web_images else "TẮT, chỉ dùng thư viện."),
         ]
         if self.sounds:
-            parts.append(f"Âm thanh trong thư viện: {len(self.sounds)} tiếng ngắn (search_sounds, gắn vào câu bằng \"sound\").")
+            parts.append(f"Âm thanh trong thư viện: {len(self.sounds)} tiếng ngắn (search_sounds, gắn vào câu bằng \"sound\"). "
+                         "Chỉ dùng các tiếng này, không có sfx tổng hợp.")
         if opts.library_mode == "selected" and opts.library:
             parts.append("Người dùng ĐÃ CHỌN các asset sau làm nội dung chính, hãy dùng hết theo thứ tự:\n"
                          + "\n".join(a.catalog_line(True) for a in opts.library))
@@ -869,7 +932,8 @@ class Director:
         }.get(name, lambda: name)()
 
     def _tools(self) -> list[dict]:
-        """Công cụ cho AI: tune_voice chỉ khi người dùng cho chỉnh giọng, search_sounds + "sound" chỉ khi thư viện có âm thanh."""
+        """Công cụ cho AI: tune_voice chỉ khi người dùng cho chỉnh giọng. Thư viện có âm thanh thì có search_sounds + "sound"
+        và bỏ "sfx" tổng hợp."""
         tools = [t for t in TOOLS if t["function"]["name"] != "tune_voice" or self.opts.ai_voice]
         if not self.sounds:
             return tools
@@ -877,7 +941,9 @@ class Director:
         for tool in tools:
             lines = tool["function"]["parameters"]["properties"].get("lines")
             if lines:
-                lines["items"]["properties"]["sound"] = SOUND_PROP
+                props = lines["items"]["properties"]
+                props.pop("sfx", None)
+                props["sound"] = SOUND_PROP
         return [*tools, SEARCH_SOUNDS_TOOL]
 
     def run(self) -> Script:
@@ -888,7 +954,9 @@ class Director:
         model = self.settings.director_model or self.settings.deepseek_model
         sound_rule = SOUND_RULE.replace("{count}", str(len(self.sounds))) if self.sounds else ""
         system = (SYSTEM.replace("{counts_rule}", self.counts_rule()).replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
-                  .replace("{sound_rule}", sound_rule).replace("{catchphrases}", catchphrase_doc()))
+                  .replace("{sound_rule}", sound_rule).replace("{catchphrases}", catchphrase_doc())
+                  .replace("{sfx_rule}", LIBRARY_SFX_RULE if self.sounds else SFX_RULE)
+                  .replace("{max_points}", str(MAX_POINTS.get(self.opts.length, 3))))
         tools = self._tools()
         messages: list[dict] = [
             {"role": "system", "content": system.replace("{language}", self.opts.language)},
