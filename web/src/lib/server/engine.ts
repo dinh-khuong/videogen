@@ -2,6 +2,7 @@ import "server-only";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EngineHealth } from "@/lib/types";
 import { ENGINE_DIR, PYTHON_BIN } from "./paths";
+import { tokenEnv } from "./tokens";
 
 /** Dòng stdout bắt đầu bằng tiền tố này là một sự kiện JSON của engine (xem engine/videogen/events.py). */
 export const EVENT_PREFIX = "@@videogen ";
@@ -16,9 +17,13 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
-/** Môi trường cho tiến trình Python: ép UTF-8 và không đệm stdout để nhận sự kiện ngay. */
+/**
+ * Môi trường cho tiến trình Python: ép UTF-8 và không đệm stdout để nhận sự kiện ngay.
+ * Token đang dùng (trang "Token API") được truyền qua biến môi trường tương ứng; python-dotenv không ghi đè biến đã có
+ * nên token đã lưu ưu tiên hơn engine/.env. Dịch vụ chưa có token thì engine vẫn đọc engine/.env như trước.
+ */
 export function engineEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
+  return { ...process.env, ...tokenEnv(), PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
 }
 
 export function engineArgs(...args: string[]): string[] {
@@ -68,6 +73,11 @@ export async function probe(files: string[], thumbDir?: string): Promise<ProbeIn
 }
 
 let healthCache: { at: number; value: EngineHealth } | null = null;
+
+/** Bỏ kết quả kiểm tra engine đã nhớ (vd sau khi đổi token) để lần xem tới chạy lại `doctor`. */
+export function resetHealthCache(): void {
+  healthCache = null;
+}
 
 export async function engineHealth(force = false): Promise<EngineHealth> {
   if (!force && healthCache && Date.now() - healthCache.at < 60_000) return healthCache.value;

@@ -11,6 +11,7 @@ const ITEMS = [
   { href: "/videos", label: "Video", icon: "M15 10l5-3v10l-5-3M3 6h12v12H3z" },
   { href: "/assets", label: "Assets", icon: "M4 5h16v14H4zM4 15l4-4 5 5 3-3 4 4M15 9.5a1 1 0 1 0 0-.01" },
   { href: "/crm", label: "Khách hàng", icon: "M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M22 19v-1a4 4 0 0 0-3-3.9M16 4.1a3 3 0 0 1 0 5.8" },
+  { href: "/tokens", label: "Token API", icon: "M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" },
 ];
 
 function isActive(pathname: string | null, href: string): boolean {

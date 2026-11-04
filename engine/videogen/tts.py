@@ -27,7 +27,7 @@ from gtts import gTTS
 
 from .config import ConfigError, load_settings
 
-MAX_CONCURRENCY = 2
+MAX_CONCURRENCY = 8
 EDGE_RETRIES = 8
 TICKS_PER_SECOND = 10_000_000  # edge-tts tính offset theo đơn vị 100 ns
 

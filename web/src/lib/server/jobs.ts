@@ -5,7 +5,19 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { normalizeTag } from "@/lib/hashtags";
 import type { AgentEvent, JobDetail, JobInput, JobItem, JobStatus, Script } from "@/lib/types";
-import { LEGACY_STYLE, LENGTHS, MAX_TONE_CHARS, SEARCH_ENGINES, VIDEO_TYPES, VOICE_EFFECTS, VOICE_RE, normalizeStyle } from "@/lib/video-options";
+import {
+  LEGACY_STYLE,
+  LENGTHS,
+  MAX_MEMES,
+  MAX_TONE_CHARS,
+  MAX_VISUAL_INTERVAL,
+  MIN_VISUAL_INTERVAL,
+  SEARCH_ENGINES,
+  VIDEO_TYPES,
+  VOICE_EFFECTS,
+  VOICE_RE,
+  normalizeStyle,
+} from "@/lib/video-options";
 import { assetFilePath, assetsForEngine, countUnanalyzed } from "./assets";
 import { db } from "./db";
 import { HttpError } from "./files";
@@ -213,6 +225,10 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     webImages: raw.webImages !== false,
     webMedia: raw.webMedia === "video" || raw.webMedia === "auto" ? raw.webMedia : "image",
     clipsPerStep: Math.min(Math.max(Math.round(Number(raw.clipsPerStep) || 3), 1), 6),
+    visualInterval: script ? null : visualIntervalOf(raw.visualInterval),
+    // Meme là của Đạo diễn AI (chọn meme, sticker, overlay); kịch bản nhanh/kịch bản sửa tay không có khái niệm này
+    memeImages: director ? optionalInt(raw.memeImages, 0, MAX_MEMES, "Số ảnh meme") : null,
+    memeVideos: director ? optionalInt(raw.memeVideos, 0, MAX_MEMES, "Số clip meme") : null,
     searchEngine: raw.searchEngine && Object.hasOwn(SEARCH_ENGINES, raw.searchEngine) ? raw.searchEngine : "auto",
     libraryMode: script ? "off" : libraryMode,
     libraryTags: libraryMode === "auto" ? libraryTagsOf(raw) : [],
@@ -227,6 +243,24 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     feedback: director ? feedback : null,
     baseJobId: director ? baseJobId : null,
   };
+}
+
+/** Số nguyên người dùng nhập, để trống = null (hệ thống/AI tự quyết định). */
+function optionalInt(value: unknown, min: number, max: number, label: string): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < min || n > max) throw new HttpError(400, `${label} phải từ ${min} đến ${max}`);
+  return n;
+}
+
+/** Tần suất đổi hình (giây, tối đa một số lẻ); để trống hoặc 0 = tự động. */
+function visualIntervalOf(value: unknown): number | null {
+  if (value === null || value === undefined || value === "" || Number(value) === 0) return null;
+  const n = Math.round(Number(value) * 10) / 10;
+  if (!Number.isFinite(n) || n < MIN_VISUAL_INTERVAL || n > MAX_VISUAL_INTERVAL) {
+    throw new HttpError(400, `Tần suất đổi hình phải từ ${MIN_VISUAL_INTERVAL} đến ${MAX_VISUAL_INTERVAL} giây`);
+  }
+  return n;
 }
 
 const MAX_LIBRARY_TAGS = 20;
@@ -316,6 +350,9 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     web_images: input.webImages,
     web_media: input.webMedia ?? "image",
     clips_per_step: input.clipsPerStep ?? 3,
+    visual_interval: input.visualInterval ?? 0,
+    meme_images: input.memeImages ?? null,
+    meme_videos: input.memeVideos ?? null,
     search_engine: input.searchEngine ?? "auto",
     library_mode: input.libraryMode,
     library: [],

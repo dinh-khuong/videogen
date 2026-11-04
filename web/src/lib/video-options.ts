@@ -418,6 +418,14 @@ export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSet
 export const MAX_CTA_CHARS = 120;
 export const MAX_TONE_CHARS = 200;
 
+/** Tần suất đổi hình (giây giữa hai lần đổi ảnh/clip). Engine còn nâng lên tối thiểu theo nhịp dựng (chậm 3,4s / vừa 2,2s / nhanh 1,4s). */
+export const MIN_VISUAL_INTERVAL = 1.5;
+export const MAX_VISUAL_INTERVAL = 30;
+/** Thời lượng tối thiểu của một đoạn hình theo nhịp dựng (giây), cùng giá trị với engine/videogen/style.py PACING. */
+export const MIN_SEGMENT_SECONDS: Record<Pacing, number> = { slow: 3.4, normal: 2.2, fast: 1.4 };
+/** Số ảnh meme / clip meme tối đa người dùng đặt cho một video. */
+export const MAX_MEMES = 20;
+
 /** Phong cách của video tạo trước khi có tùy chọn này (chạy lại job cũ cho kết quả như cũ). */
 export const LEGACY_STYLE: VideoStyle = {
   pacing: "normal",

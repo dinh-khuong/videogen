@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
 import type { AssetItem, Contact, EngineHealth, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
 import {
@@ -11,7 +11,11 @@ import {
   LANGUAGES,
   LEGACY_STYLE,
   LENGTHS,
+  MAX_MEMES,
   MAX_TONE_CHARS,
+  MAX_VISUAL_INTERVAL,
+  MIN_SEGMENT_SECONDS,
+  MIN_VISUAL_INTERVAL,
   PRESETS,
   SEARCH_ENGINES,
   TONES,
@@ -60,6 +64,11 @@ type Settings = {
   webImages: boolean;
   webMedia: WebMedia;
   clipsPerStep: number;
+  /** tần suất đổi hình (giây), "" = tự động */
+  visualInterval: string;
+  /** số ảnh meme / clip meme (Đạo diễn AI), "" = AI quyết định, "0" = không dùng */
+  memeImages: string;
+  memeVideos: string;
   searchEngine: SearchEngine;
   libraryMode: JobInput["libraryMode"];
   libraryTags: string[];
@@ -85,12 +94,19 @@ const DEFAULTS: Settings = {
   // Clip quay thật làm video sinh động hơn ảnh tĩnh: mặc định ưu tiên clip
   webMedia: "video",
   clipsPerStep: 3,
+  visualInterval: "",
+  memeImages: "",
+  memeVideos: "",
   searchEngine: "auto",
   libraryMode: "auto",
   libraryTags: [],
   libraryFolders: [],
   music: { musicId: "", volume: 0.12 },
 };
+
+/** Số người dùng gõ (chuỗi) hợp lệ trong khoảng [min, max] hay để trống. */
+const numberText = (v: unknown, pattern: RegExp, min: number, max: number): string =>
+  typeof v === "string" && pattern.test(v) && (v === "" || (Number(v) >= min && Number(v) <= max)) ? v : "";
 
 /** Ghép cài đặt (lưu trong trình duyệt hoặc từ job cũ) vào mặc định, bỏ giá trị không hợp lệ. */
 function sanitize(p: Partial<Settings>): Settings {
@@ -119,6 +135,9 @@ function sanitize(p: Partial<Settings>): Settings {
     webImages: typeof p.webImages === "boolean" ? p.webImages : DEFAULTS.webImages,
     webMedia: pick(p.webMedia, (v) => v === "image" || v === "video" || v === "auto", DEFAULTS.webMedia),
     clipsPerStep: pick(p.clipsPerStep, (v) => typeof v === "number" && v >= 1 && v <= 6, DEFAULTS.clipsPerStep),
+    visualInterval: numberText(p.visualInterval, /^\d{0,2}(\.\d)?$/, MIN_VISUAL_INTERVAL, MAX_VISUAL_INTERVAL),
+    memeImages: numberText(p.memeImages, /^\d{0,2}$/, 0, MAX_MEMES),
+    memeVideos: numberText(p.memeVideos, /^\d{0,2}$/, 0, MAX_MEMES),
     searchEngine: pick(p.searchEngine, (v) => typeof v === "string" && Object.hasOwn(SEARCH_ENGINES, v), DEFAULTS.searchEngine),
     libraryMode: pick(p.libraryMode, (v) => v === "off" || v === "auto" || v === "selected", DEFAULTS.libraryMode),
     libraryTags: Array.isArray(p.libraryTags)
@@ -188,6 +207,9 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
     webImages: input.webImages,
     webMedia: input.webMedia,
     clipsPerStep: input.clipsPerStep,
+    visualInterval: input.visualInterval ? String(input.visualInterval) : "",
+    memeImages: input.memeImages != null ? String(input.memeImages) : "",
+    memeVideos: input.memeVideos != null ? String(input.memeVideos) : "",
     searchEngine: input.searchEngine ?? "auto",
     libraryMode: input.libraryMode,
     libraryTags: input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [],
@@ -239,6 +261,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const [s, setS] = useState<FormState>(initial);
   const [editingTone, setEditingTone] = useState(() => !TONES.some((t) => t.value === initial.tone));
   const [busy, setBusy] = useState(false);
+  // Next giữ trang cũ ẩn (cacheComponents) nên phải tự tắt busy; transition giữ spinner tới khi chuyển trang xong
+  const [navigating, startNavigation] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setS((prev) => ({ ...prev, [key]: value }));
 
@@ -256,6 +280,14 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         .filter(Boolean)
     : [s.topic.trim()].filter(Boolean);
   const tooMany = topics.length > MAX_BATCH;
+
+  // Nhịp dựng đặt mức tối thiểu của một đoạn hình: tần suất nhanh hơn mức đó bị nâng lên
+  const minSegment = MIN_SEGMENT_SECONDS[s.style.pacing];
+  const intervalNumber = Number(s.visualInterval);
+  const intervalHint =
+    s.visualInterval && intervalNumber < minSegment
+      ? `Nhịp dựng này không cho đổi hình nhanh hơn ${String(minSegment).replace(".", ",")} giây nên sẽ dùng mức đó.`
+      : `Cứ chừng này giây đổi sang ảnh/clip mới. Nhanh nhất ${String(minSegment).replace(".", ",")} giây với nhịp dựng hiện tại.`;
 
   const applyPreset = (p: Preset) => {
     setS((prev) => ({
@@ -309,6 +341,9 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       webImages: s.webImages,
       webMedia: s.webMedia,
       clipsPerStep: s.clipsPerStep,
+      visualInterval: s.visualInterval ? Number(s.visualInterval) : null,
+      memeImages: s.director && s.memeImages !== "" ? Number(s.memeImages) : null,
+      memeVideos: s.director && s.memeVideos !== "" ? Number(s.memeVideos) : null,
       searchEngine: s.searchEngine,
       libraryMode: s.libraryMode,
       libraryTags: s.libraryMode === "auto" ? s.libraryTags : [],
@@ -324,7 +359,10 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         created = [...created, await api<JobItem>("/api/jobs", { method: "POST", json: { ...common, topic } })];
       }
       saveSettings(s);
-      router.push(created.length === 1 ? `/jobs/${created[0].id}` : "/jobs");
+      startNavigation(() => {
+        setBusy(false);
+        router.push(created.length === 1 ? `/jobs/${created[0].id}` : "/jobs");
+      });
     } catch (err) {
       const done = created.length ? `Đã tạo ${created.length}/${topics.length} video. ` : "";
       setError(done + (err as Error).message);
@@ -602,9 +640,17 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
             <Field
               label="Công cụ tìm ảnh"
               hint={
-                s.searchEngine !== "auto" && engineReady && engineReady[s.searchEngine] === false
-                  ? `Chưa có key cho ${SEARCH_ENGINES[s.searchEngine].label}: điền ${SEARCH_ENGINES[s.searchEngine].env} trong engine/.env (tạm thời sẽ dùng nguồn khác).`
-                  : "Công cụ đã chọn được tìm trước; nếu lỗi hoặc không có kết quả thì tự chuyển sang nguồn khác. Cũng dùng khi bước dùng video thiếu clip."
+                s.searchEngine !== "auto" && engineReady && engineReady[s.searchEngine] === false ? (
+                  <>
+                    Chưa có key cho {SEARCH_ENGINES[s.searchEngine].label}: thêm ở trang{" "}
+                    <Link href="/tokens" className="text-brand-600 underline">
+                      Token API
+                    </Link>{" "}
+                    hoặc điền {SEARCH_ENGINES[s.searchEngine].env} trong engine/.env (tạm thời sẽ dùng nguồn khác).
+                  </>
+                ) : (
+                  "Công cụ đã chọn được tìm trước; nếu lỗi hoặc không có kết quả thì tự chuyển sang nguồn khác. Cũng dùng khi bước dùng video thiếu clip."
+                )
               }
             >
               <select className={inputClass} value={s.searchEngine} onChange={(e) => set("searchEngine", e.target.value as SearchEngine)}>
@@ -628,6 +674,54 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
               </select>
             </Field>
           )}
+        </div>
+
+        <div className="space-y-3 border-t border-zinc-100 pt-4">
+          <div>
+            <p className="text-sm font-medium text-zinc-700">Tần suất hình & số lượng meme (tùy chọn)</p>
+            <p className="text-xs text-zinc-500">Bỏ trống để AI tự quyết định. Gõ số để AI làm đúng theo yêu cầu của bạn.</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Đổi ảnh/clip mỗi (giây)" hint={intervalHint}>
+              <input
+                className={inputClass}
+                type="number"
+                inputMode="decimal"
+                min={MIN_VISUAL_INTERVAL}
+                max={MAX_VISUAL_INTERVAL}
+                step={0.5}
+                value={s.visualInterval}
+                onChange={(e) => set("visualInterval", e.target.value)}
+                placeholder="Tự động"
+              />
+            </Field>
+            <Field label="Số ảnh meme" hint={s.director ? "0 = không dùng ảnh meme. Lấy từ kho meme trong Assets hoặc tìm trên mạng." : "Chỉ có khi dùng Đạo diễn AI."}>
+              <input
+                className={inputClass}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={MAX_MEMES}
+                disabled={!s.director}
+                value={s.memeImages}
+                onChange={(e) => set("memeImages", e.target.value)}
+                placeholder="AI quyết định"
+              />
+            </Field>
+            <Field label="Số clip (video) meme" hint={s.director ? "0 = không dùng clip meme. Clip reaction bật ra theo câu thoại hoặc lồng trên ảnh." : "Chỉ có khi dùng Đạo diễn AI."}>
+              <input
+                className={inputClass}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={MAX_MEMES}
+                disabled={!s.director}
+                value={s.memeVideos}
+                onChange={(e) => set("memeVideos", e.target.value)}
+                placeholder="AI quyết định"
+              />
+            </Field>
+          </div>
         </div>
       </Card>
 
@@ -654,7 +748,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       <ErrorBox message={error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
         {tooMany && <p className="text-sm text-red-600">Tối đa {MAX_BATCH} video mỗi lần.</p>}
-        <Button type="submit" variant="primary" busy={busy} disabled={!topics.length || tooMany} className="px-6">
+        <Button type="submit" variant="primary" busy={busy || navigating} disabled={!topics.length || tooMany} className="px-6">
           {topics.length > 1 ? `Tạo ${topics.length} video` : "Tạo video"}
         </Button>
       </div>

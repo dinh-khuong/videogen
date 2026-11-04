@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { withHashtags } from "@/lib/hashtags";
+import { ensureHashtags, normalizeTag, textHashtags, withHashtags } from "@/lib/hashtags";
 import type { JobInput, Script } from "@/lib/types";
 import { analyzer } from "./analyzer";
 import { addAssets, findAssetBySha1, getAsset, type NewAsset } from "./assets";
@@ -41,8 +41,53 @@ export type EngineResult = {
     role?: "visual" | "overlay" | "sticker";
     /** vị trí trong kịch bản: "overlay" hoặc "line:<thứ tự câu>" */
     ref?: string | null;
+    /** Đạo diễn AI đặt khi tải về: tên riêng, hashtag về nội dung hình và có phải meme không */
+    title?: string;
+    hashtags?: string[];
+    meme?: boolean;
   }[];
 };
+
+/** Dạng so sánh của một đoạn chữ: bỏ dấu, hoa thường, dấu câu, khoảng trắng thừa. */
+function comparable(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+const MAX_NARRATION_IN_DESCRIPTION = 300;
+
+/**
+ * Tên riêng cho ảnh/clip lưu vào thư viện. Ưu tiên tên AI đặt cho đúng hình đó, rồi nhãn của bước, rồi từ khóa tìm kiếm;
+ * không bao giờ trùng tiêu đề video hay lời bình (đó là nội dung cần minh họa, không phải tên của hình), và không trùng
+ * tên của hình khác trong cùng video (thêm số thứ tự).
+ */
+function assetTitle(
+  img: EngineResult["images"][number],
+  step: Script["steps"][number] | undefined,
+  script: Script,
+  used: Set<string>,
+): string {
+  const videoTitle = comparable(script.title);
+  const narration = comparable(step?.narration ?? "");
+  const query = img.query?.trim();
+  const candidates = [
+    img.title,
+    step?.heading,
+    query ? query.charAt(0).toLocaleUpperCase("vi") + query.slice(1) : "",
+    `${script.title} — ${img.media === "video" ? "clip" : "ảnh"} cảnh ${img.step}`,
+  ];
+  const picked = candidates.map((c) => c?.trim() ?? "").find((c) => c && ![videoTitle, narration].includes(comparable(c)));
+  const base = (picked ?? `Cảnh ${img.step}`).slice(0, 120);
+  let title = base;
+  for (let n = 2; used.has(comparable(title)); n++) title = `${base} (${n})`;
+  used.add(comparable(title));
+  return title;
+}
+
+/** Tên nguồn ngắn dùng làm hashtag ("YouTube" -> youtube, "buzzfeed.com" -> buzzfeed). */
+function sourceTag(source: string | undefined): string[] {
+  const tag = normalizeTag((source ?? "").replace(/\.[a-z]{2,}$/i, ""));
+  return tag && tag !== "upload" && tag !== "web" ? [tag] : [];
+}
 
 /**
  * Đưa kết quả của job vào thư viện: ảnh mới (tìm trên mạng) thành asset có mô tả + hashtag (rồi được phân tích như
@@ -65,6 +110,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     stepAssets.get(img.step)!.set(position, id);
   };
   const pending: { img: Img; position: number; asset: NewAsset }[] = [];
+  const usedTitles = new Set<string>();
 
   for (const img of result.images) {
     if (img.kind === "placeholder") continue;
@@ -84,11 +130,17 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     const tmp = path.join(/* turbopackIgnore: true */ TMP_DIR, `${crypto.randomUUID()}${ext}`);
     await fsp.copyFile(/* turbopackIgnore: true */ img.path, tmp);
     const step = script.steps[img.step - 1];
-    const queryNote = img.query ? `\nTừ khóa tìm kiếm: ${img.query}` : "";
     const credit = img.credit;
     const creditNote = credit?.license
       ? `\nNguồn: ${[credit.source, credit.author, credit.license].filter(Boolean).join(" — ")} (${credit.url})`
       : "";
+    const narration = (step?.narration ?? "").trim();
+    const context = narration.length > MAX_NARRATION_IN_DESCRIPTION ? `${narration.slice(0, MAX_NARRATION_IN_DESCRIPTION - 1).trimEnd()}…` : narration;
+    // Hashtag của đúng hình đó (AI đặt) rồi của bước; thiếu thì bổ sung từ từ khóa tìm kiếm, hashtag video, nhãn bước, nguồn
+    const hashtags = ensureHashtags(
+      [img.meme ? ["meme"] : [], img.hashtags, step?.hashtags],
+      [textHashtags(img.query), script.hashtags, textHashtags(step?.heading), [img.media === "video" ? "video" : "hinhanh"], sourceTag(credit?.source)],
+    );
     pending.push({
       img,
       position,
@@ -97,8 +149,8 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
         ext,
         sha1,
         size: (await fsp.stat(/* turbopackIgnore: true */ tmp)).size,
-        title: step?.heading || script.title,
-        description: withHashtags(`${step?.narration ?? ""}${queryNote}${creditNote}`, step?.hashtags ?? []),
+        title: assetTitle(img, step, script, usedTitles),
+        description: withHashtags(`${context}${creditNote}`, hashtags),
         source: img.credit?.source ?? (img.kind === "web" ? "web" : "upload"),
         sourceUrl: img.credit?.url ?? null,
       },
@@ -143,7 +195,8 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     // Giấy phép Creative Commons yêu cầu ghi công: thêm nguồn vào mô tả video (dùng khi đăng)
     description: withHashtags(
       result.credits?.length ? `${result.video.description}\n\nNguồn hình ảnh:\n${result.credits.map((c) => `- ${c}`).join("\n")}` : result.video.description,
-      result.video.hashtags,
+      // Engine đã bổ sung hashtag khi AI viết thiếu; đây là lớp bảo đảm cuối cho kịch bản cũ/sửa tay
+      ensureHashtags([result.video.hashtags], [script.hashtags, script.steps.flatMap((s) => s.hashtags ?? []), textHashtags(result.video.title)]),
     ),
     kind: "generated" as const,
     duration: result.video.duration,
