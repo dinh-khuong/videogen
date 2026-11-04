@@ -8,6 +8,13 @@
       "when": 1793764963117,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793774028049,
+      "tag": "0001_video_prompt",
+      "breakpoints": true
     }
   ]
 }

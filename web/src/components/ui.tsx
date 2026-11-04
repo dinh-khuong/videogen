@@ -320,3 +320,18 @@ export function Segmented<T extends string>({
     </div>
   );
 }
+
+/** Chủ đề/prompt đầy đủ của job hoặc video; prompt dài được thu gọn, bấm để xem hết. */
+export function TopicView({ topic }: { topic: string }) {
+  const long = topic.length > 160 || topic.includes("\n");
+  if (!long) return <p className="text-sm text-zinc-700"><span className="text-zinc-500">Chủ đề:</span> {topic}</p>;
+  return (
+    <details className="group rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
+      <summary className="cursor-pointer text-sm text-zinc-700">
+        <span className="text-zinc-500">Yêu cầu ({topic.length.toLocaleString("vi-VN")} ký tự):</span>{" "}
+        <span className="group-open:hidden">{topic.slice(0, 120).replace(/\s+/g, " ")}…</span>
+      </summary>
+      <p className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm text-zinc-700">{topic}</p>
+    </details>
+  );
+}

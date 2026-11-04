@@ -48,6 +48,7 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - **Giọng văn** (thân thiện, hài hước, chuyên nghiệp, bán hàng, Gen Z... hoặc tự nhập) và **độ dài** (ngắn < 45 giây, vừa, dài).
   - **Tạo hàng loạt**: mỗi dòng một chủ đề, tạo tối đa 20 video cùng cài đặt.
   - Form **nhớ cài đặt của lần tạo trước**; trang job có nút **"Tạo video tương tự"** để điền sẵn cài đặt của job đó.
+  - **Prompt được lưu cùng từng video** (cột `videos.prompt` + `videos.settings`): trang video hiện lại prompt và có nút **"Tạo video tương tự"**, ô tìm video tìm cả trong prompt, và prompt vẫn còn khi xóa job. Video dựng lại từ kịch bản sửa tay thừa hưởng prompt của video gốc.
 - **Giọng đọc**:
   - 10 ngôn ngữ (Việt, Anh, Trung, Nhật, Hàn, Pháp, Tây Ban Nha, Đức, Thái, Indonesia), hơn 50 giọng; giọng **đa ngôn ngữ** (Ava, Andrew, Emma, Brian...) đọc được cả tiếng Việt.
   - **Nghe thử** giọng ngay trong form; **sắc thái giọng** (trầm ấm, kể chuyện, trẻ trung, quảng cáo sôi nổi, tin tức) đặt nhanh tốc độ + cao độ.

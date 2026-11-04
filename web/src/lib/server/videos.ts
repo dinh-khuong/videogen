@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { and, asc, count, desc, eq, like, or, type SQL } from "drizzle-orm";
 import { parseHashtags } from "@/lib/hashtags";
-import type { Page, Script, VideoDetail, VideoItem } from "@/lib/types";
+import type { JobInput, Page, Script, VideoDetail, VideoItem, VideoSettings } from "@/lib/types";
 import { getAsset } from "./assets";
 import { db, nowIso } from "./db";
 import { moveFile, removeMedia } from "./files";
@@ -36,7 +36,7 @@ export type VideoQuery = { q?: string; tag?: string; limit?: number; offset?: nu
 
 export function listVideos(query: VideoQuery = {}): Page<VideoItem> {
   const conditions: (SQL | undefined)[] = [];
-  if (query.q) conditions.push(or(like(videos.title, `%${query.q}%`), like(videos.description, `%${query.q}%`)));
+  if (query.q) conditions.push(or(like(videos.title, `%${query.q}%`), like(videos.description, `%${query.q}%`), like(videos.prompt, `%${query.q}%`)));
   if (query.tag) conditions.push(hasAnyTag("video", videos.id, query.tag));
   const where = and(...conditions);
   const limit = Math.min(Math.max(query.limit ?? 48, 1), 500);
@@ -81,7 +81,33 @@ export function getVideoDetail(id: string): VideoDetail | null {
   } catch {
     script = null;
   }
-  return { ...toVideoItems([row])[0], script, assets, contacts: linked };
+  return { ...toVideoItems([row])[0], prompt: row.prompt, settings: parseSettings(row.settings), script, assets, contacts: linked };
+}
+
+/** Phần của yêu cầu job không đi theo video (khớp VideoSettings). */
+const JOB_ONLY_FIELDS = ["topic", "script", "sourceVideoId", "feedback", "baseJobId"] as const;
+
+function parseSettings(text: string | null): VideoSettings | null {
+  try {
+    const settings: unknown = text ? JSON.parse(text) : null;
+    return settings && typeof settings === "object" ? (settings as VideoSettings) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prompt và cài đặt để lưu cùng video do job này tạo ra. Video dựng lại từ kịch bản sửa tay không có prompt riêng
+ * (chủ đề của job chỉ là tiêu đề kịch bản) nên thừa hưởng của video gốc; không có thì không lưu gì.
+ */
+export function promptOf(input: JobInput, topic: string): Pick<NewVideo, "prompt" | "settings"> {
+  if (!input.script) {
+    const settings: Partial<JobInput> = { ...input };
+    for (const field of JOB_ONLY_FIELDS) delete settings[field];
+    return { prompt: topic, settings: settings as VideoSettings };
+  }
+  const source = input.sourceVideoId ? getRow(input.sourceVideoId) : undefined;
+  return source?.prompt ? { prompt: source.prompt, settings: parseSettings(source.settings) } : { prompt: null, settings: null };
 }
 
 export type NewVideo = {
@@ -97,6 +123,8 @@ export type NewVideo = {
   width?: number | null;
   height?: number | null;
   script?: Script | null;
+  prompt?: string | null;
+  settings?: VideoSettings | null;
   jobId?: string | null;
 };
 
@@ -125,6 +153,8 @@ export function insertVideo(video: NewVideo, files: { id: string; file: string; 
       height: video.height ?? null,
       sizeBytes: video.size,
       script: video.script ? JSON.stringify(video.script) : null,
+      prompt: video.prompt ?? null,
+      settings: video.settings ? JSON.stringify(video.settings) : null,
       jobId: video.jobId ?? null,
     })
     .run();

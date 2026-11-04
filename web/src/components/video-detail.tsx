@@ -8,8 +8,26 @@ import type { Contact, JobDetail, JobInput, Page, VideoDetail, VoiceTuning } fro
 import { languageOf, voiceLabel } from "@/lib/video-options";
 import { AssetThumb } from "./assets-library";
 import { ScriptEditor } from "./script-editor";
-import { Button, Card, ConfirmButton, DescriptionInput, ErrorBox, Field, Loading, TagList, inputClass } from "./ui";
+import { Button, Card, ConfirmButton, DescriptionInput, ErrorBox, Field, Loading, TagList, TopicView, buttonClass, inputClass } from "./ui";
 import { PreviewStatus, VoicePreview, previewParams, useVoicePreview } from "./video-style-fields";
+
+/** Prompt đã dùng để tạo video, lưu cùng video nên còn nguyên cả khi job đã bị xóa. */
+function PromptCard({ video }: { video: VideoDetail }) {
+  if (!video.prompt) return null;
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold text-zinc-900">Prompt tạo video</h2>
+        {video.settings && (
+          <Link href={`/create?fromVideo=${video.id}`} className={buttonClass("secondary", "sm")}>
+            Tạo video tương tự
+          </Link>
+        )}
+      </div>
+      <TopicView topic={video.prompt} />
+    </Card>
+  );
+}
 
 const signed = (n: number, unit: string) => `${n < 0 ? "−" : "+"}${Math.abs(n)}${unit}`;
 
@@ -253,6 +271,7 @@ export function VideoDetailView({ id }: { id: string }) {
         </div>
         <div className="space-y-4">
           <MetaEditor key={video.description + video.title} video={video} onSaved={() => void reload()} />
+          <PromptCard video={video} />
           {video.script?.voice_tuning?.final_pitch && <AiVoiceCard tuning={video.script.voice_tuning} jobId={video.jobId} />}
           <ContactLinks video={video} onChanged={() => void reload()} />
         </div>

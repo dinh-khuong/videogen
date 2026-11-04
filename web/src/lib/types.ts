@@ -153,7 +153,13 @@ export type Script = {
   outro: string;
 };
 
+/** Cài đặt tạo video lưu kèm video: yêu cầu của job trừ những phần chỉ có nghĩa với đúng job đó. */
+export type VideoSettings = Omit<JobInput, "topic" | "script" | "sourceVideoId" | "feedback" | "baseJobId">;
+
 export type VideoDetail = VideoItem & {
+  /** Prompt (chủ đề/yêu cầu cho AI) đã dùng để tạo video, lưu cùng video nên vẫn còn khi xóa job; null với video cũ không còn job */
+  prompt: string | null;
+  settings: VideoSettings | null;
   script: Script | null;
   assets: (AssetItem & { step: number; position: number })[];
   contacts: { id: string; name: string; company: string }[];

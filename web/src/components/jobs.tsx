@@ -13,7 +13,7 @@ function libraryTagsLabel(i: JobDetail["input"]): string {
   const folders = i.libraryFolders?.length ? ` · ${i.libraryFolders.length} thư mục` : "";
   return (tags.length ? ` trong ${tags.map((t) => `#${t}`).join(", ")}` : "") + folders;
 }
-import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, buttonClass, cx, inputClass } from "./ui";
+import { Button, Card, ConfirmButton, EmptyState, ErrorBox, JobStatusBadge, Loading, PageHeader, ProgressBar, TopicView, buttonClass, cx, inputClass } from "./ui";
 
 const FILTERS = [
   { value: "", label: "Tất cả" },
@@ -158,21 +158,6 @@ function describeInput(job: JobDetail): string[] {
 
 function isActive(job: JobItem): boolean {
   return job.status === "queued" || job.status === "running";
-}
-
-/** Chủ đề/prompt đầy đủ của job; prompt dài được thu gọn, bấm để xem hết. */
-function TopicView({ topic }: { topic: string }) {
-  const long = topic.length > 160 || topic.includes("\n");
-  if (!long) return <p className="text-sm text-zinc-700"><span className="text-zinc-500">Chủ đề:</span> {topic}</p>;
-  return (
-    <details className="group rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
-      <summary className="cursor-pointer text-sm text-zinc-700">
-        <span className="text-zinc-500">Yêu cầu ({topic.length.toLocaleString("vi-VN")} ký tự):</span>{" "}
-        <span className="group-open:hidden">{topic.slice(0, 120).replace(/\s+/g, " ")}…</span>
-      </summary>
-      <p className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm text-zinc-700">{topic}</p>
-    </details>
-  );
 }
 
 const AGENT_STYLE: Record<AgentEvent["kind"], { dot: string; text: string }> = {
