@@ -32,9 +32,24 @@ type AssetRow = {
   folder_id: string | null;
   created_at: string;
   used_in: number;
+  /** Chỉ có khi truy vấn sắp xếp theo "recent" */
+  last_used_at?: string | null;
 };
 
 const SELECT = `SELECT a.*, (SELECT COUNT(DISTINCT va.video_id) FROM video_assets va WHERE va.asset_id = a.id) AS used_in FROM assets a`;
+
+/**
+ * Như SELECT, kèm lần cuối asset được dùng: lúc người dùng chọn nó cho một job (kể cả job chưa xong), hoặc lúc video
+ * có nó ra đời. Ảnh/clip hệ thống tìm trên mạng không tính ở vế sau, nếu không chúng tràn ngập danh sách "dùng gần đây".
+ */
+const SELECT_RECENT = `WITH picks(asset_id, at) AS (
+    SELECT je.value, MAX(j.created_at) FROM jobs j, json_each(j.input, '$.assetIds') je GROUP BY je.value
+  ), made(asset_id, at) AS (
+    SELECT va.asset_id, MAX(v.created_at) FROM video_assets va JOIN videos v ON v.id = va.video_id GROUP BY va.asset_id
+  )
+  SELECT a.*, (SELECT COUNT(DISTINCT va.video_id) FROM video_assets va WHERE va.asset_id = a.id) AS used_in,
+    NULLIF(MAX(COALESCE(picks.at, ''), CASE WHEN a.source = 'upload' THEN COALESCE(made.at, '') ELSE '' END), '') AS last_used_at
+  FROM assets a LEFT JOIN picks ON picks.asset_id = a.id LEFT JOIN made ON made.asset_id = a.id`;
 
 function parseTags(json: string): string[] {
   try {
@@ -70,6 +85,7 @@ function toItems(rows: AssetRow[]): AssetItem[] {
     analyzedAt: r.analyzed_at,
     folderId: r.folder_id,
     createdAt: r.created_at,
+    lastUsedAt: r.last_used_at ?? null,
   }));
 }
 
@@ -84,6 +100,8 @@ export const ASSET_SORTS = {
   old: "a.created_at ASC",
   name: "a.title COLLATE NOCASE ASC, a.created_at DESC",
   size: "a.size_bytes DESC, a.created_at DESC",
+  /** Asset dùng gần nhất lên đầu (chưa từng dùng thì theo ngày thêm); cần SELECT_RECENT */
+  recent: "last_used_at DESC, a.created_at DESC",
 } as const;
 
 export type AssetQuery = {
@@ -152,7 +170,7 @@ export function listAssets(query: AssetQuery = {}): Page<AssetItem> {
   const limit = Math.min(Math.max(query.limit ?? 60, 1), 500);
   const order = query.sort && Object.hasOwn(ASSET_SORTS, query.sort) ? ASSET_SORTS[query.sort as keyof typeof ASSET_SORTS] : ASSET_SORTS.new;
   const rows = db()
-    .prepare(`${SELECT}${sql} ORDER BY ${order} LIMIT ? OFFSET ?`)
+    .prepare(`${query.sort === "recent" ? SELECT_RECENT : SELECT}${sql} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...params, limit, query.offset ?? 0) as AssetRow[];
   const { total } = db().prepare(`SELECT COUNT(*) AS total FROM assets a${sql}`).get(...params) as { total: number };
   return { items: toItems(rows), total };

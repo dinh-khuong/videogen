@@ -347,6 +347,9 @@ export const ACCEPT = "image/*,video/*,audio/*,.mov,.mkv,.m4a,.flac,.opus";
 export const isMedia = (f: File) =>
   /^(image|video|audio)\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp|mp4|mov|m4v|webm|mkv|avi|mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i.test(f.name);
 
+/** Số asset dùng gần đây hiện thành mục riêng ở đầu bộ chọn. */
+const RECENT_ASSETS = 12;
+
 /** Chọn ảnh/video từ thư viện để làm hình cho các bước (nhiều asset có thứ tự, hoặc một asset). */
 export function AssetPicker({
   selected,
@@ -361,7 +364,8 @@ export function AssetPicker({
   const [kind, setKind] = useState("image,video");
   const [folder, setFolder] = useState("");
   const folders = useFolders();
-  const query = new URLSearchParams({ limit: "120" });
+  // Asset dùng gần đây lên đầu: người dùng thường lặp lại bộ ảnh sản phẩm của lần trước
+  const query = new URLSearchParams({ limit: "120", sort: "recent" });
   if (filter.q) query.set("q", filter.q);
   if (filter.tag) query.set("tag", filter.tag);
   if (kind) query.set("kind", kind);
@@ -370,6 +374,12 @@ export function AssetPicker({
   if (folder && folder !== "none") query.set("recursive", "1");
   const { data, loading, error } = useApi<Page<AssetItem>>(`/api/assets?${query}`);
   const onFilter = useCallback((next: { q: string; tag: string }) => setFilter(next), []);
+  // Kết quả đã xếp theo lần dùng cuối: vài asset đầu tiên từng được dùng tách thành mục riêng
+  const items = data?.items ?? [];
+  const firstUnused = items.findIndex((a) => !a.lastUsedAt);
+  const recentCount = Math.min(firstUnused === -1 ? items.length : firstUnused, RECENT_ASSETS);
+  const recent = items.slice(0, recentCount);
+  const rest = items.slice(recentCount);
 
   const toggle = (asset: AssetItem) => {
     if (single) return onChange([asset.id]);
@@ -397,7 +407,20 @@ export function AssetPicker({
       {loading && !data ? (
         <Loading />
       ) : data?.items.length ? (
-        <AssetGrid assets={data.items} selected={selected} onOpen={toggle} />
+        <>
+          {recent.length > 0 && (
+            <section className="mb-5">
+              <h3 className="mb-2 text-sm font-semibold text-zinc-700">Dùng gần đây</h3>
+              <AssetGrid assets={recent} selected={selected} onOpen={toggle} />
+            </section>
+          )}
+          {rest.length > 0 && (
+            <section>
+              {recent.length > 0 && <h3 className="mb-2 text-sm font-semibold text-zinc-700">Tất cả asset</h3>}
+              <AssetGrid assets={rest} selected={selected} onOpen={toggle} />
+            </section>
+          )}
+        </>
       ) : (
         <EmptyState title="Không có asset">Tải ảnh/video lên ở trang Assets.</EmptyState>
       )}

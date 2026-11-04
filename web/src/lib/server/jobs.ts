@@ -188,6 +188,17 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     const found = assetsForEngine({ ids: assetIds, kind: VISUAL_KINDS, limit: assetIds.length });
     if (found.length !== assetIds.length) throw new HttpError(400, "Một số asset đã chọn không còn trong thư viện (hoặc là audio)");
   }
+  if (libraryMode === "auto" && raw.webImages === false && !script) {
+    // Tắt tìm trên mạng: hình chỉ có thể đến từ thư viện, nên thư viện (trong phạm vi tag/thư mục đã chọn) phải có gì đó
+    const folders = libraryFoldersOf(raw).filter(folderExists);
+    const found = assetsForEngine({
+      tag: libraryTagsOf(raw).join(",") || undefined,
+      folders: folders.length ? folders : undefined,
+      kind: VISUAL_KINDS,
+      limit: 1,
+    });
+    if (!found.length) throw new HttpError(400, "Thư viện Assets chưa có ảnh/video nào trong phạm vi đã chọn nên không thể tắt tìm trên mạng");
+  }
   const musicId = raw.musicId || null;
   if (musicId && !assetFilePath(musicId, "audio")) throw new HttpError(400, "Không tìm thấy nhạc nền trong Assets");
   const musicVolume = Math.min(Math.max(Number(raw.musicVolume ?? DEFAULT_MUSIC_VOLUME) || 0, 0.01), 1);
@@ -407,7 +418,8 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     const order = new Map(ids.map((id, i) => [id, i]));
     spec.library = assets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   } else if (input.libraryMode === "auto") {
-    // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề
+    // AI tự chọn: chỉ đưa asset có thông tin (mô tả, tag, tóm tắt AI hoặc chữ đọc được); engine lọc tiếp theo chủ đề.
+    // Tắt tìm trên mạng thì thư viện là nguồn hình duy nhất: asset chưa có thông tin vẫn tốt hơn nền chữ
     const limit = input.director ? DIRECTOR_LIBRARY_LIMIT : 300;
     const folders = libraryFoldersOf(input);
     spec.library = assetsForEngine({
@@ -416,7 +428,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
       kind: VISUAL_KINDS,
       limit,
     }).filter(
-      (a) => a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
+      (a) => !input.webImages || a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
   const base = spec.base_script as Script | undefined;

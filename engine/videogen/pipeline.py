@@ -19,7 +19,7 @@ from .graphics import (
 )
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
 from .video_search import VideoProviderPool, fetch_videos
-from .llm import LibraryAsset, Script, Step, generate_script, parse_script, short_title
+from .llm import LibraryAsset, Script, Step, generate_script, parse_script, pick_assets, short_title
 from .probe import VIDEO_EXTS
 from .style import Style, language_for, step_label, tagline
 from .tts import TtsJob, load_words, provider_of, synthesize_many
@@ -179,6 +179,33 @@ def effective_interval(opts: "Options") -> float:
     if opts.visual_interval <= 0:
         return 0.0
     return max(opts.visual_interval, opts.style.timing.min_segment)
+
+
+def _fill_from_library(script: Script, library: list[LibraryAsset], interval: float, rate: str | None) -> int:
+    """Không tìm trên mạng: bước nào thiếu hình (AI không chọn được, hoặc ít hơn số hình tần suất đổi hình đòi hỏi) thì
+    lấy thêm asset khớp nhất trong thư viện thay vì để nền chữ, dùng lại asset khi thư viện không đủ.
+    Cảnh Đạo diễn AI đã tự xếp hình (visuals) thì giữ nguyên. Trả về số bước được bổ sung."""
+    known = {a.id for a in library}
+    used: dict[str, int] = {}
+    for step in script.steps:
+        for ref in (step.library_image, *step.extra_assets, *(v.get("asset") for v in step.visuals)):
+            if ref in known:
+                used[ref] = used.get(ref, 0) + 1
+    changed = 0
+    for step in script.steps:
+        if step.image or step.visuals:
+            continue
+        have = [x for x in (step.library_image, *step.extra_assets) if x in known]
+        want = min(max(round(speech_seconds(step.narration, rate) / interval), 1), MAX_SEGMENTS) if interval else 1
+        if len(have) >= want:
+            continue
+        text = " ".join([step.heading, step.narration, *step.image_queries])
+        more = pick_assets(text, library, used, want - len(have), exclude=have)
+        if more:
+            ids = have + [a.id for a in more]
+            step.library_image, step.extra_assets = ids[0], ids[1:]
+            changed += 1
+    return changed
 
 
 ORIENTATIONS = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
@@ -578,6 +605,17 @@ def run(
         print(f"      AI tinh chỉnh giọng: cao độ {base_pitch} → {pitch}, tốc độ {base_rate} → {rate}{reason}", flush=True)
         if script_data is not None or not script_path:
             script.save(script_file)
+    if not opts.web_images and opts.library:
+        pool = opts.library
+        if script.format == "director":
+            # Meme là điểm nhấn Đạo diễn AI tự đặt (và đếm theo số lượng người dùng yêu cầu), không dùng làm hình lấp chỗ trống
+            from .director import _is_meme
+            pool = [a for a in pool if not _is_meme(a)] or pool
+        filled = _fill_from_library(script, pool, effective_interval(opts), opts.rate or settings.tts_rate)
+        if filled:
+            print(f"      Không tìm trên mạng: bổ sung hình từ thư viện cho {filled} bước chưa có hình", flush=True)
+            if script_data is not None or not script_path:  # kịch bản người dùng tự sửa thì không ghi đè
+                script.save(script_file)
     print(f"      Tiêu đề: {script.title} — {len(script.steps)} bước", flush=True)
     print(f"      Kịch bản: {script_file}", flush=True)
     reporter.stage("script", f"Kịch bản: {script.title}", 1.0)
