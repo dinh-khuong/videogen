@@ -9,6 +9,19 @@ export const TOKEN_GROUPS = {
 } as const;
 export type TokenGroup = keyof typeof TOKEN_GROUPS;
 
+/** Thiết lập đi kèm token (chọn model, địa chỉ API...): lưu cùng token và truyền cho engine qua biến `env` khi token đang dùng. */
+export type TokenOptionMeta = {
+  key: string;
+  label: string;
+  env: string;
+  /** model: tên model (có thể tải danh sách từ dịch vụ); url: địa chỉ API kiểu OpenAI */
+  kind: "model" | "url";
+  placeholder?: string;
+  hint?: string;
+  /** gợi ý chọn nhanh */
+  suggestions?: readonly string[];
+};
+
 export type TokenProviderMeta = {
   label: string;
   env: string;
@@ -22,6 +35,8 @@ export type TokenProviderMeta = {
   secret?: boolean;
   /** có kiểm tra token được bằng một lời gọi thử */
   testable?: boolean;
+  /** thiết lập đi kèm (model...); chỉ dịch vụ AI có */
+  options?: readonly TokenOptionMeta[];
 };
 
 export const TOKEN_PROVIDERS = {
@@ -33,13 +48,67 @@ export const TOKEN_PROVIDERS = {
     link: "https://platform.deepseek.com/api_keys",
     required: true,
     testable: true,
+    options: [
+      {
+        key: "model",
+        label: "Model viết kịch bản",
+        env: "DEEPSEEK_MODEL",
+        kind: "model",
+        placeholder: "deepseek-chat",
+        hint: "Viết kịch bản, tiêu đề, hashtag và tóm tắt asset. Bỏ trống: dùng deepseek-chat (hoặc DEEPSEEK_MODEL trong engine/.env).",
+        suggestions: ["deepseek-chat", "deepseek-reasoner"],
+      },
+      {
+        key: "director_model",
+        label: "Model Đạo diễn AI",
+        env: "DIRECTOR_MODEL",
+        kind: "model",
+        placeholder: "Giống model viết kịch bản",
+        hint: "Đạo diễn AI gọi công cụ liên tục nên model phải hỗ trợ function calling (deepseek-reasoner thường không). Bỏ trống: dùng model ở trên.",
+        suggestions: ["deepseek-chat"],
+      },
+      {
+        key: "base_url",
+        label: "Địa chỉ API (tùy chọn)",
+        env: "DEEPSEEK_BASE_URL",
+        kind: "url",
+        placeholder: "https://api.deepseek.com",
+        hint: "Chỉ đổi khi dùng dịch vụ khác tương thích OpenAI. Bỏ trống: dùng DeepSeek.",
+        suggestions: ["https://api.deepseek.com"],
+      },
+    ],
   },
   vision: {
     label: "Mô hình thị giác",
     env: "VISION_API_KEY",
     group: "ai",
-    hint: "Gemini, OpenAI... để mô tả ảnh không có chữ. Cần đặt thêm VISION_MODEL (và VISION_BASE_URL) trong engine/.env.",
+    hint: "Gemini, OpenAI, Ollama... để mô tả ảnh không có chữ. Cần chọn model và địa chỉ API bên dưới thì mới được bật.",
     link: "https://aistudio.google.com/apikey",
+    testable: true,
+    options: [
+      {
+        key: "model",
+        label: "Model thị giác",
+        env: "VISION_MODEL",
+        kind: "model",
+        placeholder: "gemini-2.5-flash",
+        hint: "Model nhìn được ảnh. Bấm \"Tải danh sách model\" để lấy các model có trên dịch vụ.",
+        suggestions: ["gemini-2.5-flash", "gpt-4o-mini", "qwen2.5vl"],
+      },
+      {
+        key: "base_url",
+        label: "Địa chỉ API",
+        env: "VISION_BASE_URL",
+        kind: "url",
+        placeholder: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        hint: "Địa chỉ API kiểu OpenAI của dịch vụ: Gemini, OpenAI hoặc Ollama trên máy.",
+        suggestions: [
+          "https://generativelanguage.googleapis.com/v1beta/openai/",
+          "https://api.openai.com/v1",
+          "http://localhost:11434/v1",
+        ],
+      },
+    ],
   },
   fpt: {
     label: "FPT.AI",

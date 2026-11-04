@@ -190,6 +190,7 @@ function TokenRowView({
 }) {
   const [busy, setBusy] = useState<"test" | "active" | null>(null);
   const check = CHECK_LABEL[token.lastStatus ?? "none"];
+  const chosen = (providerMeta(token.provider).options ?? []).filter((o) => token.options[o.key]);
 
   const run = async (kind: "test" | "active", request: () => Promise<unknown>) => {
     setBusy(kind);
@@ -212,8 +213,17 @@ function TokenRowView({
         {token.active && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Đang dùng</span>}
         <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", check.className)}>{check.label}</span>
       </div>
-      {(token.lastMessage || token.note) && (
+      {(token.lastMessage || token.note || chosen.length > 0) && (
         <div className="space-y-0.5 text-xs text-zinc-500">
+          {chosen.length > 0 && (
+            <p className="flex flex-wrap gap-x-3 gap-y-0.5">
+              {chosen.map((o) => (
+                <span key={o.key} className="min-w-0 break-all">
+                  {o.label}: <code className="rounded bg-zinc-100 px-1 text-zinc-700">{token.options[o.key]}</code>
+                </span>
+              ))}
+            </p>
+          )}
           {token.lastMessage && (
             <p>
               {token.lastMessage}
@@ -279,6 +289,8 @@ function TokenForm({
   const [name, setName] = useState(token?.name ?? "");
   const [value, setValue] = useState("");
   const [note, setNote] = useState(token?.note ?? "");
+  const [options, setOptions] = useState<Record<string, string>>(token?.options ?? {});
+  const [models, setModels] = useState<{ list: string[]; busy: boolean; error: string | null }>({ list: [], busy: false, error: null });
   const [useNow, setUseNow] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -289,12 +301,29 @@ function TokenForm({
     setBusy(true);
     setError(null);
     try {
-      if (token) await api(`/api/tokens/${token.id}`, { method: "PATCH", json: { name, note, ...(value ? { value } : {}) } });
-      else await api("/api/tokens", { method: "POST", json: { provider, name, value, note, active: useNow } });
+      if (token) await api(`/api/tokens/${token.id}`, { method: "PATCH", json: { name, note, options, ...(value ? { value } : {}) } });
+      else await api("/api/tokens", { method: "POST", json: { provider, name, value, note, options, active: useNow } });
       await onSaved();
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+    }
+  };
+
+  const optionMetas = meta.options ?? [];
+  const hasModels = optionMetas.some((o) => o.kind === "model");
+
+  /** Tải danh sách model có trên dịch vụ, bằng token đang nhập hoặc token đã lưu. */
+  const loadModels = async () => {
+    setModels((m) => ({ ...m, busy: true, error: null }));
+    try {
+      const data = await api<{ models: string[] }>("/api/tokens/models", {
+        method: "POST",
+        json: { provider, id: token?.id, value: value || undefined, baseUrl: options.base_url || undefined },
+      });
+      setModels({ list: data.models, busy: false, error: null });
+    } catch (err) {
+      setModels((m) => ({ ...m, busy: false, error: (err as Error).message }));
     }
   };
 
@@ -324,6 +353,60 @@ function TokenForm({
             )}
           </span>
         </Field>
+        {optionMetas.map((o) => {
+          const listId = `${provider}-${o.key}-models`;
+          const quick = o.kind === "model" ? [...new Set([...(o.suggestions ?? []), ...models.list])].slice(0, 12) : (o.suggestions ?? []);
+          return (
+            <div key={o.key} className="space-y-1.5">
+              <Field label={o.label} hint={o.hint}>
+                <input
+                  className={cx(inputClass, "font-mono")}
+                  list={o.kind === "model" ? listId : undefined}
+                  value={options[o.key] ?? ""}
+                  maxLength={200}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => setOptions((cur) => ({ ...cur, [o.key]: e.target.value.trim() }))}
+                  placeholder={o.placeholder}
+                />
+              </Field>
+              {o.kind === "model" && (
+                <datalist id={listId}>
+                  {models.list.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              )}
+              {quick.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {quick.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setOptions((cur) => ({ ...cur, [o.key]: s }))}
+                      aria-pressed={options[o.key] === s}
+                      className={cx(
+                        "max-w-full truncate rounded-full px-2 py-0.5 font-mono text-xs ring-1",
+                        options[o.key] === s ? "bg-brand-50 text-brand-700 ring-brand-300" : "bg-surface text-zinc-600 ring-zinc-300 hover:bg-zinc-50",
+                      )}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {hasModels && (
+          <div className="space-y-1.5">
+            <Button size="sm" busy={models.busy} onClick={() => void loadModels()}>
+              Tải danh sách model
+            </Button>
+            {models.list.length > 0 && <p className="text-xs text-zinc-500">Đã tải {models.list.length} model từ dịch vụ: bấm vào tên ở trên hoặc gõ để lọc trong ô model.</p>}
+            <ErrorBox message={models.error} />
+          </div>
+        )}
         <Field label="Ghi chú (tùy chọn)">
           <input className={inputClass} value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="vd hạn mức, email tài khoản..." />
         </Field>

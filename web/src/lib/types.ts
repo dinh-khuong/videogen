@@ -306,6 +306,9 @@ export type EngineHealth = {
   warnings?: string[];
   ocr?: string | null;
   vision?: string | null;
+  /** model viết kịch bản / Đạo diễn AI engine sẽ dùng */
+  model?: string;
+  director_model?: string;
   python?: string;
   deepseek?: boolean;
   image_providers?: string[];
@@ -333,6 +336,8 @@ export type TokenItem = {
   /** token đang dùng của dịch vụ: được truyền cho engine khi chạy job (mỗi dịch vụ tối đa một) */
   active: boolean;
   note: string;
+  /** thiết lập đi kèm token theo khóa trong TOKEN_PROVIDERS[...].options (vd model, base_url); khóa chưa đặt thì không có */
+  options: Record<string, string>;
   /** kết quả lần kiểm tra gần nhất: ok = dùng được, invalid = sai/hết hạn/không có quyền, error = không kiểm tra được (mạng...) */
   lastStatus: TokenCheckStatus | null;
   lastMessage: string | null;

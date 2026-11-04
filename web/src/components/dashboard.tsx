@@ -29,6 +29,12 @@ function EngineStatus() {
         <p>Python {data.python} · moviepy {data.moviepy}</p>
         <p>Nguồn ảnh: {data.image_providers?.join(", ")}</p>
         <p>Nguồn clip video: {data.video_providers?.length ? data.video_providers.join(", ") : "chưa có"}</p>
+        {data.model && (
+          <p>
+            Model AI: {data.model}
+            {data.director_model && data.director_model !== data.model ? ` · Đạo diễn: ${data.director_model}` : ""}
+          </p>
+        )}
         <p>Giọng đọc mặc định: {data.voice}</p>
         <p>Đọc chữ trong asset: {data.ocr ?? "chưa có Tesseract"}</p>
         {data.vision && <p>Mô hình thị giác: {data.vision}</p>}

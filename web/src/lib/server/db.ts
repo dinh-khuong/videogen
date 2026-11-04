@@ -198,6 +198,8 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX api_tokens_provider ON api_tokens(provider, active);
   `,
+  // Thiết lập đi kèm token (model, địa chỉ API...) dạng JSON { khóa: giá trị }
+  `ALTER TABLE api_tokens ADD COLUMN options TEXT NOT NULL DEFAULT '{}';`,
 ];
 
 function open(): Database.Database {

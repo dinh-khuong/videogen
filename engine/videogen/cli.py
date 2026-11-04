@@ -335,6 +335,8 @@ def cmd_doctor(argv: list[str]) -> int:
 
         settings = load_settings()
         report["deepseek"] = bool(settings.deepseek_api_key)
+        report["model"] = settings.deepseek_model
+        report["director_model"] = settings.director_model or settings.deepseek_model
         if not settings.deepseek_api_key:
             report["problems"].append("Chưa có DEEPSEEK_API_KEY: thêm token ở trang \"Token API\" hoặc trong engine/.env")
         report["image_providers"] = [
