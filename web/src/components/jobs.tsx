@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { api, formatDate, formatRunTime, secondsSince, useApi, useDocumentTitle } from "@/lib/client";
 import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
-import { COLOR_FILTERS, LENGTHS, PACINGS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, voiceLabel } from "@/lib/video-options";
+import { COLOR_FILTERS, LENGTHS, PACINGS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, VOICE_EFFECTS, WRITING_STYLES, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
 
 function libraryTagsLabel(i: JobDetail["input"]): string {
@@ -141,10 +141,11 @@ function describeInput(job: JobDetail): string[] {
     `Tìm trên mạng: ${i.webImages ? { image: "ảnh", video: "ưu tiên clip video", auto: "AI chọn ảnh/clip" }[i.webMedia ?? "image"] : i.libraryMode === "off" ? "không" : "không (chỉ lấy trong thư viện Assets)"}${i.webImages && i.webMedia && i.webMedia !== "image" ? ` · ${i.clipsPerStep ?? 3} clip/bước` : ""}${i.webImages && i.searchEngine && i.searchEngine !== "auto" ? ` · tìm ảnh bằng ${SEARCH_ENGINES[i.searchEngine]?.label ?? i.searchEngine}` : ""}`,
   ];
   if (i.videoType || i.length) {
-    lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
+    const writing = i.writingStyle && i.writingStyle !== "auto" ? ` · phong cách ${WRITING_STYLES[i.writingStyle].label.toLowerCase()}` : "";
+    lines.push(`Loại: ${VIDEO_TYPES[i.videoType ?? "howto"].label} · ${LENGTHS[i.length ?? "medium"].label}${writing}${i.tone ? ` · giọng văn ${i.tone}` : ""}`);
   }
   if (i.voice || i.rate || i.pitch || i.voiceEffect || i.aiVoice) {
-    const voices = [voiceLabel(i.voice) || "mặc định", i.voice2 ? `${voiceLabel(i.voice2)} (xen kẽ)` : ""].filter(Boolean).join(" + ");
+    const voices = [voiceLabel(i.voice) || "mặc định", i.voice2 ? `${voiceLabel(i.voice2)} (${i.writingStyle === "dialogue" ? "nhân vật 2" : "xen kẽ"})` : ""].filter(Boolean).join(" + ");
     lines.push(`Giọng: ${voices}${i.rate && i.rate !== "+0%" ? ` · tốc độ ${i.rate}` : ""}${i.pitch && i.pitch !== "+0Hz" ? ` · cao độ ${i.pitch}` : ""}${i.voiceEffect && i.voiceEffect !== "none" ? ` · hiệu ứng ${VOICE_EFFECTS[i.voiceEffect].toLowerCase()}` : ""}${i.aiVoice ? " · AI được tinh chỉnh" : ""}`);
   }
   if (i.style) {

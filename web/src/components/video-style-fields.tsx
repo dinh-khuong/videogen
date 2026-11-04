@@ -344,6 +344,7 @@ export function VoiceFields({
   lockLanguage,
   allowAiTune,
   note,
+  dialogue,
 }: {
   value: VoiceSettings;
   onChange: (next: VoiceSettings) => void;
@@ -353,6 +354,8 @@ export function VoiceFields({
   allowAiTune?: boolean;
   /** ghi chú thêm dưới phần cao độ */
   note?: ReactNode;
+  /** kịch bản hai nhân vật: giọng thứ hai là giọng nhân vật 2 (trống thì engine tự chọn giọng khác giới) */
+  dialogue?: boolean;
 }) {
   const health = useApi<EngineHealth>("/api/health");
   const fpt = !!health.data?.fpt_tts;
@@ -437,10 +440,13 @@ export function VoiceFields({
             <VoicePreview player={player} params={previewParams(value.voice, value)} onPlay={() => rememberVoice(value.voice)} />
           </div>
         </Field>
-        <Field label="Giọng thứ hai (đọc xen kẽ)" hint="Các bước chẵn dùng giọng này, như hai người dẫn.">
+        <Field
+          label={dialogue ? "Giọng nhân vật 2" : "Giọng thứ hai (đọc xen kẽ)"}
+          hint={dialogue ? "Giọng chính là nhân vật 1. Để trống: tự chọn giọng khác giới với giọng chính." : "Các bước chẵn dùng giọng này, như hai người dẫn."}
+        >
           <div className="flex gap-2">
             <select className={inputClass} value={value.voice2} onChange={(e) => set({ voice2: e.target.value })}>
-              <option value="">Không dùng</option>
+              <option value="">{dialogue ? "Tự chọn (khác giới)" : "Không dùng"}</option>
               <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} zerotts={zerotts} />
             </select>
             {value.voice2 && (

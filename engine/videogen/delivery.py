@@ -37,6 +37,9 @@ MOODS: dict[str, Mood] = {
     "serious": Mood("nghiêm túc, chắc nịch", -4, -4, 0.1, 0.2),
     "fast": Mood("liến thoắng, đọc nhanh như rap", 32, 2, 0.0, 0.06),
     "warm": Mood("ấm áp, tâm tình", -6, -2, 0.1, 0.2),
+    "curious": Mood("tò mò, hỏi lại, lên giọng cuối câu", 4, 8, 0.05, 0.15),
+    "thoughtful": Mood("trầm ngâm, suy ngẫm, chậm và có khoảng lặng", -12, -4, 0.3, 0.4),
+    "emphatic": Mood("nhấn mạnh dứt khoát, chậm lại một nhịp cho ý đắt nhất", -8, 4, 0.3, 0.3),
 }
 
 RATE_RANGE = (-50, 100)
@@ -50,6 +53,36 @@ TUNE_RATE_LIMIT = 20   # %
 
 def mood_of(name: str | None) -> str:
     return name if name in MOODS else "neutral"
+
+
+# Chỉ ngắt câu ở dấu câu có khoảng trắng phía sau ("3.5 triệu" không bị cắt), kể cả khi có ngoặc kép/ngoặc đóng
+SENTENCE_BREAK = re.compile(r"(?<=[.!?…])\s+|(?<=[.!?…][\"'”’)])\s+")
+
+
+def sentence_lines(text: str) -> list[dict]:
+    """Chia lời bình liền một mạch thành câu thoại, cảm xúc đoán theo dấu câu ("!" hào hứng, "?" tò mò, "..." trầm ngâm)
+    để giọng đọc có lên xuống. Câu quá ngắn (vd "Ồ.") được ghép vào câu sau. Ghép lại các câu bằng dấu cách ra đúng
+    lời bình (đã gộp khoảng trắng)."""
+    lines: list[dict] = []
+    carry = ""
+    for part in SENTENCE_BREAK.split(" ".join((text or "").split())):
+        sentence = f"{carry} {part}".strip()
+        if not sentence:
+            continue
+        if len(sentence.split()) < 3:
+            carry = sentence
+            continue
+        carry = ""
+        end = sentence.rstrip("\"'”’) ")
+        mood = "excited" if end.endswith("!") else "curious" if end.endswith("?") else \
+            "thoughtful" if end.endswith(("...", "…")) else "neutral"
+        lines.append({"text": sentence, "mood": mood})
+    if carry:
+        if lines:
+            lines[-1]["text"] += " " + carry
+        else:
+            lines.append({"text": carry, "mood": "neutral"})
+    return lines
 
 
 def _shift(base_rate: str, base_pitch: str, rate_delta: int, pitch_delta: int) -> tuple[str, str]:

@@ -86,6 +86,7 @@ def cmd_make(argv: list[str]) -> int:
     from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
     from .tts import VOICE_EFFECTS
     from .video_builder import ASPECTS
+    from .writing import WRITING_STYLES
 
     parser = argparse.ArgumentParser(prog="videogen", description="Tạo video hướng dẫn (how-to) từ một chủ đề.")
     parser.add_argument("topic", nargs="?", help="Chủ đề, ví dụ: 'cách làm bánh flan'")
@@ -109,6 +110,9 @@ def cmd_make(argv: list[str]) -> int:
                         help="Loại video: howto (hướng dẫn), listicle (top danh sách), tips (mẹo), facts (sự thật thú vị), "
                              "promo (giới thiệu/quảng cáo), story (kể chuyện)")
     parser.add_argument("--tone", default="", help="Giọng văn, vd 'hài hước, dí dỏm' hoặc 'chuyên nghiệp'")
+    parser.add_argument("--writing", dest="writing_style", choices=WRITING_STYLES, default="auto",
+                        help="Phong cách viết: auto, narrator (người dẫn), essay (video essay, có chính kiến), "
+                             "dialogue (hai nhân vật trò chuyện, dùng --voice2 cho nhân vật 2), comedy (hài/meme)")
     parser.add_argument("--length", choices=("short", "medium", "long"), default="medium",
                         help="Độ dài: short (<45 giây), medium, long")
     parser.add_argument("--pacing", choices=PACINGS, default="normal", help="Nhịp dựng: slow | normal | fast")
@@ -183,6 +187,7 @@ def cmd_make(argv: list[str]) -> int:
         ai_voice=args.ai_voice,
         video_type=args.video_type,
         tone=args.tone,
+        writing_style=args.writing_style,
         length=args.length,
         style=Style(
             pacing=args.pacing, transition=args.transition, subtitle_style=args.subtitles,

@@ -1,5 +1,5 @@
 import type { TokenProvider } from "./token-providers";
-import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceEffect } from "./video-options";
+import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceEffect, WritingStyle } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
@@ -153,6 +153,9 @@ export type Script = {
   intro: string;
   steps: ScriptStep[];
   outro: string;
+  /** Câu thoại có cảm xúc của lời mở đầu / lời kết (như ScriptStep.lines), chỉ dùng khi ghép lại bằng intro / outro */
+  intro_lines?: ScriptLine[];
+  outro_lines?: ScriptLine[];
 };
 
 /** Cài đặt tạo video lưu kèm video: yêu cầu của job trừ những phần chỉ có nghĩa với đúng job đó. */
@@ -174,7 +177,7 @@ export type JobInput = {
   numSteps?: number | null;
   language?: string;
   voice?: string;
-  /** giọng thứ hai đọc xen kẽ các bước chẵn */
+  /** giọng thứ hai đọc xen kẽ các bước chẵn; với kịch bản hai nhân vật là giọng nhân vật 2 */
   voice2?: string | null;
   rate?: string;
   /** cao độ giọng, vd "+6Hz" */
@@ -187,6 +190,8 @@ export type JobInput = {
   videoType?: VideoType;
   /** giọng văn mong muốn của kịch bản */
   tone?: string;
+  /** phong cách viết: người dẫn, video essay, hai nhân vật, hài meme (job cũ: tự động) */
+  writingStyle?: WritingStyle;
   length?: VideoLength;
   /** nhịp dựng, chuyển cảnh, phụ đề, màu, logo, lời kêu gọi... (job cũ không có: dựng như trước) */
   style?: VideoStyle;

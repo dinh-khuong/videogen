@@ -18,19 +18,26 @@ Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu
   "title": "Tiêu đề video ngắn gọn, gây tò mò (tối đa 60 ký tự), do bạn tự đặt: KHÔNG chép lại nguyên văn yêu cầu/chủ đề",
   "description": "Mô tả video 1-3 câu để đăng kèm khi chia sẻ lên mạng xã hội (không chèn hashtag vào đây).",
   "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5", "hashtag6"],
-  "intro": "{intro}",
+  "intro_lines": [{"text": "Câu thoại mở đầu", "mood": "curious"{voice_example}}],
   "steps": [
     {
       "heading": "{heading}",
-      "narration": "Lời bình được đọc thành giọng nói cho phần này ({narration}).",
+      "lines": [
+        {"text": "Câu thoại thứ nhất của phần này", "mood": "neutral"{voice_example}},
+        {"text": "Câu thoại tiếp theo", "mood": "emphatic"}
+      ],
       "image_queries": ["specific english query", "alternative english query", "general english query"],
       "hashtags": ["hashtag1", "hashtag2"]{media_field}{library_field}
     }
   ],
-  "outro": "1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối."{voice_field}
+  "outro_lines": [{"text": "Câu thoại kết", "mood": "warm"}]{voice_field}
 }
 Yêu cầu:
-- Viết bằng {language}, giọng văn tự nhiên như người dẫn video, không đánh số trong câu.{tone}
+- Viết bằng {language}, giọng văn tự nhiên như người thật đang nói, không đánh số trong câu.{tone}
+- "intro_lines": lời mở đầu ({intro}). "lines" của mỗi phần: lời bình được đọc thành giọng nói ({narration}), chia thành
+  từng câu thoại theo thứ tự đọc. "outro_lines": 1-2 câu kết thúc, tóm tắt hoặc lời khuyên cuối.
+- "mood" của mỗi câu thoại là cảm xúc khi đọc câu đó (giọng đọc đổi tốc độ, cao độ, khoảng ngừng theo mood), chọn một trong:
+  {moods}.{voice_line}
 - Câu mở đầu phải "móc" được người xem ngay trong 3 giây đầu (câu hỏi, con số bất ngờ, lợi ích rõ ràng).
 - "image_queries": 3 cụm từ khóa TIẾNG ANH để tìm ảnh/clip (kho ảnh, video stock):
   query 1 cụ thể (3-5 từ, vd "whisking eggs in bowl"), query 2 cách diễn đạt khác, query 3 chung hơn (1-3 từ, vd "baking kitchen").
@@ -39,7 +46,12 @@ Yêu cầu:
   Viết thường, không dấu, viết liền, không có ký tự #. Video: 6-10 hashtag gồm chủ đề, nội dung chính, đối tượng xem và 1-2 hashtag
   thịnh hành của ngành; mỗi phần: 3-4 hashtag mô tả nội dung ảnh minh họa của phần đó.
 {rule}
+{writing_rule}
+{expressive_rule}
 """
+
+VOICE_LINE = """
+- "voice" của câu thoại: "main" (nhân vật 1) hoặc "second" (nhân vật 2). {cast}"""
 
 VIDEO_TYPES = {
     "howto": dict(
@@ -143,10 +155,14 @@ class Step:
     motion: str | None = None
 
     def acted_lines(self) -> list[dict]:
-        """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
-        if not self.lines or " ".join(l["text"] for l in self.lines) != self.narration:
-            return []
-        return self.lines
+        return acted(self.lines, self.narration)
+
+
+def acted(lines: list[dict], text: str) -> list[dict]:
+    """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
+    if not lines or " ".join(l["text"] for l in lines) != text:
+        return []
+    return lines
 
 
 @dataclass
@@ -163,6 +179,9 @@ class Script:
     # AI tinh chỉnh giọng chung của video: {"pitch": Hz, "rate": %, "reason"} cộng vào cài đặt người dùng
     # (xem delivery.normalize_tuning). Khi dựng, pipeline ghi thêm base_rate/base_pitch/final_rate/final_pitch.
     voice_tuning: dict | None = None
+    # Câu thoại có cảm xúc của lời mở đầu / lời kết (Kịch bản nhanh), như Step.lines: chỉ dùng khi ghép lại đúng bằng intro/outro
+    intro_lines: list[dict] = field(default_factory=list)
+    outro_lines: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -436,6 +455,8 @@ def parse_script(data: dict, default_title: str) -> Script:
         )
     if not steps or any(not st.narration for st in steps):
         raise ValueError("Kịch bản không có bước nào." if not steps else "Có bước không có lời bình.")
+    intro_lines = [l for l in (normalize_line(x) for x in data.get("intro_lines") or []) if l]
+    outro_lines = [l for l in (normalize_line(x) for x in data.get("outro_lines") or []) if l]
     title = (data.get("title") or default_title).strip()
     # Hashtag viết lẫn trong mô tả được tách ra; còn thiếu thì bổ sung (tag của các phần, rồi chữ trong tiêu đề/tên phần)
     description, inline_tags = split_hashtags(data.get("description") or "")
@@ -446,13 +467,15 @@ def parse_script(data: dict, default_title: str) -> Script:
     )
     return Script(
         title=title,
-        intro=(data.get("intro") or "").strip(),
+        intro=(data.get("intro") or "").strip() or " ".join(l["text"] for l in intro_lines),
         steps=steps,
-        outro=(data.get("outro") or "").strip(),
+        outro=(data.get("outro") or "").strip() or " ".join(l["text"] for l in outro_lines),
         description=description,
         hashtags=hashtags,
         format="director" if data.get("format") == "director" else "classic",
         voice_tuning=normalize_tuning(data.get("voice_tuning")),
+        intro_lines=intro_lines,
+        outro_lines=outro_lines,
     )
 
 
@@ -501,6 +524,20 @@ def _fresh_title(client: OpenAI, settings: Settings, topic: str, script: Script,
     return title[:80] if title and not same_text(title, topic) else None
 
 
+def _act_plain_text(script: Script, split) -> None:
+    """AI quên chia câu thoại (chỉ viết lời bình liền một mạch): tự chia theo câu, cảm xúc theo dấu câu,
+    để giọng đọc vẫn lên xuống thay vì đọc đều đều cả đoạn."""
+    for step in script.steps:
+        if not step.acted_lines():
+            step.lines = split(step.narration)
+            step.narration = " ".join(l["text"] for l in step.lines) or step.narration
+    for key in ("intro", "outro"):
+        if getattr(script, key) and not acted(getattr(script, f"{key}_lines"), getattr(script, key)):
+            lines = split(getattr(script, key))
+            setattr(script, f"{key}_lines", lines)
+            setattr(script, key, " ".join(l["text"] for l in lines) or getattr(script, key))
+
+
 def generate_script(
     topic: str,
     settings: Settings,
@@ -513,10 +550,14 @@ def generate_script(
     tone: str = "",
     length: str = "medium",
     voice: str | None = None,
+    writing: str = "auto",
+    cast: str = "",
 ) -> Script:
     """voice: mô tả giọng người dùng đã chọn (vd "vi-VN-HoaiMyNeural, cao độ +4Hz, tốc độ +0%"). Có giá trị nghĩa là
-    AI được quyền tinh chỉnh giọng (trường "voice_tuning" của kịch bản); None = giữ nguyên giọng người dùng chọn."""
-    from .delivery import TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT
+    AI được quyền tinh chỉnh giọng (trường "voice_tuning" của kịch bản); None = giữ nguyên giọng người dùng chọn.
+    writing: phong cách viết (writing.STYLES). cast: câu mô tả hai giọng đọc khi viết kiểu hai nhân vật."""
+    from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, sentence_lines
+    from .writing import EXPRESSIVE_RULE, writing_style
 
     client = OpenAI(
         api_key=require("DEEPSEEK_API_KEY", settings.deepseek_api_key),
@@ -529,10 +570,15 @@ def generate_script(
     parts_default, narration_hint = LENGTHS.get(length, LENGTHS["medium"])
     system = SYSTEM_PROMPT.replace("{language}", language)
     for key in ("role", "parts", "intro", "heading", "rule"):
-        system = system.replace("{" + key + "}", kind[key])
+        system = system.replace("{" + key + "}", kind[key].rstrip(".") if key == "intro" else kind[key])
     system = system.replace("{narration}", narration_hint)
-    tone = " ".join((tone or "").split())[:200]
+    style = writing_style(writing)
+    tone = " ".join((tone or "").split())[:200] or (style.tone if writing != "auto" else "")
     system = system.replace("{tone}", f"\n- Giọng văn: {tone}." if tone else "")
+    system = system.replace("{moods}", "; ".join(f"{k} ({m.label})" for k, m in MOODS.items()))
+    system = system.replace("{voice_example}", ', "voice": "main"' if style.dialogue else "")
+    system = system.replace("{voice_line}", VOICE_LINE.replace("{cast}", cast).rstrip() if style.dialogue else "")
+    system = system.replace("{writing_rule}", style.classic).replace("{expressive_rule}", EXPRESSIVE_RULE)
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
     # Chế độ tự động: LLM quyết định bước nào dùng clip video, bước nào dùng ảnh
     system = system.replace("{media_field}", MEDIA_FIELD if web_media == "auto" else "")
@@ -576,6 +622,7 @@ def generate_script(
             continue
         if library:
             _assign_library(script, library, library_mode)
+        _act_plain_text(script, sentence_lines)
         if not voice:
             script.voice_tuning = None  # người dùng không cho AI chỉnh giọng
         if same_text(script.title, short_title(topic, 200)) or same_text(script.title, topic):

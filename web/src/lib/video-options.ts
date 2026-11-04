@@ -273,6 +273,16 @@ export const VIDEO_TYPES = {
 } as const;
 export type VideoType = keyof typeof VIDEO_TYPES;
 
+/** Phong cách viết: AI nói thế nào (khớp engine/videogen/writing.py STYLES). Khác loại video (nội dung xếp theo khung nào). */
+export const WRITING_STYLES = {
+  auto: { label: "Tự động", hint: "Đạo diễn AI: hài meme; kịch bản nhanh: một người dẫn" },
+  narrator: { label: "Người dẫn", hint: "Một người dẫn rõ ràng, có duyên, hài nhẹ" },
+  essay: { label: "Video essay", hint: "Bình luận có chính kiến: luận điểm, dẫn chứng, phản biện" },
+  dialogue: { label: "Hai nhân vật", hint: "Hai người trò chuyện, đối đáp bằng hai giọng" },
+  comedy: { label: "Hài / meme", hint: "Mỗi cảnh một miếng hài, cà khịa, meme" },
+} as const;
+export type WritingStyle = keyof typeof WRITING_STYLES;
+
 export const TONES = [
   { value: "", label: "Tự nhiên (mặc định)" },
   { value: "thân thiện, gần gũi như nói chuyện với bạn bè", label: "Thân thiện, gần gũi" },

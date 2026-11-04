@@ -13,6 +13,7 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
                                             # voice có thể là "gtts:vi" (chị Google) hoặc "fpt:banmaiace" (FPT.AI), "zerotts:maichi" (ZeroTTS)
   "video_type": "howto",                    # howto | listicle | tips | facts | promo | story
   "tone": "hài hước",                       # giọng văn (tùy ý)
+  "writing_style": "auto",                  # auto | narrator | essay | dialogue (hai nhân vật) | comedy
   "length": "medium",                       # short | medium | long
   "style": {"pacing": "normal",             # slow | normal | fast
             "transition": "mix",            # mix | fade | slide | zoom | whip | wipe | circle | flash
@@ -57,6 +58,7 @@ from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
 from .tts import VOICE_EFFECTS
 from .video_builder import ASPECTS
+from .writing import WRITING_STYLES
 
 
 def _count(value, limit: int = 20) -> int | None:
@@ -95,6 +97,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     video_type = spec.get("video_type") or "howto"
     if video_type not in VIDEO_TYPES:
         raise ValueError(f"video_type không hợp lệ: {video_type}")
+    writing = spec.get("writing_style") or "auto"
+    if writing not in WRITING_STYLES:
+        raise ValueError(f"writing_style không hợp lệ: {writing}")
     voice_effect = spec.get("voice_effect") or "none"
     if voice_effect not in VOICE_EFFECTS:
         raise ValueError(f"voice_effect không hợp lệ: {voice_effect}")
@@ -123,6 +128,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         ai_voice=bool(spec.get("ai_voice")),
         video_type=video_type,
         tone=spec.get("tone") or "",
+        writing_style=writing,
         length=spec.get("length") if spec.get("length") in ("short", "medium", "long") else "medium",
         style=style,
         music=optional_path("music"),

@@ -23,6 +23,7 @@ import {
   VIDEO_TYPES,
   VOICE_EFFECTS,
   VOICE_RE,
+  WRITING_STYLES,
   languageOf,
   normalizeStyle,
   type Preset,
@@ -31,6 +32,7 @@ import {
   type VideoStyle,
   type VideoType,
   type VoiceSettings,
+  type WritingStyle,
 } from "@/lib/video-options";
 import { FolderMultiPicker } from "./asset-folders";
 import { AssetPicker, MusicPicker } from "./assets-library";
@@ -56,6 +58,7 @@ type Settings = {
   voice: VoiceSettings;
   style: VideoStyle;
   videoType: VideoType;
+  writingStyle: WritingStyle;
   tone: string;
   length: VideoLength;
   numSteps: string;
@@ -87,6 +90,7 @@ const DEFAULTS: Settings = {
   voice: DEFAULT_VOICE,
   style: DEFAULT_STYLE,
   videoType: "howto",
+  writingStyle: "auto",
   tone: "",
   length: "medium",
   numSteps: "",
@@ -131,6 +135,7 @@ function sanitize(p: Partial<Settings>): Settings {
     },
     style: p.style ? normalizeStyle(p.style) : DEFAULTS.style,
     videoType: pick(p.videoType, (v) => typeof v === "string" && Object.hasOwn(VIDEO_TYPES, v), DEFAULTS.videoType),
+    writingStyle: pick(p.writingStyle, (v) => typeof v === "string" && Object.hasOwn(WRITING_STYLES, v), DEFAULTS.writingStyle),
     tone: typeof p.tone === "string" ? p.tone.slice(0, MAX_TONE_CHARS) : "",
     length: pick(p.length, (v) => typeof v === "string" && Object.hasOwn(LENGTHS, v), DEFAULTS.length),
     numSteps: typeof p.numSteps === "string" && /^\d{0,2}$/.test(p.numSteps) ? p.numSteps : "",
@@ -205,6 +210,7 @@ function settingsFromJob(input: VideoSettings): Partial<Settings> {
     },
     style: input.style ?? LEGACY_STYLE,
     videoType: input.videoType,
+    writingStyle: input.writingStyle,
     tone: input.tone,
     length: input.length,
     numSteps: input.numSteps ? String(input.numSteps) : "",
@@ -352,6 +358,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       voiceEffect: s.voice.effect,
       aiVoice: s.voice.aiTune,
       videoType: s.videoType,
+      writingStyle: s.writingStyle,
       tone: s.tone.trim(),
       length: s.length,
       style: s.style,
@@ -482,6 +489,17 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
           </div>
         </div>
 
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-zinc-700">Phong cách viết</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {(Object.keys(WRITING_STYLES) as WritingStyle[]).map((k) => (
+              <Choice key={k} active={s.writingStyle === k} onClick={() => set("writingStyle", k)} title={WRITING_STYLES[k].label}>
+                {WRITING_STYLES[k].hint}
+              </Choice>
+            ))}
+          </div>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_8rem]">
           <Field label="Giọng văn">
             <select
@@ -541,11 +559,8 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
           value={s.voice}
           onChange={(v) => set("voice", v)}
           allowAiTune
-          note={
-            s.director
-              ? "Đạo diễn AI còn đổi cảm xúc từng câu (hào hứng cao hơn, kịch tính trầm hơn...) quanh mức này; câu bình thường đọc đúng như bản nghe thử."
-              : undefined
-          }
+          dialogue={s.writingStyle === "dialogue"}
+          note="AI còn đổi cảm xúc từng câu (hào hứng cao hơn, trầm ngâm chậm hơn, nhấn mạnh có ngắt nhịp...) quanh mức này; câu bình thường đọc đúng như bản nghe thử."
         />
       </Card>
 
