@@ -9,3 +9,5 @@ client_secret*.apps.googleusercontent.com.json
 data/
 node_modules/
 .next/
+*data*/
+data-*
