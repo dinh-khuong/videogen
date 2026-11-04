@@ -13,7 +13,7 @@ import { extOf, removeMedia, sha1File } from "./files";
 import type { JobRow } from "./jobs";
 import { TMP_DIR } from "./paths";
 import { contactVideos, contacts, videoAssets } from "./schema";
-import { insertVideo, moveVideoFiles } from "./videos";
+import { insertVideo, moveVideoFiles, promptOf } from "./videos";
 
 /** Kết quả engine ghi ra result.json (xem RunResult.to_dict trong engine/videogen/pipeline.py). */
 export type EngineResult = {
@@ -205,6 +205,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
     width: result.video.width,
     height: result.video.height,
     script: storedScript,
+    ...promptOf(JSON.parse(job.input) as JobInput, job.topic),
     jobId: job.id,
   };
   const files = await moveVideoFiles(video);

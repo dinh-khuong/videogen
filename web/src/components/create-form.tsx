@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { api, formatDuration, useApi } from "@/lib/client";
-import type { AssetItem, Contact, EngineHealth, JobDetail, JobInput, JobItem, Page, TagCount } from "@/lib/types";
+import type { AssetItem, Contact, EngineHealth, JobDetail, JobInput, JobItem, Page, TagCount, VideoDetail, VideoSettings } from "@/lib/types";
 import {
   DEFAULT_STYLE,
   DEFAULT_VOICE,
@@ -182,8 +182,8 @@ function saveSettings(s: FormState): void {
   }
 }
 
-/** Cài đặt của một job cũ (nút "Tạo video tương tự"). */
-function settingsFromJob(input: JobInput): Partial<Settings> {
+/** Cài đặt của một job hoặc video cũ (nút "Tạo video tương tự"). */
+function settingsFromJob(input: VideoSettings): Partial<Settings> {
   const layoutIndex = input.layout === "split" ? 3 : Math.max(0, LAYOUTS.findIndex((l) => l.aspect === input.aspect && l.layout === "normal"));
   const lang = LANGUAGES.find((l) => l.value === input.language) ?? languageOf(undefined);
   return {
@@ -222,27 +222,35 @@ function settingsFromJob(input: JobInput): Partial<Settings> {
 
 const noSubscribe = () => () => {};
 
-/** Trang tạo video: nạp cài đặt đã nhớ (hoặc của job cũ khi có ?from=) rồi hiện form. */
+/** Trang tạo video: nạp cài đặt đã nhớ (hoặc của job cũ khi có ?from=, của video khi có ?fromVideo=) rồi hiện form. */
 export function CreateVideoForm() {
   const params = useSearchParams();
   const from = params.get("from");
+  const fromVideo = params.get("fromVideo");
   // Đọc localStorage không cần effect; lần render ở server/hydrate dùng null rồi render lại với giá trị thật
   const saved = useSyncExternalStore(noSubscribe, readSavedRaw, () => null);
   const job = useApi<JobDetail>(from ? `/api/jobs/${encodeURIComponent(from)}` : null);
-  if (saved === null || (from && !job.data && !job.error)) return <Loading />;
+  const video = useApi<VideoDetail>(fromVideo ? `/api/videos/${encodeURIComponent(fromVideo)}` : null);
+  if (saved === null || (from && !job.data && !job.error) || (fromVideo && !video.data && !video.error)) return <Loading />;
 
-  const base = job.data ? settingsFromJob(job.data.input) : parseSaved(saved);
+  // Job hay video cũ: prompt, cài đặt, và asset/khách hàng đi kèm
+  const origin = job.data
+    ? { settings: job.data.input, topic: job.data.input.script ? "" : job.data.input.topic }
+    : video.data?.settings
+      ? { settings: video.data.settings, topic: video.data.prompt ?? "" }
+      : null;
   const initial: FormState = {
-    ...sanitize(base),
-    topic: job.data && !job.data.input.script ? job.data.input.topic : "",
+    ...sanitize(origin ? settingsFromJob(origin.settings) : parseSaved(saved)),
+    topic: origin?.topic ?? "",
     batch: false,
-    assetIds: job.data?.input.assetIds ?? [],
-    contactId: params.get("contact") ?? job.data?.input.contactId ?? "",
+    assetIds: origin?.settings.assetIds ?? [],
+    contactId: params.get("contact") ?? origin?.settings.contactId ?? "",
   };
+  const error = job.error ?? video.error;
   return (
     <>
-      {from && job.error && <ErrorBox message={`Không nạp được cài đặt của job: ${job.error}`} />}
-      <Form key={`${from ?? "new"}-${job.data ? "job" : "saved"}`} initial={initial} fromJob={!!job.data} />
+      {error && <ErrorBox message={`Không nạp được cài đặt của ${from ? "job" : "video"}: ${error}`} />}
+      <Form key={`${from ?? fromVideo ?? "new"}-${origin ? "origin" : "saved"}`} initial={initial} fromJob={!!origin} />
     </>
   );
 }
@@ -381,7 +389,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         title="Tạo video mới"
         subtitle={
           fromJob
-            ? "Đã điền sẵn cài đặt của job cũ. Sửa chủ đề hoặc tùy chọn rồi tạo video."
+            ? "Đã điền sẵn prompt và cài đặt của lần tạo trước. Sửa chủ đề hoặc tùy chọn rồi tạo video."
             : "AI lên kịch bản, chọn ảnh/clip/meme, đọc lời bình và dựng video. Cài đặt của lần tạo trước được nhớ sẵn."
         }
         actions={

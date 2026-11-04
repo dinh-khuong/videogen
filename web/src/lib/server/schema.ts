@@ -106,6 +106,9 @@ export const videos = sqliteTable("videos", {
   height: integer("height"),
   sizeBytes: integer("size_bytes"),
   script: text("script"),
+  /** prompt đã dùng để tạo video và cài đặt (JSON, kiểu VideoSettings); giữ lại khi job bị xóa */
+  prompt: text("prompt"),
+  settings: text("settings"),
   jobId: text("job_id").references(() => jobs.id, { onDelete: "set null" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
