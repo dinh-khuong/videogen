@@ -29,6 +29,9 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "search_engine": "auto",                  # công cụ tìm ảnh ưu tiên: auto | duckduckgo | google | brave | serper
                                             #   | pexels | pixabay (nguồn khác làm dự phòng)
   "clips_per_step": 3,                      # số clip ghép nối tiếp trong một bước dùng video
+  "visual_interval": 0,                     # tần suất đổi hình: cứ N giây đổi ảnh/clip mới (0 = tự động); không nhanh
+                                            #   hơn đoạn hình ngắn nhất của nhịp dựng (style.pacing)
+  "meme_images": null, "meme_videos": null, # Đạo diễn AI: số ảnh meme / clip meme trong video (null = AI quyết định, 0 = không dùng)
   "library_mode": "off",                    # off | auto | selected
   "director": false,                        # Đạo diễn AI: tự lên kịch bản qua nhiều lượt gọi công cụ, meme, giọng biến hóa
   "feedback": "",                           # góp ý của người dùng để Đạo diễn AI sửa bản trước
@@ -52,6 +55,13 @@ from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
 from .tts import VOICE_EFFECTS
 from .video_builder import ASPECTS
+
+
+def _count(value, limit: int = 20) -> int | None:
+    """Số lượng người dùng đặt (None = để AI quyết định), giới hạn 0..limit."""
+    if value is None or value == "":
+        return None
+    return min(max(int(value), 0), limit)
 
 
 def _options(spec: dict, reporter: JsonReporter) -> Options:
@@ -121,6 +131,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         web_media=web_media,
         search_engine=search_engine,
         clips_per_step=min(max(int(spec.get("clips_per_step") or 3), 1), 6),
+        visual_interval=min(max(float(spec.get("visual_interval") or 0), 0.0), 30.0),
+        meme_images=_count(spec.get("meme_images")),
+        meme_videos=_count(spec.get("meme_videos")),
         library=[
             LibraryAsset(
                 id=str(item["id"]),

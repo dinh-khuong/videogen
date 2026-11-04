@@ -59,6 +59,12 @@ class Options:
     # Công cụ tìm ảnh ưu tiên: auto (thứ tự IMAGE_PROVIDERS) | duckduckgo | google | brave | serper | pexels | pixabay
     search_engine: str = "auto"
     clips_per_step: int = 3  # số clip mạng ghép nối tiếp trong một bước dùng video
+    # Tần suất đổi hình: cứ chừng này giây đổi sang ảnh/clip mới (0 = tự động, theo clips_per_step / AI quyết định).
+    # Không thể nhanh hơn thời lượng tối thiểu của một đoạn hình theo nhịp dựng (style.PACING[...].min_segment).
+    visual_interval: float = 0.0
+    # Số ảnh meme / clip meme trong video (Đạo diễn AI): None = AI quyết định, 0 = không dùng, N = đúng N
+    meme_images: int | None = None
+    meme_videos: int | None = None
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
@@ -82,6 +88,10 @@ class StepImage:
     # visual: đoạn hình chính của bước | overlay: clip/ảnh lồng trên hình suốt cảnh | sticker: meme bật ra theo câu
     role: str = "visual"
     ref: str | None = None  # vị trí trong kịch bản để web thay đường dẫn bằng id asset: "overlay" | "line:<số thứ tự câu>"
+    # Do Đạo diễn AI đặt khi tải về (search_web): tiêu đề riêng của ảnh/clip, hashtag mô tả nội dung hình, có phải meme không
+    title: str = ""
+    hashtags: list[str] = field(default_factory=list)
+    meme: bool = False
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -151,6 +161,26 @@ def _hash(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:10]
 
 
+CHARS_PER_SECOND = 14.5  # tốc độ đọc trung bình (tiếng Việt, tốc độ gốc), để ước lượng thời lượng lời bình trước khi có giọng
+MAX_SEGMENTS = 8         # tối đa số ảnh/clip nối tiếp trong một bước
+
+
+def speech_seconds(text: str, rate: str | None) -> float:
+    """Ước lượng thời lượng đọc một đoạn lời bình theo tốc độ giọng ("+10%")."""
+    try:
+        speed = 1 + int((rate or "+0%").rstrip("%")) / 100
+    except ValueError:
+        speed = 1.0
+    return len(text) / (CHARS_PER_SECOND * max(speed, 0.3))
+
+
+def effective_interval(opts: "Options") -> float:
+    """Tần suất đổi hình thật sự dùng: không nhanh hơn đoạn hình ngắn nhất mà nhịp dựng cho phép (0 = tự động)."""
+    if opts.visual_interval <= 0:
+        return 0.0
+    return max(opts.visual_interval, opts.style.timing.min_segment)
+
+
 ORIENTATIONS = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
 TITLE_CARD_SECONDS = 2.4  # thời gian tiêu đề lớn hiện ở cảnh Đạo diễn AI chọn (thường là hook)
 OVERLAY_POSITION = 100  # thứ tự (trong bước) ghi cho clip lồng / sticker, tách khỏi các đoạn hình chính
@@ -207,6 +237,14 @@ def _prepare_images(
     video_registry = UrlRegistry()
     lock = threading.Lock()
     total, done = len(script.steps), 0
+    interval = effective_interval(opts)
+    rate = opts.rate or settings.tts_rate
+
+    def segment_count(step: Step, default: int) -> int:
+        """Số ảnh/clip nối tiếp cho một bước: theo tần suất đổi hình nếu người dùng đặt, không thì `default`."""
+        if not interval:
+            return default
+        return min(max(round(speech_seconds(step.narration, rate) / interval), 1), MAX_SEGMENTS)
 
     def provider_pool() -> ProviderPool:
         # Tạo khi cần, để render từ ảnh có sẵn/cache không đòi key
@@ -230,7 +268,7 @@ def _prepare_images(
     def find_videos(n: int, step) -> list[StepImage]:
         query = step.image_queries[0]
         key = _hash("video", orientation, *step.image_queries)
-        count = max(1, opts.clips_per_step)
+        count = segment_count(step, max(1, opts.clips_per_step))
         paths = [images_dir / f"step_{n:02d}_{key}_{k}.mp4" for k in range(count)]
         if all(p.exists() for p in paths[:1]):
             cached = [p for p in paths if p.exists()]
@@ -263,7 +301,28 @@ def _prepare_images(
                 out.append(StepImage(
                     i + 1, Path(ref["path"]), "web", credit=Credit(**credit) if isinstance(credit, dict) else None,
                     query=ref.get("query"), media=ref.get("media") or "image", position=len(out),
+                    title=ref.get("title") or "", hashtags=list(ref.get("hashtags") or []), meme=bool(ref.get("meme")),
                 ))
+        return out
+
+    def find_images(n: int, step: Step, count: int) -> list[StepImage]:
+        """Nhiều ảnh nối tiếp cho một bước (tần suất đổi hình cao): mỗi ảnh thử các query theo thứ tự xoay vòng."""
+        key = _hash(orientation, *step.image_queries)
+        queries = step.image_queries
+        out: list[StepImage] = []
+        for k in range(count):
+            path = images_dir / f"step_{n:02d}_{key}{'' if k == 0 else f'_{k}'}.jpg"
+            credit_path = path.with_suffix(".json")
+            order = queries[k % len(queries):] + queries[:k % len(queries)]
+            if path.exists():
+                out.append(StepImage(n, path, "web", credit=_load_credit(credit_path), query=order[0], position=len(out)))
+                continue
+            credit = fetch_image(order, path, orientation, provider_pool(), registry)
+            if credit:
+                credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
+                out.append(StepImage(n, path, "web", credit=credit, query=order[0], position=len(out)))
+        if out:
+            print(f"      ✓ Bước {n}: {len(out)}/{count} ảnh — {queries[0]}", flush=True)
         return out
 
     def find(i: int) -> list[StepImage]:
@@ -311,15 +370,21 @@ def _prepare_images(
             if clips:
                 return clips
         if opts.web_images and step.image_queries:
-            path = images_dir / f"step_{n:02d}_{_hash(orientation, *step.image_queries)}.jpg"
-            credit_path = path.with_suffix(".json")
-            if path.exists():
-                return StepImage(n, path, "web", credit=_load_credit(credit_path), query=query)
-            credit = fetch_image(step.image_queries, path, orientation, provider_pool(), registry)
-            if credit:
-                credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
-                print(f"      ✓ Ảnh bước {n}: {query} ({credit.source})", flush=True)
-                return StepImage(n, path, "web", credit=credit, query=query)
+            wanted = segment_count(step, 1)
+            if wanted > 1:
+                images = find_images(n, step, wanted)
+                if images:
+                    return images
+            else:
+                path = images_dir / f"step_{n:02d}_{_hash(orientation, *step.image_queries)}.jpg"
+                credit_path = path.with_suffix(".json")
+                if path.exists():
+                    return StepImage(n, path, "web", credit=_load_credit(credit_path), query=query)
+                credit = fetch_image(step.image_queries, path, orientation, provider_pool(), registry)
+                if credit:
+                    credit_path.write_text(json.dumps(asdict(credit), ensure_ascii=False), encoding="utf-8")
+                    print(f"      ✓ Ảnh bước {n}: {query} ({credit.source})", flush=True)
+                    return StepImage(n, path, "web", credit=credit, query=query)
             if not tried_video:
                 clips = find_videos(n, step)
                 if clips:
@@ -362,7 +427,8 @@ def resolve_media(ref: dict | None, library: dict[str, LibraryAsset], step: int,
     credit = ref.get("credit")
     media = "video" if ref.get("media") == "video" or path.suffix.lower() in VIDEO_EXTS else "image"
     return StepImage(step, path, "web", credit=Credit(**credit) if isinstance(credit, dict) else None,
-                     query=ref.get("query"), media=media, position=position, role=role, ref=key)
+                     query=ref.get("query"), media=media, position=position, role=role, ref=key,
+                     title=ref.get("title") or "", hashtags=list(ref.get("hashtags") or []), meme=bool(ref.get("meme")))
 
 
 def _prepare_extras(script: Script, library: dict[str, LibraryAsset]) -> tuple[list[StepImage | None], list[dict[int, StepImage]]]:

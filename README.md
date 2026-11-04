@@ -81,6 +81,10 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - Asset của bạn hiển thị **trọn vẹn trong khung** (không bị cắt) trên nền mờ. Clip video được tắt tiếng và tự lặp nếu ngắn hơn lời bình. Ảnh tìm trên mạng phủ kín khung.
 - **Clip video trên mạng** cho các bước chưa có asset: chọn "AI tự chọn ảnh hay clip" (AI dùng clip cho phần lớn các bước, chỉ dùng ảnh cho chân dung, sơ đồ, bảng giá...), "Ưu tiên clip video" hoặc "Chỉ ảnh".
   - Mỗi bước ghép **nhiều clip nối tiếp** (1–6, mặc định 3) với chuyển cảnh mềm; mở đầu và kết thúc là montage cắt nhanh từ clip của các bước.
+  - **Tần suất hình**: ô "Đổi ảnh/clip mỗi (giây)" trong form để cứ N giây đổi sang ảnh/clip mới (bỏ trống = tự động). Số hình mỗi bước tính theo thời lượng lời bình
+    (clip và cả ảnh tìm trên mạng; Đạo diễn AI được nhắc và bị yêu cầu sửa nếu cảnh lệch nhịp). Không thể nhanh hơn đoạn hình ngắn nhất của nhịp dựng (chậm 3,4s · vừa 2,2s · nhanh 1,4s).
+  - **Số lượng meme** (Đạo diễn AI): ô "Số ảnh meme" và "Số clip (video) meme" — bỏ trống để AI tự quyết định, `0` là không dùng, `N` là đúng N. Meme lấy từ kho meme trong Assets
+    hoặc tìm trên mạng (`search_web` với `meme=true`); tính cả hình chính, clip lồng và sticker. Đạo diễn AI chưa đúng số lượng thì không được chốt (tối đa 2 lần nhắc, sau đó vẫn dựng và ghi cảnh báo).
   - Chỉ lấy video **được phép dùng lại**: Pexels, Pixabay (kho stock, dùng thương mại), Wikimedia Commons (giấy phép tự do, không cần key), YouTube (**chỉ** video Creative Commons Attribution).
   - Mỗi clip lấy một đoạn ~10 giây (`WEB_CLIP_SECONDS`), tắt tiếng, lưu vào Assets kèm tác giả + giấy phép; nguồn được tự thêm vào cuối mô tả video để ghi công khi đăng.
   - Video Wikimedia có giấy phép CC BY-SA yêu cầu video của bạn cũng chia sẻ theo CC BY-SA: kiểm tra mô tả trước khi dùng cho quảng cáo.
@@ -104,11 +108,19 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
     - Xóa thư mục: chọn giữ nội dung (chuyển lên thư mục cha) hoặc xóa luôn cả asset bên trong. Tìm kiếm khi đang mở một thư mục thì tìm cả thư mục con.
     - Khi tạo video ở chế độ *AI tự chọn từ Assets*, có thể **giới hạn trong thư mục** (tính cả thư mục con), dùng riêng hoặc cùng với tag.
   - Mỗi asset/video có mô tả. Hashtag trong mô tả (`#caphe #huongdan`) tự thành tag để lọc.
-  - Ảnh tìm được khi tạo video được lưu vào Assets, kèm mô tả, hashtag và nguồn.
+  - Ảnh tìm được khi tạo video được lưu vào Assets, kèm mô tả, hashtag và nguồn. Mỗi ảnh/clip có **tên riêng** (do AI đặt cho đúng hình đó, hoặc nhãn bước,
+    hoặc từ khóa tìm kiếm), không bao giờ trùng tiêu đề video hay lời bình, và có tối thiểu 5 hashtag (hashtag AI đặt cho hình, rồi của bước/video, thiếu thì rút từ từ khóa tìm kiếm).
+    Phân tích lại asset cũ (mô tả còn dòng "Từ khóa tìm kiếm: ..." hoặc ít hashtag) sẽ đổi dòng đó thành hashtag và bổ sung hashtag AI gợi ý.
   - File trùng nội dung chỉ lưu một lần.
   - Video nền cho bố cục Shorts chia đôi cũng là một asset (video).
   - **Audio** (mp3, m4a, aac, wav, ogg, flac, opus) nằm chung trang Assets, có ảnh sóng âm và tóm tắt AI (từ tên + mô tả, vd thể loại, tâm trạng). Khi tạo video (hoặc tạo lại từ kịch bản đã sửa), chọn một audio làm **nhạc nền**: nhạc lặp suốt video, chỉnh được âm lượng, mờ dần ở cuối.
-  - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép.
+  - Video có tiêu đề, mô tả và hashtag do AI viết sẵn để đăng mạng xã hội, kèm nút sao chép. Tiêu đề do AI tự đặt, không chép nguyên văn chủ đề (trùng thì AI phải viết lại);
+    hashtag là hashtag đăng mạng xã hội (6–10 cái), không phải từ khóa tìm ảnh, và được bổ sung nếu AI viết thiếu.
+- **Token API** (trang riêng ở thanh bên): quản lý token/API key của DeepSeek, FPT.AI, Pexels, Pixabay, Brave, Serper, Google, YouTube, mô hình thị giác.
+  - Mỗi dịch vụ lưu được nhiều token (vd tài khoản chính và dự phòng), chọn một cái **đang dùng**; thêm, sửa tên/ghi chú/giá trị, xóa (xóa token đang dùng thì token cũ nhất còn lại được dùng thay).
+  - Nút **Kiểm tra** gọi thử dịch vụ để biết token còn dùng được không (DeepSeek hiện thêm số dư; FPT.AI đọc thử 8 ký tự). Kết quả được lưu kèm thời điểm kiểm tra.
+  - Token đang dùng được truyền cho engine qua biến môi trường mỗi khi chạy job hoặc phân tích asset và **ưu tiên hơn `engine/.env`**; dịch vụ chưa có token vẫn đọc `engine/.env` như trước. Đổi token có tác dụng từ job kế tiếp.
+  - Token lưu dạng văn bản thường trong `data/app.db` (giống `engine/.env`, không mã hóa); giao diện và API chỉ trả về bản che bớt.
   - Bạn có thể **sửa kịch bản, đổi ảnh/video từng bước rồi tạo lại video**, kể cả đổi giọng đọc và hiệu ứng (không cần AI viết lại).
 - **CRM khách hàng**:
   - Lưu trạng thái (tiềm năng → khách hàng), số điện thoại, email, nguồn, ghi chú có hashtag và ngày hẹn chăm sóc.
@@ -189,6 +201,7 @@ python -m videogen "chuyện cổ tích Tấm Cám" --type story --voice vi-VN-H
 python -m videogen "5 sự thật về mèo" --type facts --voice gtts:vi --rate=+15% --voice-effect cute   # chị Google ngọng nhẹ
 python -m videogen "5 sự thật về mèo" --director --aspect 9:16 --tone "lầy lội" --library-dir meme/ --library-mode auto   # Đạo diễn AI
 python -m videogen "5 sự thật về mèo" --director --base-script output/x/script.json --feedback "thêm meme, hook mạnh hơn"     # sửa theo góp ý
+python -m videogen "5 sự thật về mèo" --director --meme-images 3 --meme-videos 1 --visual-interval 3 --web-media video   # đúng 3 ảnh + 1 clip meme, đổi hình mỗi ~3 giây
 python -m videogen "chuyện ma căn nhà cũ" --type story --director --pitch=+4Hz --ai-voice   # AI được chỉnh giọng cho hợp video
 python -m videogen voice-sample --voice en-US-AvaMultilingualNeural --out mau.mp3   # nghe thử giọng
 python -m videogen "cách thay lốp xe đạp" --script-only                         # chỉ viết kịch bản
@@ -218,7 +231,7 @@ Cấu trúc spec và kết quả được mô tả trong [engine/videogen/job.py
 
 ## API key cần thiết
 
-Tất cả đặt trong `engine/.env`.
+Đặt trong `engine/.env`, hoặc thêm ở trang **Token API** của web app (token đã lưu ở đó được ưu tiên hơn `engine/.env`).
 
 ### 1. DeepSeek (viết kịch bản) — **bắt buộc**
 - Lấy tại: https://platform.deepseek.com/api_keys
@@ -277,7 +290,7 @@ web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
   src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)
   src/lib/video-options.ts   # danh sách giọng, ngôn ngữ, loại video, phong cách, mẫu nhanh (dùng chung client/server)
-  src/lib/server/            # db (SQLite + migration), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, repo
+  src/lib/server/            # db (SQLite + migration), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, tokens (token API truyền cho engine), repo
 data/                        # dữ liệu local (tự tạo khi chạy)
 ```
 

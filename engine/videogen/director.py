@@ -27,7 +27,7 @@ from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mo
 from .image_search import ProviderPool, UrlRegistry, fetch_image
 from .llm import (
     CAMERA_MOVES, OVERLAY_POSITIONS, SCENE_MOTIONS, SFX_NAMES, LibraryAsset, Script, _oneline, _tokens,
-    normalize_hashtags, parse_script, short_title,
+    ensure_hashtags, normalize_hashtags, parse_script, same_text, short_title, split_hashtags,
 )
 from .memes import EMOTION_WORDS, catchphrase_doc, emotion_keywords, phrase_keywords, used_phrases
 from .video_search import VideoProviderPool, fetch_videos
@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     from .pipeline import Options
 
 MAX_TURNS = 40
+MAX_VISUALS = 8          # tối đa số hình nối tiếp trong một cảnh
+MAX_FINISH_BLOCKS = 2    # số lần finish bị từ chối vì chưa đúng số lượng meme / tần suất hình, sau đó vẫn cho chốt
 TARGET_SECONDS = {"short": 35, "medium": 75, "long": 130}
 CHARS_PER_SECOND = 14.5  # tốc độ đọc trung bình (tiếng Việt, edge-tts tốc độ gốc)
 SCENE_PAD = 0.85         # khoảng lặng đầu + cuối mỗi cảnh
@@ -71,6 +73,9 @@ Nghệ thuật dựng:
   Hiệu ứng là gia vị: khoảng 1 hiệu ứng mỗi 1-2 câu là vừa, đặt đúng "miếng", không rải đều mọi câu.
 - Hình: mỗi cảnh 1-3 hình (asset/clip) nối tiếp. Clip video sinh động hơn ảnh. Nếu chưa có hình phù hợp,
   đặt fallback_query (tiếng Anh) để hệ thống tự tìm. Không dùng lặp một hình cho nhiều cảnh.
+- Mỗi lần search_web, luôn điền "title" (tiêu đề tiếng Việt 3-8 từ mô tả CHÍNH ảnh/clip đó; không trùng tiêu đề video,
+  không chép lời thoại) và "hashtags" (3-5 hashtag tiếng Việt không dấu về nội dung hình; KHÔNG phải từ khóa tìm kiếm).
+  Tiêu đề video (finish) phải do bạn tự đặt, hấp dẫn, KHÔNG chép nguyên văn yêu cầu của người dùng.
 - VIDEO LỒNG TRÊN ẢNH: cảnh dùng ảnh làm nền vẫn có thể có video chạy bên trong: "overlay" = id một CLIP (meme,
   reaction, minh họa) hiện trong khung nhỏ suốt cảnh, "overlay_position" chọn góc (br/bl/tr/tl, center = khung lớn
   giữa, ảnh làm nền). Sticker theo câu ("sticker") cũng có thể là CLIP: clip reaction bật ra đúng câu đó rồi biến mất.
@@ -90,7 +95,7 @@ thêm từ khóa tương ứng, vd "người Florida" ~ "Florida man"). Viết �
 trend khác nếu hợp):
 {catchphrases}
 
-{voice_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
+{counts_rule}{voice_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
 Toàn bộ lời thoại viết bằng {language}."""
 
 VOICE_RULE = """Giọng đọc: bạn ĐƯỢC QUYỀN tinh chỉnh giọng chung của cả video bằng tune_voice (cao độ, tốc độ quanh mức người dùng
@@ -157,6 +162,11 @@ TOOLS = [
         "query": {"type": "string", "description": "Mô tả cảnh quay bằng TIẾNG ANH, cụ thể (vd 'cat jumping off table')."},
         "media": {"type": "string", "enum": ["video", "image"]},
         "count": {"type": "integer", "description": "Số clip cần (1-3, chỉ với video)."},
+        "title": {"type": "string", "description": "Tiêu đề TIẾNG VIỆT 3-8 từ mô tả chính ảnh/clip này (tên asset khi lưu vào "
+                                                    "thư viện). Khác tiêu đề video và lời thoại."},
+        "hashtags": {"type": "array", "items": {"type": "string"},
+                     "description": "3-5 hashtag tiếng Việt không dấu về NỘI DUNG hình (không phải từ khóa tìm kiếm)."},
+        "meme": {"type": "boolean", "description": "true nếu cần ảnh/clip MEME hoặc reaction (tính vào số meme người dùng yêu cầu)."},
     }, ["query", "media"]),
     _tool("add_scene", "Thêm một cảnh vào storyboard.", {
         **SCENE_PROPS,
@@ -177,9 +187,12 @@ TOOLS = [
         "reason": {"type": "string", "description": "Vì sao chỉnh như vậy (1 câu, người dùng sẽ đọc)."},
     }, ["pitch", "rate", "reason"]),
     _tool("finish", "Chốt storyboard để dựng video. Chỉ gọi khi đã duyệt và hài lòng.", {
-        "title": {"type": "string", "description": "Tiêu đề video gây tò mò (≤ 60 ký tự)."},
-        "description": {"type": "string", "description": "Mô tả 1-3 câu để đăng mạng xã hội."},
-        "hashtags": {"type": "array", "items": {"type": "string"}, "description": "4-8 hashtag viết thường không dấu."},
+        "title": {"type": "string", "description": "Tiêu đề video gây tò mò (≤ 60 ký tự), tự đặt, KHÔNG chép nguyên văn "
+                                                    "yêu cầu của người dùng."},
+        "description": {"type": "string", "description": "Mô tả 1-3 câu để đăng mạng xã hội (không chèn hashtag vào đây)."},
+        "hashtags": {"type": "array", "items": {"type": "string"},
+                     "description": "6-10 hashtag đăng mạng xã hội (chủ đề, nội dung, đối tượng xem, trend), viết thường không dấu. "
+                                    "KHÔNG phải từ khóa tìm ảnh."},
     }, ["title", "description", "hashtags"]),
 ]
 
@@ -208,6 +221,8 @@ class Director:
         self.reviewed_since_change = False
         self.reviews = 0
         self.turn = 0
+        self.title_retried = False  # đã từ chối một lần vì tiêu đề chép nguyên văn yêu cầu
+        self.finish_blocks = 0      # số lần finish bị từ chối vì chưa đúng số meme / tần suất hình
         # Giọng người dùng chọn; AI có quyền tinh chỉnh (tune_voice) khi opts.ai_voice
         self.base_rate = opts.rate or settings.tts_rate or "+0%"
         self.base_pitch = opts.pitch or "+0Hz"
@@ -298,15 +313,18 @@ class Director:
         used = self._usage(id)
         return self._describe(id, detailed=True) + (f"\nĐang dùng ở: {', '.join(used)}" if used else "\nChưa dùng.")
 
-    def search_web(self, query: str, media: str = "video", count: int = 1) -> str:
+    def search_web(self, query: str, media: str = "video", count: int = 1, title: str = "", hashtags=None,
+                   meme: bool = False) -> str:
         if not self.opts.web_images:
             return "Người dùng đã tắt tìm trên mạng. Chỉ dùng asset trong thư viện (search_assets)."
         query = " ".join(query.split())[:120]
         if not query:
             return "Thiếu từ khóa."
+        title = " ".join(str(title or "").split())[:80]
+        tags = normalize_hashtags(hashtags)[:6]
         images_dir = self.work_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
-        key = hashlib.sha1(f"{media}|{self.orientation}|{query}".encode()).hexdigest()[:10]
+        key = hashlib.sha1(f"{media}|{self.orientation}|{query}|{bool(meme)}".encode()).hexdigest()[:10]
         found: list[tuple[Path, object]] = []
         note = ""
         if media == "video":
@@ -328,17 +346,21 @@ class Director:
                 except ConfigError as e:
                     return f"Không tìm ảnh trên mạng được ({e}). Dùng asset thư viện hoặc fallback_query."
             dest = images_dir / f"agent_{key}.jpg"
-            credit = fetch_image([query], dest, self.orientation, self._image_pool, self.registry)
+            # Ảnh meme: thêm chữ "meme" vào truy vấn (kho clip stock không có meme nên clip giữ nguyên truy vấn)
+            image_query = f"{query} meme" if meme and "meme" not in query.lower() else query
+            credit = fetch_image([image_query], dest, self.orientation, self._image_pool, self.registry)
             found = [(dest, credit)] if credit else []
         if not found:
             return f"Không tìm được gì cho '{query}'. Thử mô tả cảnh khác, cụ thể hơn hoặc chung hơn."
         ids = []
         for path, credit in found:
             media_id = f"web{len(self.web) + 1}"
-            self.web[media_id] = {"path": str(path.resolve()), "media": media, "credit": asdict(credit), "query": query}
+            self.web[media_id] = {"path": str(path.resolve()), "media": media, "credit": asdict(credit), "query": query,
+                                  "title": title, "hashtags": tags, "meme": bool(meme)}
             ids.append(media_id)
-        label = "clip" if media == "video" else "ảnh"
-        return f"Đã tải {len(ids)} {label}: {', '.join(ids)} — '{query}'.{note} Dùng các id này trong visuals."
+        label = ("clip" if media == "video" else "ảnh") + (" meme" if meme else "")
+        missing = "" if title and tags else " Lần sau điền đủ title và hashtags để ảnh/clip có tên và hashtag riêng khi lưu vào thư viện."
+        return f"Đã tải {len(ids)} {label}: {', '.join(ids)} — '{query}'.{note}{missing} Dùng các id này trong visuals."
 
     # ===== Storyboard =====
 
@@ -389,7 +411,7 @@ class Director:
                     warnings.append(f"visual '{v}' không tồn tại (bỏ qua)")
                 elif v not in visuals:
                     visuals.append(v)
-            scene["visuals"] = visuals[:4]
+            scene["visuals"] = visuals[:MAX_VISUALS]
         for key in ("fallback_query", "meme_top", "meme_bottom"):
             if key in args:
                 scene[key] = " ".join(str(args.get(key) or "").split())[:100]
@@ -514,6 +536,81 @@ class Director:
     def target_seconds(self) -> int:
         return TARGET_SECONDS.get(self.opts.length, TARGET_SECONDS["medium"])
 
+    # ===== Số meme và tần suất đổi hình (người dùng đặt) =====
+
+    def _is_meme_media(self, media_id: str) -> bool:
+        if media_id in self.library:
+            return media_id in self.meme_ids
+        return bool(self.web.get(media_id, {}).get("meme"))
+
+    def meme_counts(self) -> tuple[int, int]:
+        """(số ảnh meme, số clip meme) đang dùng trong storyboard: tính mỗi hình một lần dù dùng ở hình chính, lồng hay sticker."""
+        used: set[str] = set()
+        for sc in self.scenes:
+            used.update(sc["visuals"])
+            if sc.get("overlay"):
+                used.add(sc["overlay"])
+            used.update(l["sticker"] for l in sc["lines"] if l.get("sticker"))
+        memes = [m for m in used if self._is_meme_media(m)]
+        videos = sum(1 for m in memes if self._kind_of(m) == "video")
+        return len(memes) - videos, videos
+
+    def meme_targets(self) -> tuple[int | None, int | None]:
+        return self.opts.meme_images, self.opts.meme_videos
+
+    def interval(self) -> float:
+        from .pipeline import effective_interval
+
+        return effective_interval(self.opts)
+
+    def visuals_needed(self, scene: dict) -> int:
+        """Số hình cần cho một cảnh để đúng tần suất đổi hình (0 = người dùng không đặt tần suất)."""
+        interval = self.interval()
+        return min(max(round(self._scene_seconds(scene) / interval), 1), MAX_VISUALS) if interval else 0
+
+    def counts_rule(self) -> str:
+        """Đoạn prompt về số meme / tần suất hình mà người dùng đã đặt (rỗng nếu không đặt gì)."""
+        images, videos = self.meme_targets()
+        lines = []
+        for label, target in (("ảnh meme", images), ("clip meme", videos)):
+            if target is None:
+                continue
+            lines.append(f"- Số {label}: " + ("KHÔNG dùng cái nào." if target == 0 else f"ĐÚNG {target}."))
+        if lines:
+            lines.append("  Meme tính cả hình chính, hình lồng (overlay) và sticker; lấy từ kho meme của người dùng (search_assets "
+                         "memes_only) hoặc search_web với meme=true. Mỗi hình chỉ tính một lần. Số meme còn lại (loại không nêu "
+                         "ở trên) do bạn quyết định.")
+        interval = self.interval()
+        if interval:
+            lines.append(f"- Tần suất hình: cứ ~{interval:g} giây đổi sang một ảnh/clip khác trong cùng cảnh, tức số hình mỗi cảnh "
+                         f"≈ thời lượng cảnh / {interval:g} (cảnh ~9s cần ~{max(1, round(9 / interval))} hình). Review sẽ báo cảnh nào lệch.")
+        if not lines:
+            return ""
+        return "YÊU CẦU CỤ THỂ CỦA NGƯỜI DÙNG (bắt buộc, hệ thống kiểm tra trước khi cho chốt):\n" + "\n".join(lines) + "\n\n"
+
+    def unmet(self) -> list[str]:
+        """Những yêu cầu số lượng/tần suất của người dùng mà storyboard hiện tại chưa đạt (kèm cách sửa)."""
+        notes: list[str] = []
+        can_find = bool(self.memes) or self.opts.web_images  # không có nguồn meme nào thì không đòi
+        have_images, have_videos = self.meme_counts()
+        for label, kind, have, target in (("ảnh meme", "ảnh", have_images, self.opts.meme_images),
+                                          ("clip meme", "clip", have_videos, self.opts.meme_videos)):
+            if target is None or have == target or (not can_find and have < target):
+                continue
+            if have < target:
+                notes.append(f"Mới có {have}/{target} {label}: thêm {target - have} {kind} meme (search_assets memes_only=true "
+                             f"kind={'image' if kind == 'ảnh' else 'video'}, hoặc search_web meme=true) làm hình/overlay/sticker.")
+            else:
+                notes.append(f"Đang có {have} {label}, người dùng muốn "
+                             + ("KHÔNG dùng." if target == 0 else f"đúng {target}.") + f" Bớt {have - target} {kind} meme.")
+        if self.interval():
+            for s in self.scenes:
+                need, have = self.visuals_needed(s), len(s["visuals"])
+                if have and (have < need or have > need + 1):  # sai lệch 1 hình thì vẫn coi là đúng nhịp
+                    notes.append(f"{s['id']} ~{self._scene_seconds(s):.0f}s có {have} hình, cần ~{need} hình để đổi hình mỗi "
+                                 f"~{self.interval():g}s ({'thêm' if have < need else 'bớt'} visuals).")
+        return notes
+
     def critique(self) -> list[str]:
         """Nhận xét tự động để AI tự sửa (không bắt buộc làm theo)."""
         notes: list[str] = []
@@ -572,6 +669,7 @@ class Director:
             notes.append(f"Mọi cảnh cùng chuyển động '{motions[0]}': đổi theo cảm xúc từng cảnh (hoặc để auto).")
         if self.opts.ai_voice and self.voice_tuning is None and not self.voice_checked:
             notes.append("Giọng chung chưa tinh chỉnh: nếu cao độ/tốc độ chưa hợp không khí video, dùng tune_voice.")
+        notes += [f"Yêu cầu của người dùng: {n}" for n in self.unmet()]
         return notes
 
     def review_storyboard(self) -> str:
@@ -601,10 +699,24 @@ class Director:
             return "Chưa có cảnh nào, không thể chốt."
         if not self.reviewed_since_change and self.reviews == 0:
             return "Hãy review_storyboard ít nhất một lần trước khi chốt.\n\n" + self.review_storyboard()
+        title = " ".join(str(title or "").split())
+        if (not title or same_text(title, short_title(self.topic, 200)) or same_text(title, self.topic)) and not self.title_retried:
+            self.title_retried = True
+            return ("Tiêu đề đang trống hoặc chép nguyên văn yêu cầu của người dùng. Hãy tự đặt tiêu đề khác, gây tò mò, "
+                    "≤ 60 ký tự (đừng lặp lại cách diễn đạt của yêu cầu) rồi gọi finish lại.")
+        unmet = self.unmet()
+        if unmet and self.finish_blocks < MAX_FINISH_BLOCKS:
+            self.finish_blocks += 1
+            return ("Chưa đúng yêu cầu của người dùng, sửa rồi gọi finish lại:\n" + "\n".join(f"- {n}" for n in unmet))
+        if unmet:
+            self.event("warn", "Chốt dù chưa đúng hết yêu cầu: " + "; ".join(unmet))
+        # Hashtag AI viết lẫn trong mô tả được tách ra; còn thiếu thì bổ sung từ tiêu đề và nhãn cảnh (không dùng từ khóa tìm ảnh)
+        clean, inline = split_hashtags(description or "")
+        headings = [s.get("heading", "") for s in self.scenes]
         self.meta = {
             "title": short_title(title or self.topic, 70),
-            "description": " ".join((description or "").split()),
-            "hashtags": normalize_hashtags(hashtags),
+            "description": " ".join(clean.split()),
+            "hashtags": ensure_hashtags([*normalize_hashtags(hashtags), *inline], texts=[title, *headings]),
         }
         self.save_storyboard()
         return "Đã chốt. Bắt đầu dựng video."
@@ -632,6 +744,9 @@ class Director:
                          + "\n".join(a.catalog_line(True) for a in opts.library))
         if opts.num_steps:
             parts.append(f"Người dùng muốn khoảng {opts.num_steps} cảnh nội dung.")
+        rule = self.counts_rule()
+        if rule:
+            parts.append(rule.strip())
         if self.scenes:
             parts.append("Đây là bản dựng TRƯỚC (đã có trong storyboard):\n" + self.review_storyboard())
             self.reviewed_since_change = False
@@ -652,7 +767,8 @@ class Director:
         if not fn:
             return f"Không có công cụ '{name}'."
         allowed = {"search_assets": {"query", "kind", "memes_only", "emotion"}, "inspect_asset": {"id"},
-                   "search_web": {"query", "media", "count"}, "remove_scene": {"scene"}, "move_scene": {"scene", "position"},
+                   "search_web": {"query", "media", "count", "title", "hashtags", "meme"}, "remove_scene": {"scene"},
+                   "move_scene": {"scene", "position"},
                    "review_storyboard": set(), "finish": {"title", "description", "hashtags"},
                    "tune_voice": {"pitch", "rate", "reason"}}
         if name in allowed:
@@ -691,7 +807,8 @@ class Director:
             base_url=self.settings.deepseek_base_url, max_retries=3, timeout=180,
         )
         model = self.settings.director_model or self.settings.deepseek_model
-        system = SYSTEM.replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "").replace("{catchphrases}", catchphrase_doc())
+        system = (SYSTEM.replace("{counts_rule}", self.counts_rule()).replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
+                  .replace("{catchphrases}", catchphrase_doc()))
         tools = TOOLS if self.opts.ai_voice else [t for t in TOOLS if t["function"]["name"] != "tune_voice"]
         messages: list[dict] = [
             {"role": "system", "content": system.replace("{language}", self.opts.language)},
@@ -757,7 +874,8 @@ class Director:
         if media_id in self.library:
             return {"asset": media_id}
         item = self.web[media_id]
-        return {"path": item["path"], "media": item["media"], "credit": item.get("credit"), "query": item.get("query")}
+        return {"path": item["path"], "media": item["media"], "credit": item.get("credit"), "query": item.get("query"),
+                "title": item.get("title", ""), "hashtags": item.get("hashtags", []), "meme": item.get("meme", False)}
 
     def to_script(self) -> Script:
         steps = []

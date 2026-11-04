@@ -145,6 +145,13 @@ def cmd_make(argv: list[str]) -> int:
                              "auto = theo thứ tự IMAGE_PROVIDERS trong .env")
     parser.add_argument("--clips-per-step", type=int, default=3, choices=range(1, 7), metavar="1-6",
                         help="Số clip mạng ghép nối tiếp trong một bước dùng video (mặc định 3)")
+    parser.add_argument("--visual-interval", type=float, default=0.0, metavar="GIÂY",
+                        help="Tần suất đổi hình: cứ GIÂY giây đổi sang ảnh/clip mới (0 = tự động; không nhanh hơn "
+                             "đoạn hình ngắn nhất của --pacing)")
+    parser.add_argument("--meme-images", type=int, default=None, metavar="N",
+                        help="Đạo diễn AI: số ảnh meme trong video (0 = không dùng; bỏ trống = AI quyết định)")
+    parser.add_argument("--meme-videos", type=int, default=None, metavar="N",
+                        help="Đạo diễn AI: số clip meme trong video (0 = không dùng; bỏ trống = AI quyết định)")
     parser.add_argument("--director", action="store_true",
                         help="Đạo diễn AI: AI tự lên kịch bản qua nhiều lượt (tìm asset/meme/clip, dựng và tự duyệt cảnh), "
                              "giọng đọc đổi cảm xúc theo từng câu, hiệu ứng meme. Số cảnh do AI quyết định")
@@ -191,6 +198,9 @@ def cmd_make(argv: list[str]) -> int:
         web_media=args.web_media,
         search_engine=args.search_engine,
         clips_per_step=args.clips_per_step,
+        visual_interval=max(args.visual_interval, 0.0),
+        meme_images=None if args.meme_images is None else max(args.meme_images, 0),
+        meme_videos=None if args.meme_videos is None else max(args.meme_videos, 0),
         library=library,
         library_mode=args.library_mode if library else "off",
         director=args.director or bool(args.base_script),
@@ -326,7 +336,7 @@ def cmd_doctor(argv: list[str]) -> int:
         settings = load_settings()
         report["deepseek"] = bool(settings.deepseek_api_key)
         if not settings.deepseek_api_key:
-            report["problems"].append("Chưa có DEEPSEEK_API_KEY trong engine/.env")
+            report["problems"].append("Chưa có DEEPSEEK_API_KEY: thêm token ở trang \"Token API\" hoặc trong engine/.env")
         report["image_providers"] = [
             name for name in settings.image_providers if name in PROVIDERS and PROVIDERS[name][1](settings)
         ]

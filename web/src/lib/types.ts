@@ -1,3 +1,4 @@
+import type { TokenProvider } from "./token-providers";
 import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceEffect } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
@@ -189,6 +190,11 @@ export type JobInput = {
   webMedia?: "image" | "video" | "auto";
   /** số clip video ghép nối tiếp trong một bước (1-6) */
   clipsPerStep?: number;
+  /** tần suất đổi hình: cứ chừng này giây đổi sang ảnh/clip mới; null = tự động (job cũ: tự động) */
+  visualInterval?: number | null;
+  /** số ảnh meme / clip meme trong video (Đạo diễn AI): null = AI quyết định, 0 = không dùng, N = đúng N */
+  memeImages?: number | null;
+  memeVideos?: number | null;
   /** công cụ tìm ảnh ưu tiên (Brave, Google...); nguồn khác làm dự phòng. Job cũ: auto */
   searchEngine?: SearchEngine;
   libraryMode: "off" | "auto" | "selected";
@@ -313,6 +319,26 @@ export type EngineHealth = {
   zerotts?: boolean;
   font?: string | null;
   moviepy?: string;
+};
+
+export type TokenCheckStatus = "ok" | "invalid" | "error";
+
+/** Token/API key của một dịch vụ. Giá trị thật không bao giờ gửi về giao diện, chỉ có bản che bớt. */
+export type TokenItem = {
+  id: string;
+  provider: TokenProvider;
+  name: string;
+  /** giá trị che bớt, vd "sk-a••••9f3c" */
+  masked: string;
+  /** token đang dùng của dịch vụ: được truyền cho engine khi chạy job (mỗi dịch vụ tối đa một) */
+  active: boolean;
+  note: string;
+  /** kết quả lần kiểm tra gần nhất: ok = dùng được, invalid = sai/hết hạn/không có quyền, error = không kiểm tra được (mạng...) */
+  lastStatus: TokenCheckStatus | null;
+  lastMessage: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Stats = {

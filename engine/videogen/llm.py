@@ -15,9 +15,9 @@ thông tin sản phẩm/dịch vụ...). Hãy viết kịch bản gồm lời m�
 Làm đúng mọi yêu cầu của người dùng; giữ nguyên thông tin cụ thể họ cung cấp (tên, giá, số liệu, địa chỉ).
 Chỉ trả lời bằng một đối tượng JSON hợp lệ theo đúng cấu trúc ("steps" là danh sách {parts}):
 {
-  "title": "Tiêu đề video ngắn gọn, gây tò mò (tối đa 60 ký tự)",
-  "description": "Mô tả video 1-3 câu để đăng kèm khi chia sẻ lên mạng xã hội.",
-  "hashtags": ["hashtag1", "hashtag2"],
+  "title": "Tiêu đề video ngắn gọn, gây tò mò (tối đa 60 ký tự), do bạn tự đặt: KHÔNG chép lại nguyên văn yêu cầu/chủ đề",
+  "description": "Mô tả video 1-3 câu để đăng kèm khi chia sẻ lên mạng xã hội (không chèn hashtag vào đây).",
+  "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5", "hashtag6"],
   "intro": "{intro}",
   "steps": [
     {
@@ -35,7 +35,9 @@ Yêu cầu:
 - "image_queries": 3 cụm từ khóa TIẾNG ANH để tìm ảnh/clip (kho ảnh, video stock):
   query 1 cụ thể (3-5 từ, vd "whisking eggs in bowl"), query 2 cách diễn đạt khác, query 3 chung hơn (1-3 từ, vd "baking kitchen").
   Mô tả cảnh/đồ vật quay chụp được, ưu tiên cảnh có chuyển động; tránh từ trừu tượng và tên riêng địa phương.
-- "hashtags": viết thường, không dấu, viết liền, không có ký tự #. Video: 4-8 hashtag; mỗi phần: 2-4 hashtag mô tả nội dung ảnh minh họa.
+- "hashtags": hashtag để đăng mạng xã hội, KHÔNG phải từ khóa tìm ảnh (từ khóa tìm ảnh chỉ đặt ở "image_queries").
+  Viết thường, không dấu, viết liền, không có ký tự #. Video: 6-10 hashtag gồm chủ đề, nội dung chính, đối tượng xem và 1-2 hashtag
+  thịnh hành của ngành; mỗi phần: 3-4 hashtag mô tả nội dung ảnh minh họa của phần đó.
 {rule}
 """
 
@@ -241,6 +243,76 @@ def normalize_hashtags(values) -> list[str]:
     return tags
 
 
+HASHTAG_MIN = 5   # video: tối thiểu chừng này hashtag (thiếu thì bổ sung từ tiêu đề và tên các phần)
+HASHTAG_MAX = 12
+# Từ nối/từ chung (không dấu) không đáng làm hashtag
+_HASHTAG_STOP = set(
+    "va la cua cho khi nhu the nao gi cach nhung mot nhieu trong co khong duoc voi cac day nay do den tu de ve bi se da "
+    "dang rat hay nen ma thi neu vi sao lam tai ra vao len xuong nhat hon cung con cai "
+    "the a an of in on at to for with and or is are into from by as it its this that up down out over away near".split()
+)
+_VIETNAMESE = re.compile(r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]", re.I)
+
+
+def text_hashtags(text: str, limit: int = 8) -> list[str]:
+    """Hashtag rút ra từ một đoạn chữ (tiêu đề, tên phần): dùng khi AI không đưa đủ hashtag.
+
+    Chữ tiếng Việt thì ghép cặp âm tiết liền kề ("cà phê" -> caphe, "Việt Nam" -> vietnam) vì một từ thường có 2 âm tiết;
+    chữ khác lấy từng từ có nghĩa. Bỏ từ nối và từ quá ngắn.
+    """
+    vietnamese = bool(_VIETNAMESE.search(text))
+    out: list[str] = []
+    singles: list[str] = []
+
+    def add(tag: str, into: list[str]) -> None:
+        if tag and tag not in out and tag not in into:
+            into.append(tag)
+
+    for clause in re.split(r"[.,;:!?…()\n\-–—]+", text):  # cặp âm tiết không được nối qua dấu câu
+        keys = [(normalize_hashtags([w]) or [""])[0] for w in re.findall(r"[^\W_]+", clause)]
+        ok = [bool(k) and k not in _HASHTAG_STOP and not k.isdigit() and len(k) >= (2 if vietnamese else 3) for k in keys]
+        if vietnamese:
+            for i in range(len(keys) - 1):
+                if ok[i] and ok[i + 1]:
+                    add(keys[i] + keys[i + 1], out)
+        for k, good in zip(keys, ok):
+            if good and len(k) >= 4:
+                add(k, singles)
+    return [*out, *(t for t in singles if t not in out)][:limit]
+
+
+def ensure_hashtags(tags, extra=(), texts=(), minimum: int = HASHTAG_MIN, maximum: int = HASHTAG_MAX) -> list[str]:
+    """Hashtag của AI, bổ sung tới `minimum` bằng `extra` (hashtag có sẵn khác) rồi hashtag rút từ `texts`."""
+    out = normalize_hashtags(tags)
+    if len(out) < minimum:
+        for tag in normalize_hashtags(extra):
+            if tag not in out:
+                out.append(tag)
+    if len(out) < minimum:
+        for text in texts:
+            for tag in text_hashtags(text):
+                if tag not in out:
+                    out.append(tag)
+    return out[:maximum]
+
+
+def split_hashtags(text: str) -> tuple[str, list[str]]:
+    """Mô tả có hashtag viết lẫn trong chữ -> (mô tả sạch, hashtag). AI đôi khi nhét hashtag vào mô tả."""
+    tags = normalize_hashtags(re.findall(r"#([^\W_]+)", text or ""))
+    clean = re.sub(r"[ \t]*#[^\W_]+", "", text or "")
+    clean = "\n".join(" ".join(line.split()) for line in clean.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", clean).strip(), tags
+
+
+def same_text(a: str, b: str) -> bool:
+    """Hai đoạn chữ giống nhau khi bỏ dấu, hoa thường, dấu câu và khoảng trắng thừa."""
+    def key(s: str) -> str:
+        s = unicodedata.normalize("NFKD", (s or "").lower().replace("đ", "d"))
+        return " ".join(re.findall(r"[a-z0-9]+", "".join(ch for ch in s if not unicodedata.combining(ch))))
+    ka, kb = key(a), key(b)
+    return bool(ka) and ka == kb
+
+
 def short_title(text: str, limit: int = 60) -> str:
     """Dòng đầu của chủ đề/prompt, cắt gọn để làm tiêu đề dự phòng hoặc in log."""
     line = next((l.strip() for l in text.splitlines() if l.strip()), "video")
@@ -271,9 +343,14 @@ def _media_ref(value) -> dict | None:
         return {"asset": str(value["asset"])}
     if value.get("path"):
         ref = {"path": str(value["path"]), "media": "video" if value.get("media") == "video" else "image"}
-        for key in ("credit", "query"):
+        for key in ("credit", "query", "title"):
             if value.get(key):
                 ref[key] = value[key]
+        tags = normalize_hashtags(value.get("hashtags"))
+        if tags:
+            ref["hashtags"] = tags
+        if value.get("meme"):
+            ref["meme"] = True
         return ref
     return None
 
@@ -335,13 +412,21 @@ def parse_script(data: dict, default_title: str) -> Script:
         )
     if not steps or any(not st.narration for st in steps):
         raise ValueError("Kịch bản không có bước nào." if not steps else "Có bước không có lời bình.")
+    title = (data.get("title") or default_title).strip()
+    # Hashtag viết lẫn trong mô tả được tách ra; còn thiếu thì bổ sung (tag của các phần, rồi chữ trong tiêu đề/tên phần)
+    description, inline_tags = split_hashtags(data.get("description") or "")
+    hashtags = ensure_hashtags(
+        [*normalize_hashtags(data.get("hashtags")), *inline_tags],
+        extra=[t for st in steps for t in st.hashtags],
+        texts=[title, *[st.heading for st in steps]],
+    )
     return Script(
-        title=(data.get("title") or default_title).strip(),
+        title=title,
         intro=(data.get("intro") or "").strip(),
         steps=steps,
         outro=(data.get("outro") or "").strip(),
-        description=(data.get("description") or "").strip(),
-        hashtags=normalize_hashtags(data.get("hashtags")),
+        description=description,
+        hashtags=hashtags,
         format="director" if data.get("format") == "director" else "classic",
         voice_tuning=normalize_tuning(data.get("voice_tuning")),
     )
@@ -370,6 +455,26 @@ def _assign_library(script: Script, library: list[LibraryAsset], mode: str) -> N
                 break
             if not step.library_image:
                 step.library_image = leftovers.pop(0)
+
+
+def _fresh_title(client: OpenAI, settings: Settings, topic: str, script: Script, language: str) -> str | None:
+    """Tiêu đề do AI đặt lại khi nó chép nguyên văn chủ đề: một lượt gọi ngắn, lỗi thì giữ tiêu đề cũ."""
+    outline = "; ".join(s.heading or s.narration[:40] for s in script.steps[:12])
+    try:
+        response = client.chat.completions.create(
+            model=settings.deepseek_model,
+            messages=[{"role": "user", "content": (
+                f"Chủ đề người dùng đưa: {short_title(topic, 200)}\nNội dung video: {script.intro} {outline}\n"
+                f"Viết MỘT tiêu đề video bằng {language}, gây tò mò, tối đa 60 ký tự, khác hẳn cách diễn đạt của chủ đề "
+                "(không chép lại chủ đề). Chỉ trả về tiêu đề, không dấu ngoặc kép."
+            )}],
+            temperature=0.9,
+            max_tokens=80,
+        )
+        title = " ".join((response.choices[0].message.content or "").split()).strip("\"'“”")
+    except Exception:  # tiêu đề cũ vẫn dùng được
+        return None
+    return title[:80] if title and not same_text(title, topic) else None
 
 
 def generate_script(
@@ -449,5 +554,7 @@ def generate_script(
             _assign_library(script, library, library_mode)
         if not voice:
             script.voice_tuning = None  # người dùng không cho AI chỉnh giọng
+        if same_text(script.title, short_title(topic, 200)) or same_text(script.title, topic):
+            script.title = _fresh_title(client, settings, topic, script, language) or script.title
         return script
     raise RuntimeError(f"DeepSeek trả về kịch bản không hợp lệ sau 3 lần thử: {last_error}")

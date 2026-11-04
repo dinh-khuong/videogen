@@ -180,6 +180,24 @@ const MIGRATIONS: string[] = [
   ALTER TABLE jobs ADD COLUMN duration_seconds REAL;
   ALTER TABLE jobs ADD COLUMN estimated_seconds REAL;
   `,
+  // Token/API key của các dịch vụ (AI, giọng đọc, tìm ảnh...): mỗi dịch vụ có thể lưu nhiều token, một cái đang dùng
+  // (active) được truyền cho engine khi chạy job. last_* là kết quả lần kiểm tra token gần nhất.
+  `
+  CREATE TABLE api_tokens (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    value TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    last_status TEXT,
+    last_message TEXT,
+    last_checked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  CREATE INDEX api_tokens_provider ON api_tokens(provider, active);
+  `,
 ];
 
 function open(): Database.Database {

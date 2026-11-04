@@ -48,9 +48,14 @@ function EngineStatus() {
           <li key={p}>{p}</li>
         ))}
       </ul>
-      <button type="button" onClick={() => void reload()} className="text-sm font-medium text-brand-600 hover:underline">
-        Kiểm tra lại
-      </button>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
+        <Link href="/tokens" className="text-brand-600 hover:underline">
+          Quản lý token API
+        </Link>
+        <button type="button" onClick={() => void reload()} className="text-brand-600 hover:underline">
+          Kiểm tra lại
+        </button>
+      </div>
     </div>
   );
 }

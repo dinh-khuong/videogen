@@ -25,7 +25,8 @@ def _get(name: str, default: str | None = None) -> str | None:
 def require(name: str, value: str | None) -> str:
     if not value:
         raise ConfigError(
-            f"Thiếu biến môi trường {name}. Hãy tạo file .env (xem .env.example) và điền giá trị thật."
+            f"Thiếu biến môi trường {name}. Thêm token ở trang \"Token API\" của web app, hoặc tạo file engine/.env "
+            "(xem .env.example) và điền giá trị thật."
         )
     return value
 

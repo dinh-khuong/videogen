@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { parseHashtags } from "@/lib/hashtags";
+import { ASSET_HASHTAG_MIN, ensureHashtags, parseHashtags, textHashtags, withHashtags } from "@/lib/hashtags";
 import type { AnalysisStatus, AssetItem, AssetKind, Page } from "@/lib/types";
 import { db, nowIso } from "./db";
 import { probe } from "./engine";
@@ -337,16 +337,42 @@ export function saveAnalysis(result: {
   error?: string | null;
 }): void {
   if (result.status === "done") {
-    db()
+    const saved = db()
       .prepare(
         `UPDATE assets SET analysis_status = 'done', analysis_error = NULL, ocr_text = ?, ai_summary = ?, ai_tags = ?, analyzed_at = ?
          WHERE id = ? AND analysis_status = 'running'`,
       )
       .run((result.ocr_text ?? "").slice(0, 4000), (result.summary ?? "").slice(0, 2000), JSON.stringify(result.tags ?? []),
         nowIso(), result.id);
+    if (saved.changes) topUpHashtags(result.id, result.tags ?? []);
   } else {
     failAnalysis([result.id], result.error || "Lỗi không xác định");
   }
+}
+
+/** Asset không do người dùng tải lên (ảnh/clip hệ thống tìm về) mà mô tả còn quá ít hashtag. */
+const SPARSE_DESCRIPTION_HASHTAGS = 3;
+
+/**
+ * Mô tả của asset hệ thống tìm về thường thiếu hashtag: thêm hashtag AI vừa gợi ý vào cuối mô tả để thấy và sửa được,
+ * đồng thời thành tag để lọc. Chỉ thêm vào, không đụng tới chữ đã có; mô tả người dùng tự viết cho asset tải lên giữ nguyên.
+ */
+function topUpHashtags(id: string, aiTags: string[]): void {
+  const row = db().prepare("SELECT description, source FROM assets WHERE id = ?").get(id) as
+    | { description: string; source: string }
+    | undefined;
+  if (!row || row.source === "upload") return;
+  // Bản cũ ghi dòng "Từ khóa tìm kiếm: ..." (từ khóa tiếng Anh) thay cho hashtag: bỏ dòng đó, các từ của nó thành hashtag
+  const legacy = row.description.match(/\n?Từ khóa tìm kiếm: ([^\n]*)/);
+  const base = legacy ? row.description.replace(legacy[0], "") : row.description;
+  const existing = parseHashtags(base);
+  if (!legacy && existing.length >= SPARSE_DESCRIPTION_HASHTAGS) return;
+  const description = withHashtags(base, ensureHashtags([existing], [aiTags, textHashtags(legacy?.[1])], ASSET_HASHTAG_MIN));
+  if (description === row.description.trim()) return;
+  db().transaction(() => {
+    db().prepare("UPDATE assets SET description = ?, updated_at = ? WHERE id = ?").run(description, nowIso(), id);
+    setTags("asset", id, parseHashtags(description));
+  })();
 }
 
 export function failAnalysis(ids: string[], error: string): void {
