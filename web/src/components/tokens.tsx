@@ -13,6 +13,11 @@ function engineHas(provider: TokenProvider, health: EngineHealth | null): boolea
   if (!health) return null;
   switch (provider) {
     case "deepseek":
+    case "openai":
+    case "gemini":
+    case "openrouter":
+    case "groq":
+    case "custom_ai":
       return !!health.deepseek;
     case "fpt":
       return !!health.fpt_tts;
@@ -43,6 +48,12 @@ export function TokenManager() {
   const health = useApi<EngineHealth>("/api/health");
   const [form, setForm] = useState<{ provider: TokenProvider; token: TokenItem | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /** Token đang dùng của dịch vụ khác cùng vị trí trong engine (vd đang dùng OpenAI thì DeepSeek không được dùng). */
+  const slotActive = (provider: TokenProvider): TokenItem | undefined => {
+    const slot = providerMeta(provider).slot;
+    return slot ? tokens.data?.find((t) => t.active && t.provider !== provider && providerMeta(t.provider).slot === slot) : undefined;
+  };
 
   const refresh = async () => {
     await tokens.reload();
@@ -79,6 +90,11 @@ export function TokenManager() {
           return (
             <section key={group} className="space-y-3">
               <h2 className="text-sm font-semibold tracking-wide text-zinc-500 uppercase">{TOKEN_GROUPS[group]}</h2>
+              {group === "ai" && (
+                <p className="text-xs text-zinc-500">
+                  DeepSeek, OpenAI, Gemini... đều dùng để viết kịch bản nhưng chỉ <b>một</b> token đang dùng cùng lúc: bấm “Dùng token này” để chuyển sang dịch vụ khác. Mỗi token chọn được model riêng.
+                </p>
+              )}
               <div className="grid gap-4 lg:grid-cols-2">
                 {providers.map((provider) => (
                   <ProviderCard
@@ -86,6 +102,7 @@ export function TokenManager() {
                     provider={provider}
                     tokens={tokens.data!.filter((t) => t.provider === provider)}
                     inEngine={engineHas(provider, health.data)}
+                    elsewhere={slotActive(provider)}
                     onAdd={() => setForm({ provider, token: null })}
                     onEdit={(token) => setForm({ provider, token })}
                     onChanged={refresh}
@@ -102,7 +119,7 @@ export function TokenManager() {
           key={form.token?.id ?? `new-${form.provider}`}
           provider={form.provider}
           token={form.token}
-          hasOthers={(tokens.data ?? []).some((t) => t.provider === form.provider && t.id !== form.token?.id)}
+          autoActive={!(tokens.data ?? []).some((t) => t.provider === form.provider) && !slotActive(form.provider)}
           onClose={() => setForm(null)}
           onSaved={async () => {
             setForm(null);
@@ -119,6 +136,7 @@ function ProviderCard({
   provider,
   tokens,
   inEngine,
+  elsewhere,
   onAdd,
   onEdit,
   onChanged,
@@ -127,6 +145,8 @@ function ProviderCard({
   provider: TokenProvider;
   tokens: TokenItem[];
   inEngine: boolean | null;
+  /** token đang dùng của dịch vụ khác cùng vị trí trong engine */
+  elsewhere: TokenItem | undefined;
   onAdd: () => void;
   onEdit: (token: TokenItem) => void;
   onChanged: () => Promise<void>;
@@ -136,11 +156,13 @@ function ProviderCard({
   const active = tokens.find((t) => t.active);
   const status = active
     ? { text: `Đang dùng: ${active.name}`, className: "bg-emerald-50 text-emerald-700" }
-    : inEngine
-      ? { text: "Đang dùng key trong engine/.env", className: "bg-blue-50 text-blue-700" }
-      : meta.required
-        ? { text: "Chưa có — cần để tạo video", className: "bg-red-50 text-red-700" }
-        : { text: "Chưa có", className: "bg-zinc-100 text-zinc-600" };
+    : elsewhere
+      ? { text: `Đang dùng ${providerMeta(elsewhere.provider).label} thay thế`, className: "bg-zinc-100 text-zinc-600" }
+      : inEngine && !meta.isolated // key trong engine/.env là của DeepSeek, không phải của các AI khác
+        ? { text: "Đang dùng key trong engine/.env", className: "bg-blue-50 text-blue-700" }
+        : meta.required
+          ? { text: "Chưa có — cần để tạo video", className: "bg-red-50 text-red-700" }
+          : { text: "Chưa có", className: "bg-zinc-100 text-zinc-600" };
 
   return (
     <Card className="flex flex-col gap-3 p-4">
@@ -274,13 +296,14 @@ function TokenRowView({
 function TokenForm({
   provider,
   token,
-  hasOthers,
+  autoActive,
   onClose,
   onSaved,
 }: {
   provider: TokenProvider;
   token: TokenItem | null;
-  hasOthers: boolean;
+  /** token mới sẽ được dùng ngay (chưa có token nào đang dùng thay vị trí này) */
+  autoActive: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -358,10 +381,11 @@ function TokenForm({
           const quick = o.kind === "model" ? [...new Set([...(o.suggestions ?? []), ...models.list])].slice(0, 12) : (o.suggestions ?? []);
           return (
             <div key={o.key} className="space-y-1.5">
-              <Field label={o.label} hint={o.hint}>
+              <Field label={`${o.label}${o.required ? " *" : ""}`} hint={o.hint}>
                 <input
                   className={cx(inputClass, "font-mono")}
                   list={o.kind === "model" ? listId : undefined}
+                  required={o.required}
                   value={options[o.key] ?? ""}
                   maxLength={200}
                   autoComplete="off"
@@ -410,13 +434,13 @@ function TokenForm({
         <Field label="Ghi chú (tùy chọn)">
           <input className={inputClass} value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="vd hạn mức, email tài khoản..." />
         </Field>
-        {!token && hasOthers && (
+        {!token && !autoActive && (
           <label className="flex items-center gap-2 text-sm text-zinc-700">
             <input type="checkbox" checked={useNow} onChange={(e) => setUseNow(e.target.checked)} />
             Dùng token này ngay (thay token đang dùng)
           </label>
         )}
-        {!token && !hasOthers && <p className="text-xs text-zinc-500">Đây là token đầu tiên của dịch vụ nên sẽ được dùng ngay.</p>}
+        {!token && autoActive && <p className="text-xs text-zinc-500">Đây là token đầu tiên của dịch vụ nên sẽ được dùng ngay.</p>}
         <ErrorBox message={error} />
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Hủy</Button>

@@ -20,6 +20,8 @@ export type TokenOptionMeta = {
   hint?: string;
   /** gợi ý chọn nhanh */
   suggestions?: readonly string[];
+  /** phải có thì mới lưu được token (vd model của dịch vụ không có model mặc định) */
+  required?: boolean;
 };
 
 export type TokenProviderMeta = {
@@ -37,7 +39,47 @@ export type TokenProviderMeta = {
   testable?: boolean;
   /** thiết lập đi kèm (model...); chỉ dịch vụ AI có */
   options?: readonly TokenOptionMeta[];
+  /** các dịch vụ cùng `slot` dùng chung một vị trí trong engine (vd mọi AI viết kịch bản đều đi qua DEEPSEEK_*): cả nhóm chỉ có một token đang dùng */
+  slot?: string;
+  /** địa chỉ API mặc định của dịch vụ (kiểu OpenAI) */
+  baseUrl?: string;
+  /** true: mọi thiết lập của dịch vụ đều được đặt cho engine (rỗng nếu chưa chọn), để giá trị cũ của DeepSeek trong engine/.env không lẫn sang dịch vụ này */
+  isolated?: boolean;
 };
+
+/** Thiết lập của một AI viết kịch bản kiểu OpenAI: model, model Đạo diễn AI, địa chỉ API (engine đọc qua DEEPSEEK_MODEL, DIRECTOR_MODEL, DEEPSEEK_BASE_URL). */
+function llmOptions(o: { models: readonly string[]; baseUrl?: string }): readonly TokenOptionMeta[] {
+  return [
+    {
+      key: "model",
+      label: "Model viết kịch bản",
+      env: "DEEPSEEK_MODEL",
+      kind: "model",
+      required: true,
+      placeholder: o.models[0] ?? "Tên model trên dịch vụ",
+      hint: "Viết kịch bản, tiêu đề, hashtag và tóm tắt asset. Bấm \"Tải danh sách model\" để xem các model có trên dịch vụ.",
+      suggestions: o.models,
+    },
+    {
+      key: "director_model",
+      label: "Model Đạo diễn AI",
+      env: "DIRECTOR_MODEL",
+      kind: "model",
+      placeholder: "Giống model viết kịch bản",
+      hint: "Đạo diễn AI gọi công cụ liên tục nên model phải hỗ trợ function calling. Bỏ trống: dùng model ở trên.",
+    },
+    {
+      key: "base_url",
+      label: o.baseUrl ? "Địa chỉ API (tùy chọn)" : "Địa chỉ API",
+      env: "DEEPSEEK_BASE_URL",
+      kind: "url",
+      required: !o.baseUrl,
+      placeholder: o.baseUrl ?? "http://localhost:11434/v1",
+      hint: o.baseUrl ? "Bỏ trống: dùng địa chỉ mặc định của dịch vụ." : "Địa chỉ API kiểu OpenAI của dịch vụ, vd Ollama hoặc LM Studio chạy trên máy.",
+      suggestions: o.baseUrl ? [o.baseUrl] : ["http://localhost:11434/v1", "http://localhost:1234/v1"],
+    },
+  ];
+}
 
 export const TOKEN_PROVIDERS = {
   deepseek: {
@@ -48,6 +90,7 @@ export const TOKEN_PROVIDERS = {
     link: "https://platform.deepseek.com/api_keys",
     required: true,
     testable: true,
+    slot: "llm",
     options: [
       {
         key: "model",
@@ -77,6 +120,71 @@ export const TOKEN_PROVIDERS = {
         suggestions: ["https://api.deepseek.com"],
       },
     ],
+  },
+  openai: {
+    label: "OpenAI",
+    env: "DEEPSEEK_API_KEY",
+    group: "ai",
+    hint: "Viết kịch bản, Đạo diễn AI, tóm tắt asset bằng model của OpenAI. Chỉ một AI viết kịch bản được dùng cùng lúc.",
+    link: "https://platform.openai.com/api-keys",
+    testable: true,
+    slot: "llm",
+    isolated: true,
+    baseUrl: "https://api.openai.com/v1",
+    options: llmOptions({ models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"], baseUrl: "https://api.openai.com/v1" }),
+  },
+  gemini: {
+    label: "Google Gemini",
+    env: "DEEPSEEK_API_KEY",
+    group: "ai",
+    hint: "Viết kịch bản, Đạo diễn AI, tóm tắt asset bằng Gemini (API kiểu OpenAI của Google). Chỉ một AI viết kịch bản được dùng cùng lúc.",
+    link: "https://aistudio.google.com/apikey",
+    testable: true,
+    slot: "llm",
+    isolated: true,
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    options: llmOptions({
+      models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    }),
+  },
+  openrouter: {
+    label: "OpenRouter",
+    env: "DEEPSEEK_API_KEY",
+    group: "ai",
+    hint: "Một key dùng được nhiều model của nhiều hãng (tên dạng hãng/model). Chỉ một AI viết kịch bản được dùng cùng lúc.",
+    link: "https://openrouter.ai/keys",
+    testable: true,
+    slot: "llm",
+    isolated: true,
+    baseUrl: "https://openrouter.ai/api/v1",
+    options: llmOptions({
+      models: ["deepseek/deepseek-chat", "openai/gpt-4o-mini", "google/gemini-2.5-flash"],
+      baseUrl: "https://openrouter.ai/api/v1",
+    }),
+  },
+  groq: {
+    label: "Groq",
+    env: "DEEPSEEK_API_KEY",
+    group: "ai",
+    hint: "Model mở chạy rất nhanh (Llama...). Chỉ một AI viết kịch bản được dùng cùng lúc.",
+    link: "https://console.groq.com/keys",
+    testable: true,
+    slot: "llm",
+    isolated: true,
+    baseUrl: "https://api.groq.com/openai/v1",
+    options: llmOptions({ models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], baseUrl: "https://api.groq.com/openai/v1" }),
+  },
+  custom_ai: {
+    label: "AI khác (kiểu OpenAI)",
+    env: "DEEPSEEK_API_KEY",
+    group: "ai",
+    hint: "Dịch vụ bất kỳ có API kiểu OpenAI: Ollama, LM Studio, vLLM, Together, Mistral... Cần địa chỉ API và model. Dịch vụ không đòi key (vd Ollama) thì nhập đại một chuỗi. Chỉ một AI viết kịch bản được dùng cùng lúc.",
+    link: "https://github.com/ollama/ollama/blob/main/docs/openai.md",
+    testable: true,
+    slot: "llm",
+    isolated: true,
+    options: llmOptions({ models: [] }),
   },
   vision: {
     label: "Mô hình thị giác",
