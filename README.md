@@ -296,9 +296,27 @@ web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
   src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)
   src/lib/video-options.ts   # danh sách giọng, ngôn ngữ, loại video, phong cách, mẫu nhanh (dùng chung client/server)
-  src/lib/server/            # db (SQLite + migration), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, tokens (token API truyền cho engine), repo
+  src/lib/server/            # db + schema (SQLite qua Drizzle ORM), runner (hàng đợi job), analyzer (hàng đợi phân tích asset), ingest, tokens (token API truyền cho engine), repo
+  drizzle/                   # file migration SQL do drizzle-kit sinh (áp dụng tự động khi server mở database)
 data/                        # dữ liệu local (tự tạo khi chạy)
 ```
+
+## Database (Drizzle ORM)
+
+Cấu trúc bảng nằm ở một chỗ duy nhất: `web/src/lib/server/schema.ts`. Thay đổi schema:
+
+```bash
+cd web
+# sửa schema.ts, rồi sinh file migration vào web/drizzle/ (commit cùng thay đổi)
+npm run db:generate
+# xem/sửa dữ liệu bằng giao diện web (Drizzle Studio); DATA_DIR giống paths.ts
+npm run db:studio
+```
+
+Khi server mở `data/app.db` nó tự áp dụng các migration còn thiếu, không cần chạy lệnh nào. Database tạo bằng hệ migration cũ (đánh số bằng `PRAGMA user_version`) được nâng lên schema cuối của hệ cũ
+(`legacy-migrations.ts`, đã đóng băng) rồi ghi nhận migration nền `0000_baseline` là đã áp dụng, nên dữ liệu hiện có giữ nguyên. Truy vấn dùng query builder của Drizzle (`db().select()...`);
+truy vấn đặc biệt (CTE đệ quy, `json_each`) dùng thẻ `sql`. Đừng dùng cột bảng trong trường select viết bằng `sql` của truy vấn một bảng khi tiểu truy vấn cần tham chiếu bảng ngoài: Drizzle bỏ tên bảng
+khỏi các cột đó, hãy viết tiểu truy vấn đó bằng SQL thô như `assets.ts` và `contacts.ts` đang làm.
 
 ## Lưu ý
 

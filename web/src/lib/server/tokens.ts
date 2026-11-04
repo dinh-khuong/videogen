@@ -1,24 +1,13 @@
 import "server-only";
 import crypto from "node:crypto";
+import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { TOKEN_PROVIDERS, isTokenProvider, maskToken, providerMeta, type TokenProvider } from "@/lib/token-providers";
 import type { TokenCheckStatus, TokenItem } from "@/lib/types";
 import { db, nowIso } from "./db";
 import { HttpError } from "./files";
+import { apiTokens } from "./schema";
 
-type TokenRow = {
-  id: string;
-  provider: string;
-  name: string;
-  value: string;
-  active: number;
-  note: string;
-  options: string;
-  last_status: TokenCheckStatus | null;
-  last_message: string | null;
-  last_checked_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type TokenRow = typeof apiTokens.$inferSelect;
 
 const MAX_VALUE_CHARS = 600;
 const MAX_NAME_CHARS = 60;
@@ -36,11 +25,11 @@ function toItem(r: TokenRow): TokenItem {
     active: r.active === 1,
     note: r.note,
     options: parseOptions(r.options),
-    lastStatus: r.last_status,
-    lastMessage: r.last_message,
-    lastCheckedAt: r.last_checked_at,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    lastStatus: r.lastStatus,
+    lastMessage: r.lastMessage,
+    lastCheckedAt: r.lastCheckedAt,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   };
 }
 
@@ -84,11 +73,11 @@ function cleanOptions(provider: TokenProvider, raw: unknown, { partial = false }
 }
 
 function getRow(id: string): TokenRow | undefined {
-  return db().prepare("SELECT * FROM api_tokens WHERE id = ?").get(id) as TokenRow | undefined;
+  return db().select().from(apiTokens).where(eq(apiTokens.id, id)).get();
 }
 
 export function listTokens(): TokenItem[] {
-  const rows = db().prepare("SELECT * FROM api_tokens ORDER BY provider, created_at").all() as TokenRow[];
+  const rows = db().select().from(apiTokens).orderBy(asc(apiTokens.provider), asc(apiTokens.createdAt)).all();
   return rows.filter((r) => isTokenProvider(r.provider)).map(toItem);
 }
 
@@ -118,8 +107,10 @@ function slotProviders(provider: TokenProvider): TokenProvider[] {
 function activate(id: string, provider: string): void {
   const providers = isTokenProvider(provider) ? slotProviders(provider) : [provider];
   db()
-    .prepare(`UPDATE api_tokens SET active = (id = ?) WHERE provider IN (${providers.map(() => "?").join(",")})`)
-    .run(id, ...providers);
+    .update(apiTokens)
+    .set({ active: sql`CASE WHEN ${apiTokens.id} = ${id} THEN 1 ELSE 0 END` })
+    .where(inArray(apiTokens.provider, providers))
+    .run();
 }
 
 export function createToken(input: {
@@ -134,26 +125,21 @@ export function createToken(input: {
   const provider = input.provider;
   const value = cleanValue(input.value);
   const options = cleanOptions(provider, input.options);
-  const existing = (db().prepare("SELECT COUNT(*) AS n FROM api_tokens WHERE provider = ?").get(provider) as { n: number }).n;
+  const existing = db().select({ n: count() }).from(apiTokens).where(eq(apiTokens.provider, provider)).get()!.n;
   const name = cleanText(input.name, MAX_NAME_CHARS) || `${providerMeta(provider).label} ${existing + 1}`;
   const id = crypto.randomUUID();
-  db().transaction(() => {
-    db().prepare("INSERT INTO api_tokens (id, provider, name, value, note, options) VALUES (?, ?, ?, ?, ?, ?)").run(
-      id,
-      provider,
-      name,
-      value,
-      cleanText(input.note, MAX_NOTE_CHARS),
-      JSON.stringify(options),
-    );
+  db().transaction((tx) => {
+    tx.insert(apiTokens)
+      .values({ id, provider, name, value, note: cleanText(input.note, MAX_NOTE_CHARS), options: JSON.stringify(options) })
+      .run();
     // Token đầu tiên của dịch vụ được dùng luôn nếu chưa có token nào đang dùng ở cùng vị trí trong engine; các token sau chỉ khi người dùng chọn
-    const taken = (
-      db()
-        .prepare(`SELECT COUNT(*) AS n FROM api_tokens WHERE active = 1 AND id != ? AND provider IN (${slotProviders(provider).map(() => "?").join(",")})`)
-        .get(id, ...slotProviders(provider)) as { n: number }
-    ).n;
+    const taken = tx
+      .select({ n: count() })
+      .from(apiTokens)
+      .where(and(eq(apiTokens.active, 1), ne(apiTokens.id, id), inArray(apiTokens.provider, slotProviders(provider))))
+      .get()!.n;
     if ((existing === 0 && taken === 0) || input.active === true) activate(id, provider);
-  })();
+  });
   return toItem(getRow(id)!);
 }
 
@@ -167,21 +153,23 @@ export function updateToken(
   const name = patch.name === undefined ? current.name : cleanText(patch.name, MAX_NAME_CHARS) || current.name;
   const note = patch.note === undefined ? current.note : cleanText(patch.note, MAX_NOTE_CHARS);
   const options = patch.options === undefined ? parseOptions(current.options) : cleanOptions(current.provider as TokenProvider, patch.options);
-  db().transaction(() => {
+  db().transaction((tx) => {
     // Đổi giá trị hoặc model thì kết quả kiểm tra cũ không còn đúng
     const changed = value !== current.value || JSON.stringify(options) !== JSON.stringify(parseOptions(current.options));
-    db()
-      .prepare(
-        `UPDATE api_tokens SET name = ?, value = ?, note = ?, options = ?, updated_at = ?,
-         last_status = CASE WHEN ? THEN NULL ELSE last_status END,
-         last_message = CASE WHEN ? THEN NULL ELSE last_message END,
-         last_checked_at = CASE WHEN ? THEN NULL ELSE last_checked_at END
-         WHERE id = ?`,
-      )
-      .run(name, value, note, JSON.stringify(options), nowIso(), +changed, +changed, +changed, id);
+    tx.update(apiTokens)
+      .set({
+        name,
+        value,
+        note,
+        options: JSON.stringify(options),
+        updatedAt: nowIso(),
+        ...(changed ? { lastStatus: null, lastMessage: null, lastCheckedAt: null } : {}),
+      })
+      .where(eq(apiTokens.id, id))
+      .run();
     if (patch.active === true) activate(id, current.provider);
-    else if (patch.active === false) db().prepare("UPDATE api_tokens SET active = 0 WHERE id = ?").run(id);
-  })();
+    else if (patch.active === false) tx.update(apiTokens).set({ active: 0 }).where(eq(apiTokens.id, id)).run();
+  });
   return getToken(id);
 }
 
@@ -189,31 +177,28 @@ export function updateToken(
 export function deleteToken(id: string): boolean {
   const current = getRow(id);
   if (!current) return false;
-  db().transaction(() => {
-    db().prepare("DELETE FROM api_tokens WHERE id = ?").run(id);
+  db().transaction((tx) => {
+    tx.delete(apiTokens).where(eq(apiTokens.id, id)).run();
     if (current.active === 1) {
-      const next = db().prepare("SELECT id FROM api_tokens WHERE provider = ? ORDER BY created_at LIMIT 1").get(current.provider) as
-        | { id: string }
-        | undefined;
+      const next = tx.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.provider, current.provider)).orderBy(asc(apiTokens.createdAt)).limit(1).get();
       if (next) activate(next.id, current.provider);
     }
-  })();
+  });
   return true;
 }
 
 /** Giá trị token đang dùng của một dịch vụ (undefined nếu chưa có). */
 export function activeTokenValue(provider: TokenProvider): string | undefined {
-  const row = db().prepare("SELECT value FROM api_tokens WHERE provider = ? AND active = 1").get(provider) as { value: string } | undefined;
-  return row?.value;
+  return db().select({ value: apiTokens.value }).from(apiTokens).where(and(eq(apiTokens.provider, provider), eq(apiTokens.active, 1))).get()?.value;
 }
 
 /** Biến môi trường của các token đang dùng (vd DEEPSEEK_API_KEY, DEEPSEEK_MODEL) — truyền cho tiến trình engine, ưu tiên hơn engine/.env. */
 export function tokenEnv(): Record<string, string> {
-  const rows = db().prepare("SELECT provider, value, options FROM api_tokens WHERE active = 1").all() as {
-    provider: string;
-    value: string;
-    options: string;
-  }[];
+  const rows = db()
+    .select({ provider: apiTokens.provider, value: apiTokens.value, options: apiTokens.options })
+    .from(apiTokens)
+    .where(eq(apiTokens.active, 1))
+    .all();
   const env: Record<string, string> = {};
   for (const r of rows) {
     if (!isTokenProvider(r.provider)) continue;
@@ -428,9 +413,7 @@ export async function testToken(id: string): Promise<TokenItem | null> {
     result = { status: "error", message: timeout ? "Dịch vụ không phản hồi kịp (quá 20 giây)." : `Không kết nối được tới dịch vụ: ${(e as Error).message}` };
   }
   const message = result.message.split(row.value).join("***").slice(0, 300);
-  db()
-    .prepare("UPDATE api_tokens SET last_status = ?, last_message = ?, last_checked_at = ? WHERE id = ?")
-    .run(result.status, message, nowIso(), id);
+  db().update(apiTokens).set({ lastStatus: result.status, lastMessage: message, lastCheckedAt: nowIso() }).where(eq(apiTokens.id, id)).run();
   return getToken(id);
 }
 

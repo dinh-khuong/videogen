@@ -1,25 +1,43 @@
 import "server-only";
+import { and, eq, exists, or, sql, type SQL } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { normalizeTag, splitTags } from "@/lib/hashtags";
 import type { TagCount } from "@/lib/types";
-import { db } from "./db";
+import { db, inList } from "./db";
+import { assetTags, contactTags, tags, videoTags } from "./schema";
 
+/** Bảng nối giữa từng loại bản ghi và tag. */
 const LINKS = {
-  asset: { table: "asset_tags", column: "asset_id" },
-  video: { table: "video_tags", column: "video_id" },
-  contact: { table: "contact_tags", column: "contact_id" },
+  asset: {
+    table: assetTags,
+    owner: assetTags.assetId,
+    tag: assetTags.tagId,
+    link: (id: string, tagId: number) => db().insert(assetTags).values({ assetId: id, tagId }).onConflictDoNothing().run(),
+  },
+  video: {
+    table: videoTags,
+    owner: videoTags.videoId,
+    tag: videoTags.tagId,
+    link: (id: string, tagId: number) => db().insert(videoTags).values({ videoId: id, tagId }).onConflictDoNothing().run(),
+  },
+  contact: {
+    table: contactTags,
+    owner: contactTags.contactId,
+    tag: contactTags.tagId,
+    link: (id: string, tagId: number) => db().insert(contactTags).values({ contactId: id, tagId }).onConflictDoNothing().run(),
+  },
 } as const;
 export type TagEntity = keyof typeof LINKS;
 
 /** Thay toàn bộ tag của một bản ghi. Gọi bên trong transaction của bản ghi đó. */
 export function setTags(entity: TagEntity, id: string, names: string[]): void {
-  const { table, column } = LINKS[entity];
+  const { table, owner, link } = LINKS[entity];
   const d = db();
-  d.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(id);
-  const insertTag = d.prepare("INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name = name RETURNING id");
-  const link = d.prepare(`INSERT OR IGNORE INTO ${table} (${column}, tag_id) VALUES (?, ?)`);
+  d.delete(table).where(eq(owner, id)).run();
   for (const name of new Set(names.map(normalizeTag).filter(Boolean))) {
-    const { id: tagId } = insertTag.get(name) as { id: number };
-    link.run(id, tagId);
+    // DO UPDATE (không đổi gì) để RETURNING trả về id cả khi tag đã có
+    const row = d.insert(tags).values({ name }).onConflictDoUpdate({ target: tags.name, set: { name } }).returning({ id: tags.id }).get();
+    link(id, row.id);
   }
 }
 
@@ -27,41 +45,47 @@ export function setTags(entity: TagEntity, id: string, names: string[]): void {
 export function tagsFor(entity: TagEntity, ids: string[]): Map<string, string[]> {
   const result = new Map<string, string[]>(ids.map((id) => [id, []]));
   if (!ids.length) return result;
-  const { table, column } = LINKS[entity];
+  const { table, owner, tag } = LINKS[entity];
   const rows = db()
-    .prepare(
-      `SELECT l.${column} AS id, t.name FROM ${table} l JOIN tags t ON t.id = l.tag_id
-       WHERE l.${column} IN (SELECT value FROM json_each(?)) ORDER BY t.name`,
-    )
-    .all(JSON.stringify(ids)) as { id: string; name: string }[];
+    .select({ id: owner, name: tags.name })
+    .from(table)
+    .innerJoin(tags, eq(tags.id, tag))
+    .where(inList(owner, ids))
+    .orderBy(tags.name)
+    .all();
   for (const row of rows) result.get(row.id)?.push(row.name);
   return result;
 }
 
-/** Điều kiện SQL lọc bản ghi có ít nhất một trong các tag; tham số đi kèm là tagFilterParam(...). */
-export function tagFilterSql(entity: TagEntity, alias: string): string {
-  const { table, column } = LINKS[entity];
-  return `EXISTS (SELECT 1 FROM ${table} l JOIN tags t ON t.id = l.tag_id WHERE l.${column} = ${alias}.id
-    AND t.name IN (SELECT value FROM json_each(?)))`;
-}
-
-/** Tham số cho tagFilterSql từ chuỗi một hoặc nhiều tag cách nhau bằng dấu phẩy. */
-export function tagFilterParam(tags: string): string {
-  return JSON.stringify(splitTags(tags));
+/**
+ * Điều kiện lọc bản ghi có ít nhất một trong các tag. `id` là cột id của bảng đang truy vấn;
+ * `tagNames` là một hoặc nhiều tag cách nhau bằng dấu phẩy.
+ */
+export function hasAnyTag(entity: TagEntity, id: AnySQLiteColumn, tagNames: string): SQL {
+  const { table, owner, tag } = LINKS[entity];
+  return exists(
+    db()
+      .select({ one: sql`1` })
+      .from(table)
+      .innerJoin(tags, eq(tags.id, tag))
+      .where(and(eq(owner, id), inList(tags.name, splitTags(tagNames)))),
+  );
 }
 
 export function listTags(): TagCount[] {
+  const used = (link: typeof assetTags | typeof videoTags | typeof contactTags) =>
+    exists(db().select({ one: sql`1` }).from(link).where(eq(link.tagId, tags.id)));
+  // Tiểu truy vấn tương quan viết bằng SQL thô: trong truy vấn một bảng Drizzle bỏ tên bảng khỏi cột của trường select
+  const countOf = (link: string) => sql<number>`(SELECT COUNT(*) FROM ${sql.raw(link)} WHERE tag_id = tags.id)`;
   return db()
-    .prepare(
-      `SELECT t.name,
-         (SELECT COUNT(*) FROM asset_tags WHERE tag_id = t.id) AS assets,
-         (SELECT COUNT(*) FROM video_tags WHERE tag_id = t.id) AS videos,
-         (SELECT COUNT(*) FROM contact_tags WHERE tag_id = t.id) AS contacts
-       FROM tags t
-       WHERE EXISTS (SELECT 1 FROM asset_tags WHERE tag_id = t.id)
-          OR EXISTS (SELECT 1 FROM video_tags WHERE tag_id = t.id)
-          OR EXISTS (SELECT 1 FROM contact_tags WHERE tag_id = t.id)
-       ORDER BY (assets + videos + contacts) DESC, t.name`,
-    )
-    .all() as TagCount[];
+    .select({
+      name: tags.name,
+      assets: countOf("asset_tags").as("assets"),
+      videos: countOf("video_tags").as("videos"),
+      contacts: countOf("contact_tags").as("contacts"),
+    })
+    .from(tags)
+    .where(or(used(assetTags), used(videoTags), used(contactTags)))
+    .orderBy(sql`(assets + videos + contacts) DESC`, tags.name)
+    .all();
 }

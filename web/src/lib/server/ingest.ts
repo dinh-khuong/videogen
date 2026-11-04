@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { eq, sql } from "drizzle-orm";
 import { ensureHashtags, normalizeTag, textHashtags, withHashtags } from "@/lib/hashtags";
 import type { JobInput, Script } from "@/lib/types";
 import { analyzer } from "./analyzer";
@@ -11,6 +12,7 @@ import { db } from "./db";
 import { extOf, removeMedia, sha1File } from "./files";
 import type { JobRow } from "./jobs";
 import { TMP_DIR } from "./paths";
+import { contactVideos, contacts, videoAssets } from "./schema";
 import { insertVideo, moveVideoFiles } from "./videos";
 
 /** Kết quả engine ghi ra result.json (xem RunResult.to_dict trong engine/videogen/pipeline.py). */
@@ -207,24 +209,25 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
   };
   const files = await moveVideoFiles(video);
   try {
-    db().transaction(() => {
+    db().transaction((tx) => {
       insertVideo(video, files);
-      const link = db().prepare("INSERT OR IGNORE INTO video_assets (video_id, asset_id, step, position) VALUES (?, ?, ?, ?)");
+      const link = (assetId: string, step: number, position: number) =>
+        tx.insert(videoAssets).values({ videoId: files.id, assetId, step, position }).onConflictDoNothing().run();
       for (const [step, byPosition] of stepAssets) {
         for (const [position, assetId] of byPosition) {
-          if (getAsset(assetId)) link.run(files.id, assetId, step, position);
+          if (getAsset(assetId)) link(assetId, step, position);
         }
       }
       for (const l of extraLinks) {
-        if (getAsset(l.id)) link.run(files.id, l.id, l.step, l.position);
+        if (getAsset(l.id)) link(l.id, l.step, l.position);
       }
       // Nhạc nền gắn với video ở "bước 0"
       const musicId = (JSON.parse(job.input) as JobInput).musicId;
-      if (musicId && getAsset(musicId)) link.run(files.id, musicId, 0, 0);
-      if (job.contact_id && db().prepare("SELECT 1 FROM contacts WHERE id = ?").get(job.contact_id)) {
-        db().prepare("INSERT OR IGNORE INTO contact_videos (contact_id, video_id) VALUES (?, ?)").run(job.contact_id, files.id);
+      if (musicId && getAsset(musicId)) link(musicId, 0, 0);
+      if (job.contactId && tx.select({ one: sql`1` }).from(contacts).where(eq(contacts.id, job.contactId)).get()) {
+        tx.insert(contactVideos).values({ contactId: job.contactId, videoId: files.id }).onConflictDoNothing().run();
       }
-    })();
+    });
   } catch (e) {
     await removeMedia(files.file, files.thumb);
     throw e;
