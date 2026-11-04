@@ -20,6 +20,7 @@ export const GET = route(async (request: Request) => {
       recursive: p.get("recursive") === "1",
       sort: p.get("sort") || undefined,
       ids: p.get("ids") ? p.get("ids")!.split(",") : undefined,
+      maxDuration: intParam(p.get("maxDuration")),
       limit: intParam(p.get("limit")),
       offset: intParam(p.get("offset")),
     }),

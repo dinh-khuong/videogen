@@ -50,6 +50,9 @@ export type EngineResult = {
   }[];
 };
 
+/** Vị trí (trong video_assets) bắt đầu của âm thanh gắn vào câu thoại; cộng thêm số thứ tự câu. */
+export const SOUND_POSITION = 300;
+
 /** Dạng so sánh của một đoạn chữ: bỏ dấu, hoa thường, dấu câu, khoảng trắng thừa. */
 function comparable(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -188,6 +191,10 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
       };
     }),
   };
+  // Âm thanh thư viện Đạo diễn AI gắn vào câu thoại cũng là asset của video (vị trí 300+ trong bước, sau clip lồng 100+ và sticker 200+)
+  const soundLinks = storedScript.steps.flatMap((s, i) =>
+    (s.lines ?? []).flatMap((l, j) => (l.sound ? [{ step: i + 1, position: SOUND_POSITION + j, id: l.sound }] : [])),
+  );
   const video = {
     srcPath: result.video.path,
     thumbPath: result.video.thumbnail && fs.existsSync(result.video.thumbnail) ? result.video.thumbnail : null,
@@ -219,7 +226,7 @@ export async function ingestResult(job: JobRow, result: EngineResult): Promise<s
           if (getAsset(assetId)) link(assetId, step, position);
         }
       }
-      for (const l of extraLinks) {
+      for (const l of [...extraLinks, ...soundLinks]) {
         if (getAsset(l.id)) link(l.id, l.step, l.position);
       }
       // Nhạc nền gắn với video ở "bước 0"

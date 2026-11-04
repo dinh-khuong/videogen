@@ -287,11 +287,13 @@ export function VideoDetailView({ id }: { id: string }) {
                 <span className="absolute left-1 top-1 rounded bg-brand-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                   {asset.step === 0
                     ? "Nhạc nền"
-                    : asset.position >= 200
-                      ? `Sticker · bước ${asset.step}`
-                      : asset.position >= 100
-                        ? `Lồng · bước ${asset.step}`
-                        : `Bước ${asset.step}`}
+                    : asset.position >= 300
+                      ? `Âm thanh · bước ${asset.step}`
+                      : asset.position >= 200
+                        ? `Sticker · bước ${asset.step}`
+                        : asset.position >= 100
+                          ? `Lồng · bước ${asset.step}`
+                          : `Bước ${asset.step}`}
                 </span>
                 <p className="truncate px-2 py-1 text-xs text-zinc-600">{asset.title}</p>
               </a>

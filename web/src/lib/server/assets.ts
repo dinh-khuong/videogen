@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { and, asc, count, desc, eq, getTableColumns, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, isNull, like, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { ASSET_HASHTAG_MIN, ensureHashtags, parseHashtags, textHashtags, withHashtags } from "@/lib/hashtags";
 import type { AssetItem, AssetKind, Page } from "@/lib/types";
 import { db, inList, nowIso } from "./db";
@@ -90,6 +90,8 @@ export type AssetQuery = {
   recursive?: boolean;
   /** Asset nằm trong một trong các thư mục này (tính cả thư mục con) */
   folders?: string[];
+  /** Chỉ asset có thời lượng tới chừng này giây (asset chưa biết thời lượng vẫn lấy) */
+  maxDuration?: number;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -118,6 +120,7 @@ function where(query: AssetQuery): SQL | undefined {
   }
   if (query.folders?.length) conditions.push(sql`${assets.folderId} IN (${subtreeSql(query.folders)})`);
   if (query.ids) conditions.push(inList(assets.id, query.ids));
+  if (query.maxDuration !== undefined) conditions.push(or(isNull(assets.duration), lte(assets.duration, query.maxDuration)));
   return and(...conditions);
 }
 

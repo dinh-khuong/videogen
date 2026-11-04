@@ -122,6 +122,8 @@ export type ScriptLine = {
   mood: string;
   voice?: "second";
   sfx?: string;
+  /** id asset audio (âm thanh ngắn trong Assets) phát khi bắt đầu câu */
+  sound?: string;
   camera?: string;
   sticker?: { asset: string } | { path: string; media?: "image" | "video" };
   pop_text?: string;
@@ -218,6 +220,8 @@ export type JobInput = {
   imageIds?: string[];
   /** id asset audio làm nhạc nền */
   musicId?: string | null;
+  /** Đạo diễn AI được gắn âm thanh ngắn trong Assets (tiếng động, meme sound) vào câu thoại, ngoài nhạc nền; job cũ: không */
+  soundEffects?: boolean;
   /** âm lượng nhạc nền 0-1 */
   musicVolume?: number;
   contactId?: string | null;

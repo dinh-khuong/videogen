@@ -18,6 +18,7 @@ import {
   MIN_VISUAL_INTERVAL,
   PRESETS,
   SEARCH_ENGINES,
+  SOUND_EFFECT_MAX_SECONDS,
   TONES,
   VIDEO_TYPES,
   VOICE_EFFECTS,
@@ -74,6 +75,8 @@ type Settings = {
   libraryTags: string[];
   libraryFolders: string[];
   music: { musicId: string; volume: number };
+  /** Đạo diễn AI gắn âm thanh ngắn trong Assets vào câu thoại (ngoài nhạc nền) */
+  soundEffects: boolean;
 };
 
 type FormState = Settings & { topic: string; batch: boolean; assetIds: string[]; contactId: string };
@@ -102,6 +105,7 @@ const DEFAULTS: Settings = {
   libraryTags: [],
   libraryFolders: [],
   music: { musicId: "", volume: 0.12 },
+  soundEffects: true,
 };
 
 /** Số người dùng gõ (chuỗi) hợp lệ trong khoảng [min, max] hay để trống. */
@@ -153,6 +157,7 @@ function sanitize(p: Partial<Settings>): Settings {
       musicId: typeof p.music?.musicId === "string" ? p.music.musicId : "",
       volume: typeof p.music?.volume === "number" ? Math.min(Math.max(p.music.volume, 0.02), 0.5) : DEFAULTS.music.volume,
     },
+    soundEffects: typeof p.soundEffects === "boolean" ? p.soundEffects : DEFAULTS.soundEffects,
   };
 }
 
@@ -217,6 +222,8 @@ function settingsFromJob(input: VideoSettings): Partial<Settings> {
     libraryTags: input.libraryTags?.length ? input.libraryTags : input.libraryTag ? [input.libraryTag] : [],
     libraryFolders: input.libraryFolders ?? [],
     music: { musicId: input.musicId ?? "", volume: input.musicVolume ?? DEFAULTS.music.volume },
+    // job cũ chưa có tùy chọn này: không dùng
+    soundEffects: input.soundEffects === true,
   };
 }
 
@@ -281,6 +288,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const tags = useApi<TagCount[]>(s.libraryMode === "auto" ? "/api/tags" : null);
   // Không tìm trên mạng thì thư viện là nguồn hình duy nhất: báo sớm nếu nó đang trống
   const library = useApi<Page<AssetItem>>(s.libraryMode === "auto" && !s.webImages ? "/api/assets?kind=image,video&limit=1" : null);
+  const sounds = useApi<Page<AssetItem>>(s.director && s.soundEffects ? `/api/assets?kind=audio&maxDuration=${SOUND_EFFECT_MAX_SECONDS}&limit=1` : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
   const health = useApi<EngineHealth>(s.webImages ? "/api/health" : null);
   const engineReady = health.data?.search_engines;
@@ -365,6 +373,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       contactId: s.contactId || null,
       musicId: s.music.musicId || null,
       musicVolume: s.music.volume,
+      soundEffects: s.director && s.soundEffects,
     };
     let created: JobItem[] = [];
     try {
@@ -756,6 +765,37 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         <h2 className="font-semibold text-zinc-900">Nhạc nền</h2>
         <p className="text-sm text-zinc-500">Nhạc lặp lại suốt video, nhỏ hơn giọng đọc và mờ dần ở cuối.</p>
         <MusicPicker musicId={s.music.musicId} volume={s.music.volume} onChange={(m) => set("music", m)} />
+      </Card>
+
+      <Card className="space-y-3 p-5">
+        <h2 className="font-semibold text-zinc-900">Âm thanh hiệu ứng</h2>
+        {s.director ? (
+          <>
+            <Toggle
+              checked={s.soundEffects}
+              onChange={(v) => set("soundEffects", v)}
+              label="Cho AI chèn âm thanh từ thư viện Assets"
+              hint={`Ngoài nhạc nền, Đạo diễn AI tìm trong Assets những âm thanh ngắn (tiếng động, meme sound, dài tối đa ${SOUND_EFFECT_MAX_SECONDS} giây) và đặt vào đúng câu thoại cần nhấn. Tải file audio ngắn lên trang Assets và đặt tên/mô tả cho từng tiếng để AI chọn đúng.`}
+            />
+            {s.soundEffects && sounds.data && (
+              <p className={cx("text-sm", sounds.data.total === 0 ? "text-amber-700" : "text-zinc-500")}>
+                {sounds.data.total === 0 ? (
+                  <>
+                    Assets chưa có âm thanh ngắn nào: hãy tải file mp3/wav lên ở trang{" "}
+                    <Link href="/assets" className="underline">
+                      Assets
+                    </Link>{" "}
+                    để AI có tiếng để dùng (không có thì AI chỉ dùng hiệu ứng có sẵn).
+                  </>
+                ) : (
+                  `Có ${sounds.data.total.toLocaleString("vi-VN")} âm thanh ngắn trong Assets để AI chọn.`
+                )}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-zinc-500">Chỉ có khi dùng Đạo diễn AI.</p>
+        )}
       </Card>
 
       <Card className="p-5">

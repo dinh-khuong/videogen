@@ -130,7 +130,7 @@ class Step:
     library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
     media: str | None = None  # "video" | "image": loại nội dung nên tìm trên mạng cho bước này
     extra_assets: list[str] = field(default_factory=list)  # id asset thư viện ghép nối tiếp sau library_image
-    # Câu thoại có diễn xuất (Đạo diễn AI): [{"text", "mood", "voice": "main"|"second", "sfx", "camera",
+    # Câu thoại có diễn xuất (Đạo diễn AI): [{"text", "mood", "voice": "main"|"second", "sfx", "sound", "camera",
     # "sticker": {"asset": id} | {"path": ...}, "pop_text"}]. Chỉ dùng khi ghép lại đúng bằng narration.
     lines: list[dict] = field(default_factory=list)
     # Hình theo thứ tự: [{"asset": id}] hoặc [{"path", "media", "credit", "query"}] (ảnh/clip AI đã tải về)
@@ -182,12 +182,12 @@ def _oneline(text: str, limit: int) -> str:
 
 @dataclass
 class LibraryAsset:
-    """Asset (ảnh hoặc video) trong thư viện mà LLM có thể chọn làm nội dung cho một bước."""
+    """Asset (ảnh, video hoặc âm thanh ngắn) trong thư viện mà LLM có thể chọn làm nội dung cho một bước."""
     id: str
     path: str
     description: str = ""
     tags: list[str] = field(default_factory=list)
-    kind: str = "image"  # image | video
+    kind: str = "image"  # image | video | audio (hiệu ứng âm thanh, chỉ Đạo diễn AI dùng)
     summary: str = ""    # tóm tắt do AI viết khi phân tích asset
     ocr_text: str = ""   # chữ đọc được trong asset
     duration: float | None = None
@@ -195,6 +195,8 @@ class LibraryAsset:
     def catalog_line(self, detailed: bool = False) -> str:
         if self.kind == "video":
             kind = f"video {self.duration:.0f}s" if self.duration else "video"
+        elif self.kind == "audio":
+            kind = f"âm thanh {self.duration:.1f}s" if self.duration else "âm thanh"
         else:
             kind = "ảnh"
         parts = []
@@ -390,6 +392,9 @@ def normalize_line(value) -> dict | None:
         line["voice"] = "second"
     if value.get("sfx") in SFX_NAMES:
         line["sfx"] = value["sfx"]
+    sound = str(value.get("sound") or "").strip()
+    if sound:  # id asset âm thanh trong thư viện, phát khi bắt đầu câu
+        line["sound"] = sound
     if value.get("camera") in CAMERA_MOVES:
         line["camera"] = value["camera"]
     sticker = _media_ref(value.get("sticker"))

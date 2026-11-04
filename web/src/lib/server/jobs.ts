@@ -14,6 +14,7 @@ import {
   MAX_VISUAL_INTERVAL,
   MIN_VISUAL_INTERVAL,
   SEARCH_ENGINES,
+  SOUND_EFFECT_MAX_SECONDS,
   VIDEO_TYPES,
   VOICE_EFFECTS,
   VOICE_RE,
@@ -232,6 +233,8 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     script,
     sourceVideoId: raw.sourceVideoId || null,
     director,
+    // Âm thanh thư viện là của Đạo diễn AI (gắn vào từng câu thoại); kịch bản nhanh/kịch bản sửa tay không có khái niệm này
+    soundEffects: director && raw.soundEffects === true,
     feedback: director ? feedback : null,
     baseJobId: director ? baseJobId : null,
   };
@@ -413,6 +416,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
       (a) => !input.webImages || a.description.trim() || a.tags.length || a.summary.trim() || a.ocr_text.trim(),
     );
   }
+  spec.sounds = soundsForEngine(input, spec.base_script as Script | undefined);
   const base = spec.base_script as Script | undefined;
   if (base) {
     // Bản gốc khi sửa theo góp ý có thể dùng asset ngoài phạm vi thư viện của lần này
@@ -422,6 +426,20 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
     if (missing.length) library.push(...assetsForEngine({ ids: missing, kind: VISUAL_KINDS, limit: missing.length }));
   }
   return spec;
+}
+
+/**
+ * Âm thanh ngắn trong Assets để Đạo diễn AI gắn vào câu thoại (không tính nhạc nền đã chọn). Render lại từ kịch bản (sửa tay,
+ * hoặc bản gốc khi sửa theo góp ý) cần đúng những âm thanh kịch bản đã dùng, kể cả khi chúng không còn trong phạm vi lần này.
+ */
+function soundsForEngine(input: JobInput, base: Script | undefined): ReturnType<typeof assetsForEngine> {
+  const pool = input.director && input.soundEffects
+    ? assetsForEngine({ kind: "audio", maxDuration: SOUND_EFFECT_MAX_SECONDS, limit: DIRECTOR_LIBRARY_LIMIT }).filter((a) => a.id !== input.musicId)
+    : [];
+  const script = input.script ?? base;
+  const used = [...new Set((script?.steps ?? []).flatMap((s) => (s.lines ?? []).map((l) => l.sound)).filter((x): x is string => !!x))];
+  const missing = used.filter((id) => !pool.some((a) => a.id === id));
+  return missing.length ? [...pool, ...assetsForEngine({ ids: missing, kind: "audio", limit: missing.length })] : pool;
 }
 
 /** Asset thư viện ngoài hình chính của bước: clip/ảnh lồng suốt cảnh và sticker meme (ảnh/clip) của câu thoại. */

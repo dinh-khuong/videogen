@@ -11,6 +11,7 @@ import subprocess
 from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +40,8 @@ AUDIO_RATE = 44100
 EDGE_FADE = 0.008  # làm mềm đầu/cuối mỗi đoạn âm thanh để không có tiếng "bụp"
 FADE_IN, FADE_OUT = 0.4, 0.6  # mờ dần đầu/cuối video (hình và tiếng)
 MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
+# Âm thanh của người dùng gắn vào câu thoại: dài tối đa chừng này, đỉnh chuẩn hóa về SOUND_PEAK rồi nhân ASSET_SOUND_GAIN
+MAX_SOUND_SECONDS, SOUND_PEAK, ASSET_SOUND_GAIN, SOUND_FADE_OUT = 10.0, 0.9, 0.35, 0.25
 WHOOSH_GAIN, POP_GAIN = 0.16, 0.11  # âm lượng hiệu ứng âm thanh so với giọng đọc
 
 
@@ -73,7 +76,8 @@ class Scene:
     pops: list[float] = field(default_factory=list)  # thời điểm (giây trong scene) phát tiếng "tách"
     # Hiệu ứng theo câu thoại (Đạo diễn AI), thời điểm tính theo giọng đọc (chưa cộng khoảng lặng đầu cảnh)
     camera: list[tuple[float, str]] = field(default_factory=list)  # (giây, punch | shake | zoom_slow)
-    sounds: list[tuple[float, str]] = field(default_factory=list)  # (giây, tên âm thanh trong sfx.named)
+    # (giây, tên âm thanh trong sfx.named | file âm thanh của người dùng)
+    sounds: list[tuple[float, str | Path]] = field(default_factory=list)
     clips: list[ClipOverlay] = field(default_factory=list)  # clip video lồng trên hình (vẽ dưới chữ/phụ đề)
     # Chuyển động của ảnh đầu tiên trong scene (theo cảm xúc hoặc do Đạo diễn AI chọn); None: luân phiên ngẫu nhiên
     motion: str | None = None
@@ -86,7 +90,7 @@ class SceneRender:
     speech: np.ndarray | None
     sources: list
     pops: list[float]
-    sounds: list[tuple[float, str]] = field(default_factory=list)  # thời điểm đã tính trong scene
+    sounds: list[tuple[float, str | Path]] = field(default_factory=list)  # thời điểm đã tính trong scene
 
 
 PUNCH_ZOOM, PUNCH_HOLD = 1.18, 0.9
@@ -237,6 +241,21 @@ def decode_audio(path: Path) -> np.ndarray:
         capture_output=True, check=True,
     ).stdout
     return np.frombuffer(raw, dtype=np.float32).reshape(-1, 2).copy()
+
+
+@lru_cache(maxsize=32)
+def _asset_sound(path: Path) -> tuple[np.ndarray, float] | None:
+    """(mẫu âm thanh, âm lượng) của một file trong thư viện, dùng như hiệu ứng: cắt gọn, chuẩn hóa đỉnh để các file to nhỏ
+    khác nhau nghe đều tay so với giọng đọc. File hỏng không được làm hỏng cả video."""
+    try:
+        samples = decode_audio(path)[: int(MAX_SOUND_SECONDS * AUDIO_RATE)]
+    except Exception as e:  # noqa: BLE001
+        print(f"      Bỏ qua âm thanh {path.name}: {type(e).__name__}", flush=True)
+        return None
+    peak = float(np.abs(samples).max()) if len(samples) else 0.0
+    if peak < 1e-4:
+        return None
+    return _fade(samples / peak * SOUND_PEAK, 0.0, SOUND_FADE_OUT), ASSET_SOUND_GAIN
 
 
 def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
@@ -483,8 +502,8 @@ def build_video(
             effects.extend((start + p, sfx.pop(), POP_GAIN) for p in render.pops)
     # Âm thanh meme do Đạo diễn AI đặt theo câu thoại: luôn phát (AI đã chủ động chọn)
     for start, render in zip(starts, renders):
-        for t, name in render.sounds:
-            sound = sfx.named(name)
+        for t, ref in render.sounds:
+            sound = _asset_sound(ref) if isinstance(ref, Path) else sfx.named(ref)
             if sound:
                 effects.append((start + t, sound[0], sound[1]))
 

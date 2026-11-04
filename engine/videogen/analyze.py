@@ -29,18 +29,19 @@ from PIL import Image, ImageOps
 from .config import Settings, load_settings
 from .events import JsonReporter
 from .llm import extract_json, normalize_hashtags
-from .probe import AUDIO_EXTS, IMAGE_EXTS, ffmpeg_exe, video_info
+from .probe import AUDIO_EXTS, IMAGE_EXTS, audio_info, ffmpeg_exe, video_info
 
 OCR_MIN_CONF = 60       # độ tin cậy tối thiểu của một từ (0-100)
 OCR_MAX_CHARS = 2000    # giới hạn chữ lưu lại cho mỗi asset
 VIDEO_FRAMES = (0.15, 0.5, 0.85)
+SHORT_SOUND_SECONDS = 10.0  # audio ngắn hơn mức này được Đạo diễn AI dùng làm hiệu ứng (web: SOUND_EFFECT_MAX_SECONDS)
 
 SUMMARY_PROMPT = """Bạn giúp người dựng video phân loại tư liệu (ảnh hoặc video ngắn).
 Dữ liệu về một asset (ảnh, video hoặc audio) gồm: loại, tên file/tiêu đề, mô tả của người dùng, chữ đọc được bằng OCR
 (có thể lẫn lỗi nhận dạng hoặc ký tự rác) và mô tả hình ảnh của mô hình thị giác (nếu có).
 Chỉ trả lời bằng JSON:
 {
-  "summary": "1-3 câu bằng {language}: asset thể hiện gì, thông tin chính (tên sản phẩm, giá, số liệu, các bước...) và phù hợp để minh họa nội dung nào trong video. Với audio: thể loại, tâm trạng và loại video phù hợp làm nhạc nền.",
+  "summary": "1-3 câu bằng {language}: asset thể hiện gì, thông tin chính (tên sản phẩm, giá, số liệu, các bước...) và phù hợp để minh họa nội dung nào trong video. Với audio: nếu là nhạc/bài dài thì thể loại, tâm trạng và loại video phù hợp làm nhạc nền; nếu là âm thanh ngắn (hiệu ứng) thì đó là tiếng gì (tiếng động, meme sound, tiếng người, nhạc hiệu...), cảm xúc/tình huống nó diễn tả và “miếng” nào trong video nên chèn nó vào (vd plot twist, câu ngớ ngẩn, khen ngợi).",
   "text": "Chữ trong asset sau khi sửa lỗi OCR rõ ràng, giữ nguyên thứ tự và ý; bỏ dòng rác. Chuỗi rỗng nếu không có chữ có nghĩa.",
   "tags": ["3-6 hashtag viết thường, không dấu, viết liền, không có ký tự #"]
 }
@@ -190,12 +191,14 @@ def describe(frames: list[Path], kind: str, settings: Settings, language: str) -
     return {"caption": str(data.get("caption") or "").strip(), "text": str(data.get("text") or "").strip()}
 
 
-def summarize(item: AssetInput, ocr_text: str, caption: str, settings: Settings, language: str) -> dict:
-    """Tóm tắt bằng DeepSeek. Trả về {"summary", "text", "tags"}."""
+def summarize(item: AssetInput, ocr_text: str, caption: str, settings: Settings, language: str, seconds: float | None = None) -> dict:
+    """Tóm tắt bằng DeepSeek. Trả về {"summary", "text", "tags"}. seconds: thời lượng (audio)."""
     from openai import OpenAI
 
     kind = {"video": "video", "audio": "audio (nhạc/âm thanh)"}.get(item.kind, "ảnh")
     facts = [f"Loại: {kind}", f"Tên/tiêu đề: {item.title or Path(item.path).stem}"]
+    if seconds:
+        facts.append(f"Thời lượng: {seconds:.1f} giây ({'âm thanh ngắn, dùng làm hiệu ứng chèn vào câu thoại' if seconds <= SHORT_SOUND_SECONDS else 'nhạc/bài dài, dùng làm nhạc nền'})")
     if item.description.strip():
         facts.append(f"Mô tả của người dùng: {item.description.strip()}")
     facts.append(f"Chữ đọc được (OCR):\n{ocr_text}" if ocr_text else "Chữ đọc được (OCR): (không có)")
@@ -235,7 +238,11 @@ def analyze_one(item: AssetInput, settings: Settings, language: str, use_ocr: bo
     if item.kind == "audio":
         # Audio không có hình để đọc chữ: chỉ tóm tắt từ tên + mô tả (vd thể loại nhạc, tâm trạng)
         if settings.deepseek_api_key and (item.description.strip() or _informative(item.title)):
-            data = summarize(item, "", "", settings, language)
+            try:
+                seconds = audio_info(path)["duration"]
+            except Exception:  # noqa: BLE001 - không đọc được thời lượng thì vẫn tóm tắt từ tên + mô tả
+                seconds = None
+            data = summarize(item, "", "", settings, language, seconds)
             result.summary, result.tags = data["summary"], data["tags"]
         return result
     with tempfile.TemporaryDirectory(prefix="videogen_analyze_") as tmp:

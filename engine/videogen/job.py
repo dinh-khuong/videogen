@@ -38,7 +38,9 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "base_script": {...},                     # kịch bản của bản trước (đi kèm feedback)
   "library": [{"id": "...", "path": "/abs/anh.jpg", "kind": "image",   # asset ảnh/video của người dùng
                "description": "...", "tags": ["..."],
-               "summary": "tóm tắt AI", "ocr_text": "chữ trong asset", "duration": null}]
+               "summary": "tóm tắt AI", "ocr_text": "chữ trong asset", "duration": null}],
+  "sounds": [{"id": "...", "path": "/abs/tieng.mp3", "description": "...", "tags": [],   # âm thanh ngắn Đạo diễn AI gắn vào
+              "summary": "...", "duration": 1.5}]                                        #   câu thoại (khác nhạc nền "music")
 }
 
 Kết quả: <work_dir>/result.json (xem RunResult.to_dict) và sự kiện {"type": "result"} trên stdout.
@@ -146,6 +148,18 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
                 duration=float(item["duration"]) if item.get("duration") else None,
             )
             for item in spec.get("library") or []
+        ],
+        sounds=[
+            LibraryAsset(
+                id=str(item["id"]),
+                path=str(item["path"]),
+                description=item.get("description") or "",
+                tags=list(item.get("tags") or []),
+                kind="audio",
+                summary=item.get("summary") or "",
+                duration=float(item["duration"]) if item.get("duration") else None,
+            )
+            for item in spec.get("sounds") or []
         ],
         library_mode=library_mode,
         work_dir=Path(spec["work_dir"]),

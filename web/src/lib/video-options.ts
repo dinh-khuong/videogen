@@ -220,6 +220,9 @@ export const PITCHES = [
 ];
 
 /** Khoảng của thanh trượt cao độ (Hz, cộng vào giọng gốc). */
+/** Audio trong Assets dài tối đa chừng này (giây) mới được Đạo diễn AI dùng làm hiệu ứng âm thanh; dài hơn coi là nhạc nền. */
+export const SOUND_EFFECT_MAX_SECONDS = 10;
+
 export const PITCH_MIN = -30;
 export const PITCH_MAX = 30;
 

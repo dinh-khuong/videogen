@@ -5,11 +5,13 @@ cảnh, tự duyệt storyboard) → đọc kết quả → quyết định bư�
 hiệu ứng gì đều do AI quyết định; vòng lặp chỉ dừng khi AI gọi `finish` (hoặc hết lượt).
 
 Mỗi cảnh gồm nhiều câu thoại, mỗi câu có cảm xúc riêng (hào hứng, kịch tính, cà khịa...), có thể do giọng phụ đọc
-(như hai người dẫn / "nội tâm"), kèm âm thanh meme, zoom giật, sticker meme, chữ nhấn mạnh. Kết quả là một Script
+(như hai người dẫn / "nội tâm"), kèm âm thanh meme (tổng hợp có sẵn hoặc tiếng của người dùng trong thư viện), zoom giật,
+sticker meme, chữ nhấn mạnh. Kết quả là một Script
 dạng "director" để pipeline dựng (và có thể sửa/render lại như kịch bản thường).
 
 Nhật ký của AI ghi ra <work_dir>/director.jsonl, storyboard mới nhất ở <work_dir>/storyboard.json.
 """
+import copy
 import hashlib
 import json
 import re
@@ -95,13 +97,21 @@ thêm từ khóa tương ứng, vd "người Florida" ~ "Florida man"). Viết �
 trend khác nếu hợp):
 {catchphrases}
 
-{counts_rule}{voice_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
+{counts_rule}{voice_rule}{sound_rule}Trước mỗi lượt gọi công cụ, viết 1 câu ngắn ({language}) nói bạn định làm gì và vì sao (người dùng đang xem).
 Toàn bộ lời thoại viết bằng {language}."""
 
 VOICE_RULE = """Giọng đọc: bạn ĐƯỢC QUYỀN tinh chỉnh giọng chung của cả video bằng tune_voice (cao độ, tốc độ quanh mức người dùng
 chọn) cho hợp không khí video: chuyện ma/bí ẩn/buồn → trầm, chậm hơn; hài, Gen Z, quảng cáo, top viral → sáng, nhanh hơn;
 hướng dẫn/kiến thức → rõ ràng, chỉnh nhẹ. Chỉnh vừa phải, giọng phải còn tự nhiên; giọng đã hợp thì không cần chỉnh.
 Cảm xúc từng câu ("mood") vẫn cộng thêm sau mức chung này. Người dùng góp ý về giọng (cao/trầm/nhanh/chậm) thì sửa bằng tune_voice.
+
+"""
+
+SOUND_RULE = """Âm thanh trong thư viện của người dùng: họ có {count} âm thanh ngắn (tiếng động, meme sound, hiệu ứng). Dùng search_sounds
+để tìm đúng tiếng hợp "miếng" (vd "bruh", "còi xe", "vỗ tay", "ồ", "cười"), rồi gắn id vào câu thoại bằng "sound": tiếng phát
+ngay khi bắt đầu câu, như sfx nhưng là tiếng thật của người dùng. ƯU TIÊN âm thanh của người dùng hơn sfx có sẵn khi có tiếng
+khớp (mỗi câu chỉ dùng một trong hai). Đặt đúng chỗ, không rải đều, không lặp một tiếng quá 2-3 lần. Nhạc nền do người dùng
+chọn riêng, không cần bạn lo.
 
 """
 
@@ -120,6 +130,18 @@ LINE_SCHEMA = {
     },
     "required": ["text", "mood"],
 }
+
+# Chỉ đưa cho AI khi người dùng có âm thanh trong thư viện (Director._tools)
+SOUND_PROP = {"type": "string", "description": "id âm thanh thư viện (từ search_sounds) phát khi bắt đầu câu."}
+SEARCH_SOUNDS_TOOL = {"type": "function", "function": {
+    "name": "search_sounds",
+    "description": "Tìm âm thanh ngắn (tiếng động, meme sound, hiệu ứng) trong thư viện của người dùng theo nội dung và/hoặc CẢM XÚC. "
+                   "Dùng id tìm được trong \"sound\" của câu thoại.",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "Từ khóa (tiếng Việt/Anh, vd 'bruh', 'vỗ tay', 'còi xe', 'phát hiện')."},
+        "emotion": {"type": "string", "description": "Cảm xúc/tình huống cần (vd " + ", ".join(EMOTION_WORDS) + ")."},
+    }, "required": []},
+}}
 
 SCENE_PROPS = {
     "heading": {"type": "string", "description": "Nhãn nhỏ góc trên (tùy chọn)."},
@@ -212,6 +234,7 @@ class Director:
     def __init__(self, topic: str, settings: Settings, opts: "Options", work_dir: Path, orientation: str) -> None:
         self.topic, self.settings, self.opts, self.work_dir, self.orientation = topic, settings, opts, work_dir, orientation
         self.library = {a.id: a for a in opts.library}
+        self.sounds = {a.id: a for a in opts.sounds}
         self.memes = [a for a in opts.library if _is_meme(a)]
         self.meme_ids = {a.id for a in self.memes}
         self.web: dict[str, dict] = {}  # id -> {"path", "media", "credit", "query"}
@@ -307,7 +330,33 @@ class Director:
         lines = [self._describe(a.id) + (f" (đang dùng ở {', '.join(u)})" if (u := self._usage(a.id)) else "") for a in hits]
         return f"{len(hits)} kết quả:\n" + "\n".join(lines)
 
+    def _sound_usage(self, sound_id: str) -> list[str]:
+        return [sc["id"] for sc in self.scenes if any(l.get("sound") == sound_id for l in sc["lines"])]
+
+    def search_sounds(self, query: str = "", emotion: str = "") -> str:
+        if not self.sounds:
+            return "Thư viện không có âm thanh nào. Dùng sfx có sẵn (boom, ding, whoosh...)."
+        words = _tokens(query) | _tokens(phrase_keywords(query))
+        feel = _tokens(emotion_keywords(emotion)) if emotion else set()
+        if not words and not feel:
+            return "Cần query hoặc emotion."
+
+        def score(a: LibraryAsset) -> float:
+            text = _tokens(a.search_text())
+            return len(words & text) * 2 + len(feel & text)
+
+        scored = sorted(((score(a), i, a) for i, a in enumerate(self.sounds.values())), key=lambda x: (-x[0], x[1]))
+        hits = [a for sc, _, a in scored if sc > 0][:SEARCH_LIMIT]
+        if not hits:
+            what = " / ".join(x for x in (query and f"'{query}'", emotion and f"cảm xúc {emotion}") if x)
+            return f"Không có âm thanh khớp {what}. Thử từ khóa khác (đồng nghĩa, tiếng Anh) hoặc dùng sfx có sẵn."
+        lines = [a.catalog_line() + (f" (đang dùng ở {', '.join(u)})" if (u := self._sound_usage(a.id)) else "") for a in hits]
+        return f"{len(hits)} kết quả (gắn id vào \"sound\" của câu thoại):\n" + "\n".join(lines)
+
     def inspect_asset(self, id: str) -> str:
+        if id in self.sounds:
+            used = self._sound_usage(id)
+            return self.sounds[id].catalog_line(detailed=True) + (f"\nĐang dùng ở: {', '.join(used)}" if used else "\nChưa dùng.")
         if self._kind_of(id) is None:
             return f"Không có asset/ảnh/clip id '{id}'."
         used = self._usage(id)
@@ -378,6 +427,12 @@ class Director:
                 line["voice"] = "second"
             if item.get("sfx") in SFX_NAMES:
                 line["sfx"] = item["sfx"]
+            sound = str(item.get("sound") or "").strip()
+            if sound:
+                if sound in self.sounds:
+                    line["sound"] = sound
+                else:
+                    warnings.append(f"sound '{sound}' không có trong thư viện âm thanh (tìm bằng search_sounds)")
             if item.get("camera") in CAMERA_MOVES:
                 line["camera"] = item["camera"]
             sticker = str(item.get("sticker") or "").strip()
@@ -638,10 +693,10 @@ class Director:
         if repeated:
             notes.append(f"Hình dùng lặp ở nhiều cảnh: {', '.join(repeated)}.")
         lines = [l for s in self.scenes for l in s["lines"]]
-        effects = sum(1 for l in lines if l.get("sfx") or l.get("camera") or l.get("sticker") or l.get("pop_text"))
+        effects = sum(1 for l in lines if l.get("sfx") or l.get("sound") or l.get("camera") or l.get("sticker") or l.get("pop_text"))
         memes = sum(1 for s in self.scenes if s.get("meme_top") or s.get("meme_bottom")) + sum(1 for l in lines if l.get("sticker"))
         if effects == 0:
-            notes.append("Chưa có hiệu ứng meme nào (sfx/camera/sticker/pop_text): video sẽ phẳng.")
+            notes.append("Chưa có hiệu ứng meme nào (sfx/sound/camera/sticker/pop_text): video sẽ phẳng.")
         elif effects > len(lines) * 0.8:
             notes.append(f"{effects}/{len(lines)} câu có hiệu ứng: hơi lạm dụng, giữ lại những chỗ đắt nhất.")
         if memes == 0 and self.memes:
@@ -649,6 +704,14 @@ class Director:
         sfx = [l.get("sfx") for l in lines if l.get("sfx")]
         if sfx and Counter(sfx).most_common(1)[0][1] >= 4:
             notes.append(f"Âm '{Counter(sfx).most_common(1)[0][0]}' lặp quá nhiều lần.")
+        if self.sounds:
+            used_sounds = Counter(l["sound"] for l in lines if l.get("sound"))
+            if not used_sounds:
+                notes.append(f"Thư viện có {len(self.sounds)} âm thanh nhưng chưa dùng cái nào (search_sounds rồi gắn \"sound\" vào câu).")
+            elif used_sounds.most_common(1)[0][1] >= 3:
+                notes.append(f"Tiếng '{used_sounds.most_common(1)[0][0]}' lặp {used_sounds.most_common(1)[0][1]} lần: dùng tiếng khác cho đỡ nhàm.")
+            if any(l.get("sound") and l.get("sfx") for l in lines):
+                notes.append("Có câu vừa có sound vừa có sfx: chỉ giữ một.")
         if not any(l.get("voice") == "second" for l in lines) and len(lines) >= 6:
             notes.append("Có thể thêm vài câu giọng phụ (voice second) để đối đáp, đỡ độc thoại.")
         clips = [a for a in self.library.values() if a.kind == "video"] + [m for m in self.web.values() if m["media"] == "video"]
@@ -688,7 +751,7 @@ class Director:
             visuals = ", ".join(s["visuals"]) or (f"(tự tìm: {s['fallback_query']})" if s.get("fallback_query") else "(KHÔNG CÓ HÌNH)")
             out.append(f"{k}. {s['id']} ~{self._scene_seconds(s):.0f}s | hình: {visuals}" + (f" | {'; '.join(extra)}" if extra else ""))
             for l in s["lines"]:
-                fx = [f"{k2}={l[k2]}" for k2 in ("voice", "sfx", "camera", "sticker", "pop_text") if l.get(k2)]
+                fx = [f"{k2}={l[k2]}" for k2 in ("voice", "sfx", "sound", "camera", "sticker", "pop_text") if l.get(k2)]
                 out.append(f"   [{l['mood']}] {l['text']}" + (f"  ({', '.join(fx)})" if fx else ""))
         notes = self.critique()
         out.append("Nhận xét tự động:\n" + ("\n".join(f"- {n}" for n in notes) if notes else "- Không thấy vấn đề lớn."))
@@ -739,6 +802,8 @@ class Director:
             f"Thư viện của người dùng: {lib}.",
             "Tìm trên mạng: " + ("được phép (search_web)." if opts.web_images else "TẮT, chỉ dùng thư viện."),
         ]
+        if self.sounds:
+            parts.append(f"Âm thanh trong thư viện: {len(self.sounds)} tiếng ngắn (search_sounds, gắn vào câu bằng \"sound\").")
         if opts.library_mode == "selected" and opts.library:
             parts.append("Người dùng ĐÃ CHỌN các asset sau làm nội dung chính, hãy dùng hết theo thứ tự:\n"
                          + "\n".join(a.catalog_line(True) for a in opts.library))
@@ -761,7 +826,7 @@ class Director:
             "search_assets": self.search_assets, "inspect_asset": self.inspect_asset, "search_web": self.search_web,
             "add_scene": self.add_scene, "update_scene": self.update_scene, "remove_scene": self.remove_scene,
             "move_scene": self.move_scene, "review_storyboard": self.review_storyboard, "finish": self.finish,
-            "tune_voice": self.tune_voice,
+            "tune_voice": self.tune_voice, "search_sounds": self.search_sounds,
         }
         fn = handlers.get(name)
         if not fn:
@@ -770,7 +835,7 @@ class Director:
                    "search_web": {"query", "media", "count", "title", "hashtags", "meme"}, "remove_scene": {"scene"},
                    "move_scene": {"scene", "position"},
                    "review_storyboard": set(), "finish": {"title", "description", "hashtags"},
-                   "tune_voice": {"pitch", "rate", "reason"}}
+                   "tune_voice": {"pitch", "rate", "reason"}, "search_sounds": {"query", "emotion"}}
         if name in allowed:
             args = {k: v for k, v in args.items() if k in allowed[name]}
         try:
@@ -789,6 +854,8 @@ class Director:
         return {
             "search_assets": lambda: f"Tìm {'meme' if args.get('memes_only') else 'asset'} trong thư viện: “{args.get('query', '')}”"
                                      + (f" (cảm xúc: {args['emotion']})" if args.get("emotion") else ""),
+            "search_sounds": lambda: f"Tìm âm thanh trong thư viện: “{args.get('query', '')}”"
+                                     + (f" (cảm xúc: {args['emotion']})" if args.get("emotion") else ""),
             "inspect_asset": lambda: f"Xem kỹ {args.get('id')}",
             "search_web": lambda: f"Tìm {'clip' if args.get('media') == 'video' else 'ảnh'} trên mạng: “{args.get('query', '')}”",
             "add_scene": lambda: f"Thêm cảnh: “{_oneline(first_text(), 80)}”",
@@ -801,15 +868,28 @@ class Director:
             "finish": lambda: f"Chốt kịch bản: “{args.get('title', '')}”",
         }.get(name, lambda: name)()
 
+    def _tools(self) -> list[dict]:
+        """Công cụ cho AI: tune_voice chỉ khi người dùng cho chỉnh giọng, search_sounds + "sound" chỉ khi thư viện có âm thanh."""
+        tools = [t for t in TOOLS if t["function"]["name"] != "tune_voice" or self.opts.ai_voice]
+        if not self.sounds:
+            return tools
+        tools = copy.deepcopy(tools)
+        for tool in tools:
+            lines = tool["function"]["parameters"]["properties"].get("lines")
+            if lines:
+                lines["items"]["properties"]["sound"] = SOUND_PROP
+        return [*tools, SEARCH_SOUNDS_TOOL]
+
     def run(self) -> Script:
         client = OpenAI(
             api_key=require("DEEPSEEK_API_KEY", self.settings.deepseek_api_key),
             base_url=self.settings.deepseek_base_url, max_retries=3, timeout=180,
         )
         model = self.settings.director_model or self.settings.deepseek_model
+        sound_rule = SOUND_RULE.replace("{count}", str(len(self.sounds))) if self.sounds else ""
         system = (SYSTEM.replace("{counts_rule}", self.counts_rule()).replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
-                  .replace("{catchphrases}", catchphrase_doc()))
-        tools = TOOLS if self.opts.ai_voice else [t for t in TOOLS if t["function"]["name"] != "tune_voice"]
+                  .replace("{sound_rule}", sound_rule).replace("{catchphrases}", catchphrase_doc()))
+        tools = self._tools()
         messages: list[dict] = [
             {"role": "system", "content": system.replace("{language}", self.opts.language)},
             {"role": "user", "content": self._intro_message()},

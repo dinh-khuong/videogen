@@ -66,6 +66,8 @@ class Options:
     meme_images: int | None = None
     meme_videos: int | None = None
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
+    # Âm thanh ngắn (kind "audio") trong thư viện để Đạo diễn AI gắn vào câu thoại như hiệu ứng (khác nhạc nền `music`)
+    sounds: list[LibraryAsset] = field(default_factory=list)
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
     reporter: Reporter = field(default_factory=Reporter)
@@ -629,6 +631,11 @@ def run(
     reporter.stage("images", "Đang lấy ảnh/clip minh họa")
     steps = _prepare_images(script, work_dir, settings, size, orientation, opts, fonts)
     library = {a.id: a for a in opts.library}
+    # Âm thanh thư viện mà kịch bản gắn vào câu thoại: id -> file (thiếu file thì bỏ qua, không làm hỏng cả video)
+    sound_files = {a.id: Path(a.path) for a in opts.sounds if Path(a.path).exists()}
+    used_sounds = [l["sound"] for st in script.steps for l in st.acted_lines() if l.get("sound") in sound_files]
+    if used_sounds:
+        print(f"      Âm thanh từ thư viện: {len(used_sounds)} lần ({len(set(used_sounds))} tiếng khác nhau)", flush=True)
     step_overlays, step_stickers = _prepare_extras(script, library)
     result.images = [img for seg in steps for img in seg]
     result.images += [img for img in step_overlays if img] + [img for by_line in step_stickers for img in by_line.values()]
@@ -686,6 +693,8 @@ def run(
                 camera.append((start, line["camera"]))
             if line.get("sfx"):
                 sounds.append((max(0.0, start - 0.05), line["sfx"]))
+            if line.get("sound") in sound_files:
+                sounds.append((max(0.0, start - 0.05), sound_files[line["sound"]]))
             show = max(head + start, not_before)
             sticker = stickers.get(j)
             if sticker and head + end + 0.5 - show > 0.8:
