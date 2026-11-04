@@ -1,6 +1,6 @@
 import "server-only";
 import crypto from "node:crypto";
-import { isTokenProvider, maskToken, providerMeta, type TokenProvider } from "@/lib/token-providers";
+import { TOKEN_PROVIDERS, isTokenProvider, maskToken, providerMeta, type TokenProvider } from "@/lib/token-providers";
 import type { TokenCheckStatus, TokenItem } from "@/lib/types";
 import { db, nowIso } from "./db";
 import { HttpError } from "./files";
@@ -58,12 +58,15 @@ function parseOptions(raw: string): Record<string, string> {
 }
 
 /** Thiết lập hợp lệ của dịch vụ: chỉ giữ khóa dịch vụ khai báo, bỏ giá trị trống, kiểm tra model và địa chỉ API. */
-function cleanOptions(provider: TokenProvider, raw: unknown): Record<string, string> {
+function cleanOptions(provider: TokenProvider, raw: unknown, { partial = false } = {}): Record<string, string> {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const out: Record<string, string> = {};
   for (const meta of providerMeta(provider).options ?? []) {
     const value = String(input[meta.key] ?? "").trim();
-    if (!value) continue;
+    if (!value) {
+      if (meta.required && !partial) throw new HttpError(400, `Hãy nhập ${meta.label.charAt(0).toLowerCase()}${meta.label.slice(1)}`);
+      continue;
+    }
     if (value.length > MAX_OPTION_CHARS) throw new HttpError(400, `${meta.label} quá dài (tối đa ${MAX_OPTION_CHARS} ký tự)`);
     if (/\s/.test(value)) throw new HttpError(400, `${meta.label} không được chứa khoảng trắng`);
     if (meta.kind === "url") {
@@ -104,9 +107,19 @@ function cleanValue(raw: unknown): string {
 
 const cleanText = (raw: unknown, max: number): string => String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
-/** Chọn một token làm token đang dùng của dịch vụ (các token khác của dịch vụ đó thôi dùng). */
+/** Các dịch vụ dùng chung vị trí trong engine với dịch vụ này (kể cả chính nó): cả nhóm chỉ có một token đang dùng. */
+function slotProviders(provider: TokenProvider): TokenProvider[] {
+  const slot = providerMeta(provider).slot;
+  if (!slot) return [provider];
+  return (Object.keys(TOKEN_PROVIDERS) as TokenProvider[]).filter((p) => providerMeta(p).slot === slot);
+}
+
+/** Chọn một token làm token đang dùng (các token khác cùng dịch vụ, và của dịch vụ cùng vị trí, thôi dùng). */
 function activate(id: string, provider: string): void {
-  db().prepare("UPDATE api_tokens SET active = (id = ?) WHERE provider = ?").run(id, provider);
+  const providers = isTokenProvider(provider) ? slotProviders(provider) : [provider];
+  db()
+    .prepare(`UPDATE api_tokens SET active = (id = ?) WHERE provider IN (${providers.map(() => "?").join(",")})`)
+    .run(id, ...providers);
 }
 
 export function createToken(input: {
@@ -133,8 +146,13 @@ export function createToken(input: {
       cleanText(input.note, MAX_NOTE_CHARS),
       JSON.stringify(options),
     );
-    // Token đầu tiên của dịch vụ được dùng luôn; các token sau chỉ khi người dùng chọn
-    if (existing === 0 || input.active === true) activate(id, provider);
+    // Token đầu tiên của dịch vụ được dùng luôn nếu chưa có token nào đang dùng ở cùng vị trí trong engine; các token sau chỉ khi người dùng chọn
+    const taken = (
+      db()
+        .prepare(`SELECT COUNT(*) AS n FROM api_tokens WHERE active = 1 AND id != ? AND provider IN (${slotProviders(provider).map(() => "?").join(",")})`)
+        .get(id, ...slotProviders(provider)) as { n: number }
+    ).n;
+    if ((existing === 0 && taken === 0) || input.active === true) activate(id, provider);
   })();
   return toItem(getRow(id)!);
 }
@@ -202,7 +220,11 @@ export function tokenEnv(): Record<string, string> {
     const meta = providerMeta(r.provider);
     env[meta.env] = r.value;
     const options = parseOptions(r.options);
-    for (const o of meta.options ?? []) if (options[o.key]) env[o.env] = options[o.key];
+    for (const o of meta.options ?? []) {
+      const value = options[o.key] || (meta.isolated && o.kind === "url" ? meta.baseUrl : undefined);
+      if (value) env[o.env] = value;
+      else if (meta.isolated) env[o.env] = ""; // chặn giá trị DeepSeek cũ trong engine/.env lẫn sang dịch vụ khác
+    }
   }
   return env;
 }
@@ -296,6 +318,16 @@ async function deepseekAccess(key: string, base: string): Promise<Check> {
   return byStatus(balance.res, balance.text, "Dùng được.");
 }
 
+/** Kiểm tra AI kiểu OpenAI: gọi `GET {địa chỉ API}/models` bằng token rồi xác nhận các model đã chọn có trên dịch vụ. */
+function llmCheck(provider: TokenProvider): (key: string, options: Record<string, string>) => Promise<Check> {
+  return async (key, options) => {
+    const base = options.base_url || providerMeta(provider).baseUrl;
+    if (!base) return { status: "error", message: "Chưa có địa chỉ API: điền ở mục \"Địa chỉ API\" rồi kiểm tra lại." };
+    const { res, text, ids } = await fetchModels(base, key);
+    return checkModels(provider, options, byStatus(res, text, "Dùng được."), ids);
+  };
+}
+
 const CHECKS: Partial<Record<TokenProvider, (key: string, options: Record<string, string>) => Promise<Check>>> = {
   async deepseek(key, options) {
     const base = trimSlash(options.base_url || process.env.DEEPSEEK_BASE_URL || DEFAULT_DEEPSEEK_BASE);
@@ -303,6 +335,12 @@ const CHECKS: Partial<Record<TokenProvider, (key: string, options: Record<string
     if (check.status !== "ok" || !chosenModels("deepseek", options).length) return check;
     return checkModels("deepseek", options, check, (await fetchModels(base, key)).ids);
   },
+
+  openai: llmCheck("openai"),
+  gemini: llmCheck("gemini"),
+  openrouter: llmCheck("openrouter"),
+  groq: llmCheck("groq"),
+  custom_ai: llmCheck("custom_ai"),
 
   async vision(key, options) {
     if (!options.base_url) return { status: "error", message: "Chưa có địa chỉ API: điền ở mục \"Địa chỉ API\" rồi kiểm tra lại." };
@@ -412,8 +450,9 @@ export async function listModels(input: { provider: unknown; id?: unknown; value
   if (!key) throw new HttpError(400, "Hãy nhập token trước để tải danh sách model");
   const typedUrl = String(input.baseUrl ?? "").trim();
   const base =
-    (typedUrl ? cleanOptions(provider, { base_url: typedUrl }).base_url : undefined) ??
+    (typedUrl ? cleanOptions(provider, { base_url: typedUrl }, { partial: true }).base_url : undefined) ??
     (stored ? parseOptions(stored.options).base_url : undefined) ??
+    providerMeta(provider).baseUrl ??
     (provider === "deepseek" ? process.env.DEEPSEEK_BASE_URL || DEFAULT_DEEPSEEK_BASE : undefined);
   if (!base) throw new HttpError(400, "Hãy nhập địa chỉ API trước để tải danh sách model");
   let result: { res: Response; text: string; ids: string[] };
