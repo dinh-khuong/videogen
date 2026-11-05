@@ -21,15 +21,17 @@ class WritingStyle:
 
 
 COMEDY_DIRECTOR = """ÍT CHỮ, NHIỀU MIẾNG HÀI — đây là luật số 1:
-- Cả video chỉ xoay quanh MỘT ý chính (tối đa {max_points} ý/điểm thông tin). Video ngắn không phải bài giảng: người xem nhớ
-  được 1 điều buồn cười còn hơn 10 điều khô khan. Thông tin thừa, số liệu phụ, giải thích dài dòng → CẮT THẲNG TAY.
+- Thông tin NGƯỜI DÙNG đưa trong yêu cầu (mọi ý, tên, giá, số liệu, danh sách) phải có ĐỦ trong video, không bỏ ý nào.
+  Phần BẠN TỰ THÊM thì tiết chế: tối đa {max_points} ý/điểm thông tin thêm; số liệu phụ, giải thích dài dòng do bạn tự nghĩ
+  ra → CẮT THẲNG TAY. Video ngắn không phải bài giảng: nói ý của người dùng thật gọn rồi để chỗ cho miếng hài.
 - Mỗi cảnh chỉ nói MỘT điều, rồi để chỗ cho miếng hài/phản ứng/âm thanh "thở". Câu thoại ≤ 15 từ, cảnh 1-3 câu.
 - MỖI cảnh phải có ít nhất một miếng hài: cà khịa, nói quá, so sánh bá đạo, tự giễu, plot twist vô lý, câu tỉnh bơ
   sau một câu hào hứng, hay giọng phụ (voice second) chen ngang phản bác/than thở. Cấu trúc kinh điển: đặt vấn đề
   nghiêm túc → câu chốt bất ngờ + tiếng động. Hài kiểu nói chuyện với bạn thân, không kiểu đọc bản tin.
 - "voice": "second" = giọng phụ khác giới, dùng cho câu chen ngang/phản ứng/nội tâm ("Ủa gì vậy trời?"),
   như hai người dẫn đối đáp. Dùng có chủ ý, không lạm dụng.
-- Thà video ngắn hơn mục tiêu một chút mà vui, còn hơn đủ giờ mà nhồi chữ."""
+- Thà video ngắn hơn mục tiêu một chút mà vui, còn hơn đủ giờ mà nhồi chữ — nhưng ý người dùng đưa thì không cắt:
+  nhiều ý thì thêm cảnh, mỗi cảnh một ý."""
 
 STYLES: dict[str, WritingStyle] = {
     # Tự động: giữ cách viết vốn có của từng chế độ (Kịch bản nhanh: người dẫn; Đạo diễn AI: hài meme)
@@ -43,7 +45,8 @@ STYLES: dict[str, WritingStyle] = {
   thỉnh thoảng một câu đùa nhẹ hoặc câu hỏi tu từ để giữ nhịp. Không đọc như văn bản, không liệt kê khô khan.""",
         director="""MỘT NGƯỜI DẪN CÓ DUYÊN — đây là luật số 1:
 - Một người dẫn nói chuyện trực tiếp với người xem ("bạn"), rõ ràng và cuốn hút như YouTuber kể cho bạn bè nghe.
-  Cả video xoay quanh tối đa {max_points} ý chính; mỗi cảnh một ý, nói cho thật dễ hiểu, có ví dụ đời thường.
+  Nói đủ mọi ý người dùng đưa trong yêu cầu, tự thêm tối đa {max_points} ý; mỗi cảnh một ý, nói cho thật dễ hiểu, có ví dụ
+  đời thường.
 - Hài nhẹ là gia vị, không phải món chính: vài câu đùa, so sánh vui, câu hỏi tu từ ở đúng chỗ. Meme và tiếng động chỉ
   đặt vào vài điểm nhấn đắt nhất, không cần cảnh nào cũng có.
 - Chỉ dùng giọng phụ ("voice": "second") khi thật sự cần một câu chen ngang/nội tâm; mặc định chỉ có người dẫn.""",
@@ -59,7 +62,7 @@ STYLES: dict[str, WritingStyle] = {
   nhịp chậm-nhanh đan xen. Nêu ý kiến là ý kiến, sự thật là sự thật: không bịa số liệu, không chắc thì nói "có vẻ", "nhiều người cho rằng".""",
         director="""VIDEO ESSAY CÓ CHÍNH KIẾN — đây là luật số 1:
 - Video là một bài bình luận/phân tích có QUAN ĐIỂM: mở bằng một câu hỏi hoặc nhận định gây tranh luận, nói rõ luận điểm
-  của video, rồi đi qua {max_points} lập luận (mỗi lập luận: ý → dẫn chứng/ví dụ cụ thể → "vậy thì sao?"), có một cảnh
+  của video, rồi đi qua mọi ý người dùng đưa cộng tối đa {max_points} lập luận bạn tự thêm (mỗi lập luận: ý → dẫn chứng/ví dụ cụ thể → "vậy thì sao?"), có một cảnh
   phản biện (nhìn từ phía ngược lại) rồi trả lời nó, kết bằng một suy ngẫm đọng lại hoặc câu hỏi cho người xem.
 - Mạch cảm xúc của essay: tò mò → suy nghĩ → "à, ra vậy" → đọng lại. Nhịp chậm hơn video meme: câu có thể dài hơn
   (≤ 25 từ), cảnh 2-4 câu, nhưng mỗi cảnh vẫn chỉ MỘT ý. Ưu tiên clip/ảnh minh họa giàu ý nghĩa hơn meme.
@@ -82,8 +85,8 @@ STYLES: dict[str, WritingStyle] = {
   ("voice": "second", giọng khác giới). Ngay từ đầu, tự đặt cho hai người tên và tính cách tương phản (vd một người tò mò,
   ngây ngô; một người hiểu biết nhưng hay cà khịa; hoặc hai người tranh luận hai quan điểm) và giữ đúng tính cách đó.
 - Mỗi cảnh là một đoạn đối đáp 2-4 câu, hai giọng xen kẽ (gần một nửa số câu là "second"): hỏi → đáp → phản ứng
-  ("Hả? Thật á?", "Khoan, vậy là...") → câu chốt. Thông tin đi ra qua hỏi-đáp, không ai độc thoại dài. Tối đa {max_points}
-  ý chính cho cả video; câu thoại ≤ 18 từ.
+  ("Hả? Thật á?", "Khoan, vậy là...") → câu chốt. Thông tin đi ra qua hỏi-đáp, không ai độc thoại dài. Mọi ý người
+  dùng đưa đều phải được nói tới, tự thêm tối đa {max_points} ý; câu thoại ≤ 18 từ.
 - Gọi tên nhau đôi lần cho tự nhiên. Xưng hô trung tính (mình/bạn/cậu/tớ) trừ khi người dùng muốn khác.
 - Miếng hài đến từ chính cuộc đối đáp (hiểu lầm, cà khịa nhau, phản ứng quá lố); meme/tiếng động đặt vào câu phản ứng.""",
         dialogue=True, humor=True, max_line_words=18, max_scene_lines=4,
@@ -91,7 +94,7 @@ STYLES: dict[str, WritingStyle] = {
     "comedy": WritingStyle(
         label="hài / meme", tone="hài hước, cà khịa, bắt trend",
         classic="""- Viết thật HÀI: mỗi phần có ít nhất một miếng hài (cà khịa, nói quá, so sánh bá đạo, tự giễu, câu tỉnh bơ sau câu hào hứng).
-  Cấu trúc: đặt vấn đề nghiêm túc → câu chốt bất ngờ. Ít chữ, ít số liệu: người xem nhớ một điều buồn cười hơn mười điều khô khan.
+  Cấu trúc: đặt vấn đề nghiêm túc → câu chốt bất ngờ. Ít chữ, ít số liệu tự thêm (thông tin người dùng đưa thì giữ đủ): người xem nhớ một điều buồn cười hơn mười điều khô khan.
 - Có thể cho giọng phụ ("voice": "second") chen ngang 1 câu phản ứng/than thở ở vài chỗ ("Ủa gì vậy trời?").""",
         director=COMEDY_DIRECTOR, humor=True,
     ),

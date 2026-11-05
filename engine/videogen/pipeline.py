@@ -7,6 +7,7 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from itertools import zip_longest
 from pathlib import Path
 
 from .config import Settings, load_settings
@@ -185,10 +186,12 @@ def speech_seconds(text: str, rate: str | None) -> float:
 
 
 def effective_interval(opts: "Options") -> float:
-    """Tần suất đổi hình thật sự dùng: không nhanh hơn đoạn hình ngắn nhất mà nhịp dựng cho phép (0 = tự động)."""
-    if opts.visual_interval <= 0:
+    """Tần suất đổi hình thật sự dùng: không nhanh hơn đoạn hình ngắn nhất mà nhịp dựng cho phép. Người dùng để tự động
+    thì theo nhịp dựng (nhịp nhanh đổi hình ~2 giây một lần; 0 = theo số hình có sẵn)."""
+    interval = opts.visual_interval if opts.visual_interval > 0 else opts.style.timing.auto_interval
+    if interval <= 0:
         return 0.0
-    return max(opts.visual_interval, opts.style.timing.min_segment)
+    return max(interval, opts.style.timing.min_segment)
 
 
 def _fill_from_library(script: Script, library: list[LibraryAsset], interval: float, rate: str | None) -> int:
@@ -307,6 +310,9 @@ def _prepare_images(
         query = step.image_queries[0]
         key = _hash("video", orientation, *step.image_queries)
         count = segment_count(step, max(1, opts.clips_per_step))
+        if interval and opts.visual_interval <= 0:
+            # Nhịp dồn dập (người dùng không đặt tần suất): tối đa nửa số hình là clip, còn lại ảnh (find_one)
+            count = min(max(1, opts.clips_per_step), max(1, count // 2))
         paths = [images_dir / f"step_{n:02d}_{key}_{k}.mp4" for k in range(count)]
         if all(p.exists() for p in paths[:1]):
             cached = [p for p in paths if p.exists()]
@@ -406,7 +412,15 @@ def _prepare_images(
             tried_video = True
             clips = find_videos(n, step)
             if clips:
-                return clips
+                more = segment_count(step, len(clips)) - len(clips)
+                images = find_images(n, step, more) if more > 0 and opts.visual_interval <= 0 else []
+                if not images:
+                    return clips
+                # Nhịp dồn dập: ảnh xen giữa các clip để đủ số hình
+                mixed = [img for pair in zip_longest(clips, images) for img in pair if img]
+                for k, img in enumerate(mixed):
+                    img.position = k
+                return mixed
         if opts.web_images and step.image_queries:
             wanted = segment_count(step, 1)
             if wanted > 1:

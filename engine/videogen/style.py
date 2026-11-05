@@ -21,12 +21,14 @@ class Pacing:
     segment_blend: float # chuyển mềm giữa các đoạn hình trong cùng scene
     zoom: float          # biên độ Ken Burns của ảnh phủ kín khung
     clip_push: float     # zoom chậm vào clip video (1 = đứng yên)
+    auto_interval: float = 0.0  # tần suất đổi hình khi người dùng để "tự động" (0 = theo số hình có sẵn)
 
 
 PACING = {
     "slow": Pacing(head=0.35, tail=0.85, transition=0.7, min_segment=3.4, segment_blend=0.45, zoom=1.08, clip_push=1.03),
     "normal": Pacing(head=0.25, tail=0.6, transition=0.5, min_segment=2.2, segment_blend=0.3, zoom=1.14, clip_push=1.06),
-    "fast": Pacing(head=0.15, tail=0.45, transition=0.35, min_segment=1.4, segment_blend=0.16, zoom=1.2, clip_push=1.1),
+    "fast": Pacing(head=0.15, tail=0.45, transition=0.35, min_segment=1.4, segment_blend=0.16, zoom=1.2, clip_push=1.1,
+                   auto_interval=2.0),
 }
 
 

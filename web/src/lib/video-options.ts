@@ -317,7 +317,7 @@ export type SearchEngine = keyof typeof SEARCH_ENGINES;
 export const PACINGS = {
   slow: { label: "Chậm rãi", hint: "Cảnh dài, chuyển mềm" },
   normal: { label: "Vừa", hint: "Cân bằng" },
-  fast: { label: "Nhanh, dồn dập", hint: "Cắt cảnh nhanh, zoom mạnh" },
+  fast: { label: "Nhanh, dồn dập", hint: "Cắt cảnh nhanh, ~2 giây đổi một hình, nhiều ảnh" },
 } as const;
 export type Pacing = keyof typeof PACINGS;
 

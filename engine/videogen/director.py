@@ -51,6 +51,13 @@ SYSTEM = """Bạn là ĐẠO DIỄN video ngắn viral (TikTok/Reels/Shorts) ki�
 Bạn KHÔNG viết kịch bản một lần cho xong: bạn làm việc như một người dựng phim thật, từng bước bằng các công cụ:
 tìm tư liệu (asset của người dùng, meme, clip/ảnh trên mạng) → dựng từng cảnh → tự duyệt → sửa → chốt.
 
+BÁM SÁT YÊU CẦU — ưu tiên cao nhất, trên cả luật phong cách viết:
+- Đọc kỹ yêu cầu của người dùng và làm ĐÚNG, ĐỦ từng ý. Mọi chi tiết họ nêu (từng ý, tên, giá, số liệu, địa điểm, danh sách,
+  thứ tự, câu họ muốn nói, cách mở/kết họ muốn) đều phải có trong video, đúng như họ viết. Không bỏ, không gộp mất, không
+  đổi nghĩa, không thay bằng ý khác bạn thấy hay hơn. Con số đọc bằng chữ cho tự nhiên cũng được, nhưng phải đủ.
+- Luật "ít chữ" chỉ áp dụng cho phần BẠN TỰ THÊM. Cần dài hơn mục tiêu để nói đủ ý người dùng thì cứ dài hơn; muốn ngắn
+  lại thì cắt phần bạn tự thêm trước. Trước khi finish, đối chiếu lại từng ý trong yêu cầu với storyboard.
+
 PHONG CÁCH VIẾT: {style_label}.
 {style_rule}
 
@@ -75,8 +82,7 @@ Nghệ thuật dựng:
 {sfx_rule}  Camera theo câu ("camera"): punch (zoom giật vào khi nhấn mạnh/sốc), shake (rung khi hỗn loạn), zoom_slow (kịch tính).
   Âm thanh là linh hồn của miếng hài: đặt tiếng động vào câu chốt, câu cà khịa, câu giọng phụ chen ngang (video hài: khoảng
   một nửa số câu; phong cách nghiêm túc hơn: chỉ vài điểm nhấn). Đặt đúng "miếng", tiếng phải hợp nghĩa câu.
-- Hình: mỗi cảnh 1-3 hình (asset/clip) nối tiếp. Clip video sinh động hơn ảnh. Nếu chưa có hình phù hợp,
-  đặt fallback_query (tiếng Anh) để hệ thống tự tìm. Không dùng lặp một hình cho nhiều cảnh.
+{visual_rule}
 - Mỗi lần search_web, luôn điền "title" (tiêu đề tiếng Việt 3-8 từ mô tả CHÍNH ảnh/clip đó; không trùng tiêu đề video,
   không chép lời thoại) và "hashtags" (3-5 hashtag tiếng Việt không dấu về nội dung hình; KHÔNG phải từ khóa tìm kiếm).
   Tiêu đề video (finish) phải do bạn tự đặt, hấp dẫn, KHÔNG chép nguyên văn yêu cầu của người dùng.
@@ -128,6 +134,15 @@ SFX_RULE = """- Âm thanh meme theo câu ("sfx"): boom (bùm khi plot twist/số
 LIBRARY_SFX_RULE = """- Âm thanh meme theo câu ("sound"): id tiếng trong thư viện của người dùng (tìm bằng search_sounds) — tiếng bùm khi plot
   twist, "bruh"/fail khi ai đó ngớ ngẩn, ting khi có ý hay, vỗ tay/cười khi chốt, tiếng rít khi "khoan đã"...
 """
+
+VISUAL_RULE = """- Hình: mỗi cảnh 1-3 hình (asset/clip) nối tiếp. Clip video sinh động hơn ảnh. Nếu chưa có hình phù hợp,
+  đặt fallback_query (tiếng Anh) để hệ thống tự tìm. Không dùng lặp một hình cho nhiều cảnh."""
+# Nhịp dựng nhanh: hình đổi liên tục, nhiều ảnh (clip chỉ xen vào), không phải vài clip dài
+FAST_VISUAL_RULE = """- Hình: nhịp dựng NHANH, DỒN DẬP — hình đổi liên tục, cứ ~{interval} giây một hình, nên mỗi cảnh cần nhiều hình
+  (3-6). Trộn ảnh và clip, nhưng ÍT NHẤT MỘT NỬA số hình là ẢNH (ảnh minh họa, ảnh thật, ảnh meme); clip chỉ xen vào
+  chỗ cần chuyển động. Lấy nhiều ảnh một lần bằng search_web media=image count=3-4 (mỗi lần một góc/ý khác nhau).
+  Nếu chưa có hình phù hợp, đặt fallback_query (tiếng Anh) để hệ thống tự tìm ảnh. Không dùng lặp một hình cho nhiều cảnh."""
+MIN_IMAGE_SHARE = 0.4  # nhịp nhanh: tỉ lệ ảnh tối thiểu trong các hình chính (dưới mức này là "toàn clip")
 
 # Từ khóa để đổi sfx tổng hợp AI lỡ dùng sang tiếng thật trong thư viện
 SFX_KEYWORDS = {
@@ -206,7 +221,7 @@ TOOLS = [
     _tool("search_web", "Tìm và tải clip video (stock/Creative Commons) hoặc ảnh trên mạng. Trả về id để dùng trong cảnh.", {
         "query": {"type": "string", "description": "Mô tả cảnh quay bằng TIẾNG ANH, cụ thể (vd 'cat jumping off table')."},
         "media": {"type": "string", "enum": ["video", "image"]},
-        "count": {"type": "integer", "description": "Số clip cần (1-3, chỉ với video)."},
+        "count": {"type": "integer", "description": "Số hình cần: clip 1-3, ảnh 1-4 (các ảnh khác nhau cho cùng mô tả)."},
         "title": {"type": "string", "description": "Tiêu đề TIẾNG VIỆT 3-8 từ mô tả chính ảnh/clip này (tên asset khi lưu vào "
                                                     "thư viện). Khác tiêu đề video và lời thoại."},
         "hashtags": {"type": "array", "items": {"type": "string"},
@@ -281,6 +296,8 @@ class Director:
         self.base_pitch = opts.pitch or "+0Hz"
         self.voice_tuning: dict | None = None
         self.voice_checked = False  # AI đã cân nhắc giọng (gọi tune_voice, kể cả giữ nguyên)
+        # Ý và số liệu người dùng đưa trong yêu cầu: storyboard phải có đủ (unmet)
+        self.points, self.numbers = user_points(topic), user_numbers(topic)
         self.log_file = work_dir / "director.jsonl"
         self.log_file.unlink(missing_ok=True)
         self.registry, self.video_registry = UrlRegistry(), UrlRegistry()
@@ -434,11 +451,15 @@ class Director:
                     self._image_pool = ProviderPool(self.settings, self.opts.search_engine)
                 except ConfigError as e:
                     return f"Không tìm ảnh trên mạng được ({e}). Dùng asset thư viện hoặc fallback_query."
-            dest = images_dir / f"agent_{key}.jpg"
             # Ảnh meme: thêm chữ "meme" vào truy vấn (kho clip stock không có meme nên clip giữ nguyên truy vấn)
             image_query = f"{query} meme" if meme and "meme" not in query.lower() else query
-            credit = fetch_image([image_query], dest, self.orientation, self._image_pool, self.registry)
-            found = [(dest, credit)] if credit else []
+            # Mỗi ảnh một URL khác nhau (registry), dừng khi nguồn hết ảnh mới
+            for k in range(min(max(int(count or 1), 1), 4)):
+                dest = images_dir / f"agent_{key}{'' if k == 0 else f'_{k}'}.jpg"
+                credit = fetch_image([image_query], dest, self.orientation, self._image_pool, self.registry)
+                if not credit:
+                    break
+                found.append((dest, credit))
         if not found:
             return f"Không tìm được gì cho '{query}'. Thử mô tả cảnh khác, cụ thể hơn hoặc chung hơn."
         ids = []
@@ -690,6 +711,13 @@ class Director:
         if interval:
             lines.append(f"- Tần suất hình: cứ ~{interval:g} giây đổi sang một ảnh/clip khác trong cùng cảnh, tức số hình mỗi cảnh "
                          f"≈ thời lượng cảnh / {interval:g} (cảnh ~9s cần ~{max(1, round(9 / interval))} hình). Review sẽ báo cảnh nào lệch.")
+        if self.fast():
+            lines.append(f"- Nhịp dồn dập: ít nhất {MIN_IMAGE_SHARE:.0%} số hình chính là ẢNH, không để toàn clip.")
+        if self.points:
+            lines.append("- Các ý người dùng liệt kê, video PHẢI nói đủ (đúng nội dung, có thể diễn đạt lại cho tự nhiên):\n"
+                         + "\n".join(f"  • {p}" for p in self.points))
+        if self.numbers:
+            lines.append(f"- Số liệu người dùng đưa phải có trong video (lời thoại, pop_text hoặc heading): {', '.join(self.numbers)}.")
         if not lines:
             return ""
         return "YÊU CẦU CỤ THỂ CỦA NGƯỜI DÙNG (bắt buộc, hệ thống kiểm tra trước khi cho chốt):\n" + "\n".join(lines) + "\n\n"
@@ -715,7 +743,43 @@ class Director:
                 if have and (have < need or have > need + 1):  # sai lệch 1 hình thì vẫn coi là đúng nhịp
                     notes.append(f"{s['id']} ~{self._scene_seconds(s):.0f}s có {have} hình, cần ~{need} hình để đổi hình mỗi "
                                  f"~{self.interval():g}s ({'thêm' if have < need else 'bớt'} visuals).")
+        if self.fast() and (self.opts.web_images or any(a.kind == "image" for a in self.library.values())):
+            visuals = [v for s in self.scenes for v in s["visuals"]]
+            images = sum(1 for v in visuals if self._kind_of(v) == "image")
+            if len(visuals) >= 4 and images < len(visuals) * MIN_IMAGE_SHARE:
+                notes.append(f"Nhịp dồn dập cần nhiều ảnh: mới {images}/{len(visuals)} hình chính là ảnh. Thêm ảnh (search_web "
+                             "media=image count=3-4, hoặc search_assets kind=image) xen giữa các clip.")
+        notes += self.missing_info()
         return notes
+
+    def _spoken_text(self) -> str:
+        """Mọi chữ người xem nghe/thấy trong storyboard (lời thoại, chữ nhấn, nhãn, chữ meme)."""
+        parts = []
+        for s in self.scenes:
+            parts += [s.get("heading", ""), s.get("meme_top", ""), s.get("meme_bottom", "")]
+            parts += [l["text"] + " " + l.get("pop_text", "") for l in s["lines"]]
+        return " ".join(parts)
+
+    def missing_info(self) -> list[str]:
+        """Ý / số liệu trong yêu cầu của người dùng mà storyboard chưa nói tới."""
+        if not self.scenes:
+            return []
+        text = self._spoken_text()
+        words, digits = _tokens(text), _digits(text)
+        notes = []
+        for point in self.points:
+            need = _tokens(point)
+            if len(need & words) < len(need) * 0.5:
+                notes.append(f"Chưa nói ý người dùng yêu cầu: \"{_oneline(point, 120)}\" — thêm vào lời thoại (hoặc một cảnh mới), "
+                             "không bỏ.")
+        lost = [n for n in self.numbers if _digits(n) not in digits]
+        if lost:
+            notes.append(f"Chưa có số liệu người dùng đưa: {', '.join(lost)} — nói ra trong lời thoại (đọc bằng chữ thì hiện số "
+                         "bằng pop_text/heading).")
+        return notes
+
+    def fast(self) -> bool:
+        return self.opts.style.pacing == "fast"
 
     def critique(self) -> list[str]:
         """Nhận xét tự động để AI tự sửa (không bắt buộc làm theo)."""
@@ -724,7 +788,8 @@ class Director:
             return ["Storyboard trống: hãy add_scene."]
         total, target = self.total_seconds(), self.target_seconds()
         if total > target * 1.35:
-            notes.append(f"Dài ~{total:.0f}s, vượt xa mục tiêu ~{target}s: cắt cảnh/câu thừa.")
+            notes.append(f"Dài ~{total:.0f}s, vượt xa mục tiêu ~{target}s: cắt cảnh/câu thừa BẠN TỰ THÊM "
+                         "(ý và số liệu người dùng đưa thì giữ đủ, chỉ nói gọn lại).")
         elif total < target * 0.5:
             more = "miếng hài/phản ứng" if self.style.humor else "ví dụ, dẫn chứng hoặc khoảng lặng suy ngẫm"
             notes.append(f"Ngắn ~{total:.0f}s so với mục tiêu ~{target}s: thêm {more}, KHÔNG nhồi số liệu.")
@@ -755,12 +820,15 @@ class Director:
         wordy = [l["text"] for l in lines if len(l["text"].split()) > self.style.max_line_words]
         if wordy:
             notes.append(f"{len(wordy)} câu dài hơn {self.style.max_line_words} từ (vd \"{_oneline(wordy[0], 50)}\"): rút gọn, bỏ ý phụ.")
-        numbers = sum(len(re.findall(r"\d+", l["text"])) for l in lines)
+        # Chỉ tính số AI tự thêm: số liệu người dùng đưa thì bắt buộc phải có
+        given = {_digits(n) for n in self.numbers}
+        numbers = sum(1 for l in lines for n in re.findall(r"\d+(?:[.,]\d+)*", l["text"]) if _digits(n) not in given)
         if numbers > len(self.scenes):
-            notes.append(f"Có {numbers} con số trong lời thoại: quá nhiều thông tin, giữ lại số đắt nhất.")
-        if len(self.scenes) > self.max_points() + 4:
-            notes.append(f"{len(self.scenes)} cảnh là nhiều: gộp/cắt để video chỉ xoay quanh 1 ý chính "
-                         f"(≤ {self.max_points()} điểm thông tin).")
+            notes.append(f"Có {numbers} con số tự thêm trong lời thoại: quá nhiều thông tin, giữ lại số đắt nhất "
+                         "(không bỏ số người dùng đưa).")
+        if len(self.scenes) > self.max_points() + len(self.points) + 4:
+            notes.append(f"{len(self.scenes)} cảnh là nhiều: gộp/cắt phần bạn tự thêm (≤ {self.max_points()} ý ngoài các ý "
+                         "người dùng đưa), không bỏ ý của người dùng.")
         funny = sum(1 for s in self.scenes if any(l["mood"] in ("sarcastic", "deadpan") or l.get("voice") == "second"
                                                    for l in s["lines"]))
         if self.style.humor and len(self.scenes) >= 3 and funny < len(self.scenes) / 2:
@@ -880,8 +948,10 @@ class Director:
         parts = [
             f"Yêu cầu của người dùng:\n{self.topic}",
             f"Loại video: {opts.video_type}. Phong cách viết: {self.style.label}. Giọng văn mong muốn: {opts.tone or self.style.tone}.",
-            f"Thời lượng mục tiêu: ~{self.target_seconds()} giây (tối đa {self.max_points()} ý thông tin, còn lại "
-            f"là {'miếng hài và phản ứng' if self.style.humor else 'ví dụ, dẫn chứng và khoảng thở'}). Khung hình: {opts.aspect}.",
+            f"Thời lượng mục tiêu: ~{self.target_seconds()} giây (nói ĐỦ mọi ý người dùng đưa ở trên; ngoài ra tự thêm tối đa "
+            f"{self.max_points()} ý, còn lại là {'miếng hài và phản ứng' if self.style.humor else 'ví dụ, dẫn chứng và khoảng thở'}; "
+            f"cần dài hơn để nói đủ ý người dùng thì cứ dài hơn). Khung hình: {opts.aspect}."
+            + (" Nhịp dựng: nhanh, dồn dập (hình đổi liên tục, nhiều ảnh)." if self.fast() else ""),
             f"Giọng đọc người dùng chọn: {self.voice_summary()}."
             + (" Bạn được quyền tinh chỉnh bằng tune_voice." if opts.ai_voice else " Giữ nguyên, không chỉnh giọng.")
             + (f" {self.cast}" if self.style.dialogue else ""),
@@ -983,6 +1053,8 @@ class Director:
                   .replace("{counts_rule}", self.counts_rule()).replace("{voice_rule}", VOICE_RULE if self.opts.ai_voice else "")
                   .replace("{sound_rule}", sound_rule).replace("{catchphrase_rule}", catchphrases)
                   .replace("{sfx_rule}", LIBRARY_SFX_RULE if self.sounds else SFX_RULE)
+                  .replace("{visual_rule}", FAST_VISUAL_RULE.replace("{interval}", f"{self.interval():g}") if self.fast()
+                           else VISUAL_RULE)
                   .replace("{max_points}", str(self.max_points())))
         tools = self._tools()
         messages: list[dict] = [
@@ -1067,7 +1139,8 @@ class Director:
                 "lines": lines,
                 "visuals": [self._ref(v) for v in sc["visuals"]],
                 "image_queries": [sc["fallback_query"]] if sc.get("fallback_query") else [],
-                "media": "video" if sc.get("fallback_query") else None,
+                # Nhịp dồn dập: hệ thống tự tìm nhiều ảnh đổi liên tục thay vì vài clip
+                "media": ("image" if self.fast() else "video") if sc.get("fallback_query") else None,
                 "title_card": sc.get("title_card", False),
             }
             if sc.get("meme_top") or sc.get("meme_bottom"):
@@ -1133,6 +1206,33 @@ def _runs(items: list[str]):
         group.append(item)
     if group:
         yield group
+
+
+BULLET = re.compile(r"^\s*(?:[-*•+–]|\d{1,2}[.)])\s+(.+)$")
+# Số về cách dựng video (60s, 9:16, 5 cảnh...) không phải thông tin phải đọc lên
+SETTING_NUMBER = re.compile(r"\s*(?:s|giây|phút|cảnh|scene|sec|min)\b|\s*:|\s*x\s*\d", re.IGNORECASE)
+
+
+def user_points(topic: str) -> list[str]:
+    """Các ý người dùng liệt kê trong yêu cầu (dòng gạch đầu dòng hoặc đánh số): video phải nói đủ."""
+    return [m.group(1).strip() for line in topic.splitlines()
+            if (m := BULLET.match(line)) and len(_tokens(m.group(1))) >= 2]
+
+
+def user_numbers(topic: str) -> list[str]:
+    """Số liệu trong yêu cầu (giá, phần trăm, năm...) theo cách viết của người dùng, bỏ số thứ tự đầu dòng và số về
+    cách dựng video."""
+    text = "\n".join(BULLET.sub(r"\1", line) for line in topic.splitlines())
+    found = []
+    for m in re.finditer(r"(?<![\d:])\d+(?:[.,]\d+)*", text):
+        if len(_digits(m.group())) < 2 or SETTING_NUMBER.match(text, m.end()):
+            continue
+        found.append(m.group())
+    return list(dict.fromkeys(found))
+
+
+def _digits(text: str) -> str:
+    return re.sub(r"[.,]", "", text)
 
 
 def _sentences(text: str) -> list[str]:
