@@ -24,10 +24,9 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from videogen_core.audio.cast import SPEAKERS, TRANSITION_NAMES, cast_note, is_transition_sound, voice_rule
-from videogen_core.audio.delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mood_of, normalize_tuning
-from videogen_core.config import ConfigError, Settings, require
-
+from .cast import SPEAKERS, TRANSITION_NAMES, cast_note, is_transition_sound, voice_rule
+from .config import ConfigError, Settings, require
+from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mood_of, normalize_tuning
 from .image_search import ProviderPool, UrlRegistry, fetch_image
 from .llm import (
     CAMERA_MOVES, OVERLAY_POSITIONS, SCENE_MOTIONS, SFX_NAMES, LibraryAsset, Script, _oneline, _tokens,
@@ -288,7 +287,7 @@ class Director:
             # Giá trị "voice" AI được gán cho câu thoại: chỉ khi chuyển giọng theo nhân vật
             self.speakers = self.voice_cast.speakers if self.voice_cast.by_character else ()
         else:
-            from videogen_core.audio.voices import contrast_voice
+            from .pipeline import contrast_voice
             from .style import language_for
 
             self.cast = cast_note([voice, opts.voice2 or contrast_voice(voice, language_for(opts.language).code)])

@@ -1,4 +1,4 @@
-# Engine ManimGL dùng chung code với engine/ (videogen_core, videogen): cài cả phụ thuộc của engine cũ
--r ../engine/requirements.txt
-# ManimGL (3b1b/manim) — cần OpenGL 3.3+ (card đồ họa hoặc Mesa; máy không màn hình dùng EGL) và Pango để vẽ chữ
+# Renderer ManimGL cho engine/ (spec job "renderer": "manim"). Cài thêm vào cùng môi trường Python với engine/:
+#   pip install -r engine/requirements.txt -r engine-manim/requirements.txt
+# Cần OpenGL 3.3+ (card đồ họa hoặc Mesa; máy không màn hình dùng EGL) và Pango để vẽ chữ.
 manimgl>=1.7.2

@@ -3,8 +3,8 @@
 Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc script):
 {
   "work_dir": "/abs/thư/mục/job",          # nơi lưu kịch bản, ảnh, audio, video, result.json
-  "engine": "classic",                      # web chọn lệnh theo trường này: classic = python -m videogen (engine/),
-                                            #   manim = python -m videogen_manim (engine-manim/); engine Python bỏ qua
+  "renderer": "classic",                    # classic (moviepy + Pillow) | manim (ManimGL, engine-manim/): cùng kịch bản,
+                                            #   giọng đọc và âm thanh, khác cách dựng hình
   "topic": "cách pha cà phê phin",
   "script": {...},                          # kịch bản có sẵn (bỏ qua LLM), cùng cấu trúc script.json
   "num_steps": 5, "language": "tiếng Việt", "voice": null, "rate": null,
@@ -59,15 +59,14 @@ import json
 import traceback
 from pathlib import Path
 
-from videogen_core.audio.cast import TRANSITION_SOUNDS, parse_cast
-from videogen_core.audio.tts import PITCH_RE, RATE_RE, VOICE_EFFECTS
-from videogen_core.config import ConfigError
-
+from .cast import TRANSITION_SOUNDS, parse_cast
+from .config import ConfigError
 from .events import DIRECTOR_STAGES, JsonReporter
 from .image_search import SEARCH_ENGINES
 from .llm import LibraryAsset
-from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
+from .pipeline import IMAGE_STYLES, LIBRARY_MODES, RENDERERS, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
+from .tts import PITCH_RE, RATE_RE, VOICE_EFFECTS
 from .video_builder import ASPECTS
 from .writing import WRITING_STYLES
 
@@ -117,6 +116,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     library_mode = spec.get("library_mode") or "off"
     if library_mode not in LIBRARY_MODES:
         raise ValueError(f"library_mode không hợp lệ: {library_mode}")
+    renderer = spec.get("renderer") or "classic"
+    if renderer not in RENDERERS:
+        raise ValueError(f"renderer không hợp lệ: {renderer}")
 
     def optional_path(key: str, source: dict | None = None) -> Path | None:
         value = (spec if source is None else source).get(key)
@@ -173,6 +175,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         writing_style=writing,
         length=spec.get("length") if spec.get("length") in ("short", "medium", "long") else "medium",
         style=style,
+        renderer=renderer,
         music=optional_path("music"),
         music_volume=float(spec.get("music_volume") or 0.12),
         bg_video=optional_path("bg_video"),
@@ -208,8 +211,7 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     )
 
 
-def run_job(spec_path: Path, render=run) -> int:
-    """Chạy job từ spec. render: hàm dựng video cùng chữ ký với pipeline.run (engine ManimGL truyền hàm của nó)."""
+def run_job(spec_path: Path) -> int:
     reporter = JsonReporter()
     try:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -221,7 +223,7 @@ def run_job(spec_path: Path, render=run) -> int:
         if opts.director:
             reporter.stages = DIRECTOR_STAGES
         work_dir = opts.work_dir
-        result = render(
+        result = run(
             spec.get("topic"),
             str(work_dir / "video.mp4"),
             None,

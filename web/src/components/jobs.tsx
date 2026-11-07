@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { api, formatDate, formatRunTime, secondsSince, useApi, useDocumentTitle } from "@/lib/client";
 import type { AgentEvent, JobDetail, JobItem } from "@/lib/types";
-import { COLOR_FILTERS, LENGTHS, PACINGS, RENDER_ENGINES, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, TRANSITION_SOUNDS, VIDEO_TYPES, VOICE_EFFECTS, VOICE_SWITCHES, WRITING_STYLES, voiceLabel } from "@/lib/video-options";
+import { COLOR_FILTERS, LENGTHS, PACINGS, RENDERERS, SEARCH_ENGINES, SUBTITLE_STYLES, TRANSITIONS, TRANSITION_SOUNDS, VIDEO_TYPES, VOICE_EFFECTS, VOICE_SWITCHES, WRITING_STYLES, voiceLabel } from "@/lib/video-options";
 import { JobRow, STAGES, VideoCard } from "./cards";
 
 function libraryTagsLabel(i: JobDetail["input"]): string {
@@ -134,7 +134,7 @@ function describeInput(job: JobDetail): string[] {
       : i.director
         ? `Đạo diễn AI${i.feedback ? " · sửa theo góp ý" : ""} · số cảnh: ${i.numSteps ? `khoảng ${i.numSteps}` : "AI quyết định"}`
         : `Số bước: ${i.numSteps ?? "AI tự chọn (5-8)"}`,
-    `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}${i.engine === "manim" ? ` · dựng bằng ${RENDER_ENGINES.manim.label}` : ""}`,
+    `Khung hình: ${i.layout === "split" ? "9:16 chia đôi với video nền" : i.aspect}${i.renderer === "manim" ? ` · dựng bằng ${RENDERERS.manim.label}` : ""}`,
     `Hiển thị ảnh: ${{ auto: "tự động", cover: "phủ kín khung", frame: "trọn vẹn (nội dung chính)" }[i.imageStyle]}`,
     ...(i.director && i.soundEffects ? ["Âm thanh: AI chèn từ thư viện Assets"] : []),
     `Assets: ${{ off: "không dùng", auto: `AI tự chọn${libraryTagsLabel(i)}`, selected: `${(i.assetIds ?? i.imageIds)?.length ?? 0} asset đã chọn` }[i.libraryMode]}`,

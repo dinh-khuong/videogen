@@ -80,11 +80,11 @@ def _library_from_dir(folder: Path, analyze: bool = False):
 
 
 def cmd_make(argv: list[str]) -> int:
-    from videogen_core.config import ConfigError
+    from .config import ConfigError
     from .image_search import SEARCH_ENGINES
-    from .pipeline import IMAGE_STYLES, Options, run
+    from .pipeline import IMAGE_STYLES, RENDERERS, Options, run
     from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
-    from videogen_core.audio.tts import VOICE_EFFECTS
+    from .tts import VOICE_EFFECTS
     from .video_builder import ASPECTS
     from .writing import WRITING_STYLES
 
@@ -96,6 +96,8 @@ def cmd_make(argv: list[str]) -> int:
     parser.add_argument("--steps", type=int, help="Số bước mong muốn (mặc định 5-8)")
     parser.add_argument("--aspect", choices=list(ASPECTS), default="16:9",
                         help="Tỉ lệ khung hình: 16:9 (YouTube), 9:16 (TikTok/Shorts), 1:1")
+    parser.add_argument("--renderer", choices=RENDERERS, default="classic",
+                        help="Cách dựng hình: classic (moviepy + Pillow) | manim (ManimGL, cần engine-manim/requirements.txt)")
     parser.add_argument("--language", default="tiếng Việt", help="Ngôn ngữ lời bình (mặc định: tiếng Việt)")
     parser.add_argument("--voice", help="Giọng đọc: edge-tts (vd vi-VN-NamMinhNeural), gtts:vi (chị Google) "
                                         "fpt:banmaiace (FPT.AI, cần FPT_AI_API_KEY) hoặc zerotts:maichi (ZeroTTS, chạy trên máy). Ghi đè TTS_VOICE")
@@ -177,6 +179,7 @@ def cmd_make(argv: list[str]) -> int:
     library = _library_from_dir(args.library_dir, args.analyze_library) if args.library_dir else []
     opts = Options(
         aspect=args.aspect,
+        renderer=args.renderer,
         num_steps=args.steps,
         language=args.language,
         voice=args.voice,
@@ -275,7 +278,7 @@ def cmd_analyze(argv: list[str]) -> int:
 def cmd_voice_sample(argv: list[str]) -> int:
     """Tạo file nghe thử giọng đọc (web app dùng cho nút "Nghe thử")."""
     from .style import language_for
-    from videogen_core.audio.tts import VOICE_EFFECTS, voice_sample
+    from .tts import VOICE_EFFECTS, voice_sample
 
     parser = argparse.ArgumentParser(prog="videogen voice-sample", description="Tạo file mp3 nghe thử một giọng đọc.")
     parser.add_argument("--voice", required=True)
@@ -299,7 +302,7 @@ def cmd_voice_sample(argv: list[str]) -> int:
 
 def cmd_zerotts_voices(argv: list[str]) -> int:
     """Danh sách giọng của mô hình ZeroTTS (lần đầu sẽ tải mô hình). In JSON {"ok", "voices": [...]}."""
-    from videogen_core.audio.tts import zerotts_voices
+    from .tts import zerotts_voices
 
     try:
         voices = zerotts_voices()
@@ -334,7 +337,7 @@ def cmd_doctor(argv: list[str]) -> int:
     """Kiểm tra môi trường: thư viện, API key, nguồn ảnh, font, ffmpeg."""
     report: dict = {"python": sys.version.split()[0], "problems": [], "warnings": []}
     try:
-        from videogen_core.config import load_settings
+        from .config import load_settings
         from .graphics import find_font
         from .image_search import PROVIDERS, engine_status
 
@@ -356,7 +359,7 @@ def cmd_doctor(argv: list[str]) -> int:
         report["video_providers"] = active_video_providers(settings)
         report["voice"] = settings.tts_voice
         report["fpt_tts"] = bool(settings.fpt_api_key)
-        from videogen_core.audio.tts import zerotts_available
+        from .tts import zerotts_available
 
         report["zerotts"] = zerotts_available()
         from .analyze import ocr_available
@@ -378,7 +381,7 @@ def cmd_doctor(argv: list[str]) -> int:
 
         report["moviepy"] = moviepy.__version__
         report["ffmpeg"] = imageio_ffmpeg.get_ffmpeg_exe()
-        # Engine dựng hình thứ hai (engine-manim/): chỉ xem đã cài manimgl chưa, không mở OpenGL cho nhanh
+        # Renderer ManimGL (engine-manim/): chỉ xem đã cài manimgl chưa, không mở OpenGL cho nhanh
         from importlib.metadata import PackageNotFoundError, version
 
         try:

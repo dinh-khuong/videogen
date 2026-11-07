@@ -223,8 +223,8 @@ export function validateInput(raw: Partial<JobInput>): JobInput {
     writingStyle: !script && raw.writingStyle && Object.hasOwn(WRITING_STYLES, raw.writingStyle) ? raw.writingStyle : "auto",
     length: raw.length && Object.hasOwn(LENGTHS, raw.length) ? raw.length : "medium",
     style,
-    // Job cũ / API không gửi: engine cũ
-    engine: raw.engine === "manim" ? "manim" : "classic",
+    // Job cũ / API không gửi: dựng như trước
+    renderer: raw.renderer === "manim" ? "manim" : "classic",
     aspect: aspect as JobInput["aspect"],
     layout,
     bgVideoId,
@@ -338,8 +338,7 @@ export function createJob(input: JobInput): JobItem {
   return toItem(getJobRow(id)!);
 }
 
-/** Spec JSON cho `python -m videogen job` / `python -m videogen_manim job` (xem engine/videogen/job.py). Dựng lúc chạy để dùng
- * dữ liệu mới nhất. */
+/** Spec JSON cho `python -m videogen job` (xem engine/videogen/job.py). Dựng lúc chạy để dùng dữ liệu mới nhất. */
 export function buildSpec(row: JobRow): Record<string, unknown> {
   const input = JSON.parse(row.input) as JobInput;
   const spec: Record<string, unknown> = {
@@ -358,8 +357,7 @@ export function buildSpec(row: JobRow): Record<string, unknown> {
         }
       : null,
     voice_steady: input.voiceSteady === true,
-    // engine dựng hình (runner chọn lệnh theo trường này; engine Python bỏ qua)
-    engine: input.engine ?? "classic",
+    renderer: input.renderer ?? "classic",
     rate: input.rate ?? null,
     pitch: input.pitch ?? null,
     voice_effect: input.voiceEffect ?? "none",

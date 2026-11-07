@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageOps
 
-from videogen_core.config import ConfigError, Settings
+from .config import ConfigError, Settings
 
 HEADERS = {
     "User-Agent": (

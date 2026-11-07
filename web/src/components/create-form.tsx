@@ -17,7 +17,7 @@ import {
   MIN_SEGMENT_SECONDS,
   MIN_VISUAL_INTERVAL,
   PRESETS,
-  RENDER_ENGINES,
+  RENDERERS,
   SEARCH_ENGINES,
   SOUND_EFFECT_MAX_SECONDS,
   TONES,
@@ -29,7 +29,7 @@ import {
   normalizeCast,
   normalizeStyle,
   type Preset,
-  type RenderEngine,
+  type Renderer,
   type SearchEngine,
   type VideoLength,
   type VideoStyle,
@@ -66,8 +66,8 @@ type Settings = {
   length: VideoLength;
   numSteps: string;
   layoutIndex: number;
-  /** engine dựng hình (cùng kịch bản, giọng đọc, âm thanh) */
-  engine: RenderEngine;
+  /** cách dựng hình (cùng kịch bản, giọng đọc, âm thanh) */
+  renderer: Renderer;
   bgVideoId: string;
   imageStyle: JobInput["imageStyle"];
   webImages: boolean;
@@ -100,7 +100,7 @@ const DEFAULTS: Settings = {
   length: "medium",
   numSteps: "",
   layoutIndex: 0,
-  engine: "classic",
+  renderer: "classic",
   bgVideoId: "",
   imageStyle: "auto",
   webImages: true,
@@ -148,7 +148,7 @@ function sanitize(p: Partial<Settings>): Settings {
     length: pick(p.length, (v) => typeof v === "string" && Object.hasOwn(LENGTHS, v), DEFAULTS.length),
     numSteps: typeof p.numSteps === "string" && /^\d{0,2}$/.test(p.numSteps) ? p.numSteps : "",
     layoutIndex: pick(p.layoutIndex, (v) => typeof v === "number" && v >= 0 && v < LAYOUTS.length, 0),
-    engine: pick(p.engine, (v) => typeof v === "string" && Object.hasOwn(RENDER_ENGINES, v), DEFAULTS.engine),
+    renderer: pick(p.renderer, (v) => typeof v === "string" && Object.hasOwn(RENDERERS, v), DEFAULTS.renderer),
     bgVideoId: typeof p.bgVideoId === "string" ? p.bgVideoId : "",
     imageStyle: pick(p.imageStyle, (v) => v === "auto" || v === "cover" || v === "frame", DEFAULTS.imageStyle),
     // Không dùng Assets mà cũng không tìm trên mạng thì video chỉ có nền chữ: "chỉ tìm trên mạng" luôn bật tìm
@@ -228,7 +228,7 @@ function settingsFromJob(input: VideoSettings): Partial<Settings> {
     numSteps: input.numSteps ? String(input.numSteps) : "",
     layoutIndex,
     // job cũ chưa có tùy chọn này: engine cũ
-    engine: input.engine ?? "classic",
+    renderer: input.renderer ?? "classic",
     bgVideoId: input.bgVideoId ?? "",
     imageStyle: input.imageStyle,
     webImages: input.webImages,
@@ -310,7 +310,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
   const library = useApi<Page<AssetItem>>(s.libraryMode === "auto" && !s.webImages ? "/api/assets?kind=image,video&limit=1" : null);
   const sounds = useApi<Page<AssetItem>>(s.director && s.soundEffects ? `/api/assets?kind=audio&maxDuration=${SOUND_EFFECT_MAX_SECONDS}&limit=1` : null);
   const contacts = useApi<Page<Contact>>("/api/contacts?limit=500");
-  const health = useApi<EngineHealth>(s.webImages || s.engine === "manim" ? "/api/health" : null);
+  const health = useApi<EngineHealth>(s.webImages || s.renderer === "manim" ? "/api/health" : null);
   const engineReady = health.data?.search_engines;
 
   const topics = s.batch
@@ -380,7 +380,7 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
       style: s.style,
       aspect: layout.aspect,
       layout: layout.layout,
-      engine: s.engine,
+      renderer: s.renderer,
       bgVideoId: layout.layout === "split" ? s.bgVideoId : null,
       imageStyle: s.imageStyle,
       webImages: s.webImages,
@@ -611,19 +611,19 @@ function Form({ initial, fromJob }: { initial: FormState; fromJob: boolean }) {
         <Field
           label="Engine dựng hình"
           hint={
-            health.data && s.engine === "manim" && !health.data.manimgl ? (
+            health.data && s.renderer === "manim" && !health.data.manimgl ? (
               <span className="text-amber-700">
                 Máy chạy engine chưa cài manimgl: chạy <code>pip install -r engine-manim/requirements.txt</code> (cần OpenGL).
               </span>
             ) : (
-              RENDER_ENGINES[s.engine].hint
+              RENDERERS[s.renderer].hint
             )
           }
         >
-          <Segmented<RenderEngine>
-            value={s.engine}
-            onChange={(v) => set("engine", v)}
-            options={(Object.keys(RENDER_ENGINES) as RenderEngine[]).map((k) => ({ value: k, label: RENDER_ENGINES[k].label }))}
+          <Segmented<Renderer>
+            value={s.renderer}
+            onChange={(v) => set("renderer", v)}
+            options={(Object.keys(RENDERERS) as Renderer[]).map((k) => ({ value: k, label: RENDERERS[k].label }))}
           />
         </Field>
       </Card>

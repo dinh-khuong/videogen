@@ -14,8 +14,8 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
 ```
 
 - **web/**: toàn bộ phần CRM và quản lý, gồm giao diện, API, database SQLite và hàng đợi job. Web không tự dựng video.
-- **engine/**: toàn bộ phần tạo video. Engine không biết gì về database: nó nhận một file spec JSON và trả về `result.json`. Web app đưa kết quả đó vào thư viện. Phần giọng đọc và âm thanh nằm trong package dùng chung `engine/videogen_core`.
-- **engine-manim/**: engine dựng hình thứ hai bằng [ManimGL](https://github.com/3b1b/manim) (`python -m videogen_manim job spec.json`). Cùng spec, cùng kịch bản, ảnh/clip, giọng đọc và **cùng track âm thanh** với engine cũ (import `videogen_core` và các bước chuẩn bị của `videogen`), chỉ khác phần hình: chữ vector, hoạt ảnh kiểu Manim, render bằng OpenGL. Chọn ở ô **Engine dựng hình** trong form tạo video (mặc định: engine cũ).
+- **engine/**: toàn bộ phần tạo video. Engine không biết gì về database: nó nhận một file spec JSON và trả về `result.json`. Web app đưa kết quả đó vào thư viện.
+- **engine-manim/**: renderer thứ hai của engine, dựng hình bằng [ManimGL](https://github.com/3b1b/manim) thay cho moviepy + Pillow. Chỉ chứa phần dựng hình: kịch bản, ảnh/clip, giọng đọc, hiệu ứng và trộn âm thanh, cấu hình và spec job đều dùng của `engine/`, nên cùng một job cho ra cùng giọng đọc và cùng track âm thanh. Chọn bằng ô **Engine dựng hình** trong form tạo video (spec `"renderer": "manim"`); job cũ và mặc định vẫn dùng renderer cũ.
 - **data/**: dữ liệu local, gồm `app.db` (SQLite), `media/` (assets, video, thumbnail) và `jobs/` (thư mục làm việc của từng job). Thư mục này không được commit.
 
 ## Tính năng
@@ -169,7 +169,7 @@ npm install
 
 Nếu bạn dùng virtualenv, đặt nó ở `engine/.venv`; web app sẽ tự dùng Python trong đó. Cách khác là đặt `PYTHON_BIN` trong `web/.env.local` (xem `web/.env.example`).
 
-Engine ManimGL (tùy chọn) dùng chung Python đó: `pip install -r engine-manim/requirements.txt` (cài thêm `manimgl`; cần OpenGL 3.3+ — card đồ họa hoặc Mesa, máy không màn hình dùng EGL — và Pango). Kiểm tra: `cd engine-manim && python -m videogen_manim doctor`. Web chạy engine này trong `engine-manim/` (đổi bằng `MANIM_ENGINE_DIR`) và tự thêm `ENGINE_DIR` vào `PYTHONPATH`.
+Renderer ManimGL (tùy chọn): `pip install -r engine-manim/requirements.txt` vào cùng môi trường Python (cài `manimgl`; cần OpenGL 3.3+ — card đồ họa hoặc Mesa, máy không màn hình dùng EGL — và Pango). Engine tự tìm `engine-manim/` cạnh `engine/` (đổi bằng biến `MANIM_ENGINE_DIR`); `python -m videogen doctor` cho biết đã cài `manimgl` chưa.
 
 ## Chạy
 
@@ -243,12 +243,11 @@ Xem tất cả tùy chọn: `python -m videogen -h`
 
 | Lệnh | Việc làm |
 |---|---|
-| `python -m videogen job spec.json` | Chạy một job. Mỗi sự kiện tiến độ là một dòng `@@videogen {json}` trên stdout; kết quả ghi vào `<work_dir>/result.json` |
+| `python -m videogen job spec.json` | Chạy một job. Mỗi sự kiện tiến độ là một dòng `@@videogen {json}` trên stdout; kết quả ghi vào `<work_dir>/result.json`. `"renderer": "manim"` trong spec (hoặc `--renderer manim` với lệnh `make`) dựng hình bằng ManimGL |
 | `python -m videogen probe file... --thumbnail-dir dir` | In mảng JSON gồm kích thước/thời lượng của từng file và tạo thumbnail |
 | `python -m videogen analyze --spec spec.json` | Phân tích asset (OCR + AI tóm tắt); mỗi asset xong là một sự kiện `{"type": "asset", ...}` |
 | `python -m videogen voice-sample --voice=... --rate=... --pitch=... --out=file.mp3` | Tạo file nghe thử giọng đọc (nút "Nghe thử" trong form) |
-| `python -m videogen doctor` | Kiểm tra cấu hình (API key, nguồn ảnh, font, OCR, thư viện, đã cài manimgl chưa) và in JSON |
-| `python -m videogen_manim job spec.json` (trong `engine-manim/`) | Như `videogen job` nhưng dựng hình bằng ManimGL; cùng sự kiện tiến độ và `result.json` |
+| `python -m videogen doctor` | Kiểm tra cấu hình (API key, nguồn ảnh, font, OCR, thư viện) và in JSON |
 
 Cấu trúc spec và kết quả được mô tả trong [engine/videogen/job.py](engine/videogen/job.py).
 
@@ -295,31 +294,24 @@ engine/                      # Python: tạo video (process riêng, CLI)
     cli.py                   # lệnh make / job / probe / doctor
     job.py                   # spec JSON -> pipeline -> result.json (giao tiếp với web)
     events.py                # sự kiện tiến độ JSON cho web, thanh tiến độ cho CLI
-    pipeline.py              # điều phối: prepare() kịch bản -> ảnh/video -> giọng (dùng chung mọi engine), rồi dựng video
+    pipeline.py              # điều phối: kịch bản -> ảnh/video -> giọng -> video
     llm.py                   # DeepSeek: kịch bản, hashtag, chọn asset thư viện
     analyze.py               # phân tích asset: OCR (Tesseract) + AI tóm tắt
     image_search.py          # DuckDuckGo / Google / Brave / Serper / Pexels / Pixabay
     video_search.py          # clip được phép dùng lại: Pexels / Pixabay / Wikimedia / YouTube CC
+    tts.py                   # edge-tts (+ gTTS dự phòng), mốc thời gian từng từ, giọng mẫu
     style.py                 # phong cách dựng (nhịp, chuyển cảnh, phụ đề, màu...) + nhãn theo ngôn ngữ
     effects.py               # chuyển cảnh, bộ lọc màu, chuyển động Ken Burns, hoạt ảnh lớp chữ
     subtitles.py             # chia phụ đề + căn thời điểm từng từ (karaoke)
+    sfx.py                   # hiệu ứng âm thanh tổng hợp bằng numpy
     graphics.py              # Pillow: font theo ngôn ngữ, phụ đề, nhãn bước, title card, lời kêu gọi, logo
-    video_builder.py         # ghép từng khung hình theo timeline (moviepy + Pillow), chia đôi màn hình
+    video_builder.py         # timeline + track âm thanh (dùng chung mọi renderer); ghép từng khung hình bằng moviepy + Pillow
     probe.py                 # đọc thông tin ảnh/video, tạo thumbnail
     dataset_import.py        # nhập ảnh từ dataset Hugging Face / thư mục vào Assets kèm nhãn
-  videogen_core/             # dùng chung cho cả hai engine
-    config.py                # API key, thiết lập từ engine/.env
-    audio/tts.py             # edge-tts / gTTS / FPT.AI / ZeroTTS, hiệu ứng giọng, mốc thời gian từng từ, giọng mẫu
-    audio/delivery.py        # cảm xúc từng câu thoại, ghép câu thành một file + mốc từng câu
-    audio/cast.py            # dàn giọng (số người nói, chuyển giọng theo cảnh/nhân vật), tiếng chuyển cảnh
-    audio/voices.py          # giọng đọc cho cả kịch bản (cache theo nội dung), tiếng theo câu thoại / chuyển cảnh
-    audio/sfx.py             # hiệu ứng âm thanh tổng hợp bằng numpy
-    audio/mix.py             # trộn giọng + hiệu ứng + nhạc nền thành track cuối theo timeline các cảnh
-engine-manim/                # engine dựng hình bằng ManimGL (cùng spec/kết quả với engine/)
+engine-manim/                # renderer ManimGL cho engine/ (chỉ phần dựng hình)
   videogen_manim/
-    pipeline.py              # prepare() của videogen -> kế hoạch từng cảnh -> track âm thanh chung -> render
-    render.py                # Scene của Manim chạy theo đồng hồ khung hình (khớp từng mẫu âm thanh), chuyển cảnh
-    mobjects.py              # chữ vector (tiêu đề, nhãn, phụ đề karaoke, meme), ảnh, clip video làm texture
+    builder.py               # build_video thay cho video_builder: Scene Manim chạy theo đồng hồ khung hình, chuyển cảnh
+    mobjects.py              # lớp có hoạt ảnh, ảnh, clip video làm texture, phụ đề chữ vector (karaoke)
 web/                         # Next.js: giao diện + API + CRM
   src/app/                   # trang (tổng quan, tạo video, hàng đợi, video, assets, khách hàng) và api/
   src/components/            # giao diện (video-style-fields: giọng đọc + phong cách, theme-toggle: sáng/tối)

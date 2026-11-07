@@ -1,7 +1,7 @@
-"""Đồ họa của video dựng bằng Manim: chữ vector (tiêu đề, nhãn bước, phụ đề, chữ meme, lời kêu gọi), ảnh, clip video.
+"""Mobject dùng để dựng video bằng Manim: lớp có hoạt ảnh (Element), ảnh, clip video làm texture, phụ đề chữ vector.
 
-Bố cục tính theo pixel của khung hình (gốc ở góc trên trái, như engine cũ) rồi đổi sang tọa độ Manim (gốc ở giữa, trục y
-hướng lên) bằng Canvas. Chữ được đo bằng đúng file font đó qua Pillow để ngắt dòng giống engine cũ.
+Bố cục tính theo pixel của khung hình (gốc ở góc trên trái, như videogen) rồi đổi sang tọa độ Manim (gốc ở giữa, trục y
+hướng lên) bằng Canvas. Chữ phụ đề được đo bằng đúng file font đó qua Pillow để ngắt dòng giống renderer classic.
 """
 import math
 import subprocess
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from videogen.effects import clamp01, out_back, out_cubic, smooth
+from videogen.effects import Layer, clamp01, out_back, out_cubic, smooth
 from videogen.graphics import Fonts, _layout_words, wrap_balanced
 from videogen.style import text_color_on
 from videogen.subtitles import Cue
@@ -127,7 +127,7 @@ def outline(mob: VMobject, px: float, canvas: Canvas, color: str = BLACK) -> VMo
 class Element:
     """Một mobject hiện từ `start` tới `end` (giây trong cảnh), với hoạt ảnh xuất hiện như engine cũ.
 
-    enter: none | fade | slide_left | rise | drop | pop | write (chữ trồi lên và hiện dần).
+    enter: none | fade | slide_left | rise | drop | pop (như videogen.effects.draw_layer).
     `frames(t)`: cập nhật thêm theo thời gian (vd clip video), t tính từ start.
     """
     mob: Mobject
@@ -135,7 +135,6 @@ class Element:
     end: float | None = None
     enter: str = "none"
     enter_dur: float = 0.35
-    exit_dur: float = 0.0  # mờ dần trước `end`
     pulse: bool = False
     frames: object = None
     _base_alpha: list = field(default_factory=list, repr=False)
@@ -181,9 +180,7 @@ class Element:
         alpha, scale, dx, dy = 1.0, 1.0, 0.0, 0.0
         if p < 1:
             alpha = smooth(p * 1.6)
-            if self.enter == "write":
-                alpha, dy = smooth(p), -self.height * 0.25 * (1 - out_cubic(p))
-            elif self.enter == "slide_left":
+            if self.enter == "slide_left":
                 dx = -(self.left + self.width - frame_left) * (1 - out_back(p, 1.2))
             elif self.enter == "rise":
                 dy = -self.height * 0.6 * (1 - out_cubic(p))
@@ -193,8 +190,6 @@ class Element:
                 scale = 0.6 + 0.4 * out_back(p, 2.0)
         if self.pulse and p >= 1:
             scale *= 1 + 0.035 * math.sin(2 * math.pi * (local - self.enter_dur) / 1.3)
-        if self.exit_dur > 0 and self.end is not None:
-            alpha *= clamp01((self.end - t) / self.exit_dur)
         self._place(dx, dy, max(scale, 0.01))
         self._set_alpha(alpha)
 
@@ -325,135 +320,13 @@ def accent_circle(color: str) -> Circle:
     return circle
 
 
-def title_elements(title: str, subtitle: str, canvas: Canvas, type_: Typography, accent: tuple[int, int, int],
-                   end: float | None = None) -> list[Element]:
-    """Title card: nền tối hiện dần, tiêu đề trồi lên từng dòng, gạch màu bật ra, dòng phụ hiện sau."""
-    w, h, base = canvas.w, canvas.h, canvas.base
-    fade_out = 0.3 if end else 0.0
-    out = [Element(full_frame_rect(canvas, BLACK, 0.6), 0.0, end, enter="fade", enter_dur=0.45, exit_dur=fade_out)]
-    title_px = max(32, round(base * 0.09))
-    sub_px = max(18, round(base * 0.045))
-    lines = type_.wrap(title, title_px, w * 0.85)
-    line_h = round(title_px * 1.2)
-    total_h = line_h * len(lines) + (sub_px * 2 if subtitle else 0)
-    y = (h - total_h) / 2
-    delay = 0.15
-    for line in lines:
-        mob = outline(type_.text(line, title_px), max(1, title_px / 28), canvas)
-        place(mob, canvas, w / 2, y + line_h / 2)
-        out.append(Element(mob, delay, end, enter="write", enter_dur=0.55, exit_dur=fade_out))
-        delay += 0.12
-        y += line_h
-    if subtitle:
-        bar_w = round(base * 0.12)
-        y += round(sub_px * 0.4)
-        bar = Rectangle(width=canvas.length(bar_w), height=canvas.length(max(3, base // 200)))
-        bar.set_fill(hex_color(accent), opacity=1.0).set_stroke(width=0, opacity=0)
-        place(bar, canvas, w / 2, y, "top")
-        out.append(Element(bar, delay + 0.1, end, enter="pop", enter_dur=0.4, exit_dur=fade_out))
-        y += round(sub_px * 0.7)
-        sub = type_.text(subtitle, sub_px, "regular", "#EBEBEB")
-        place(sub, canvas, w / 2, y, "top")
-        out.append(Element(sub, delay + 0.25, end, enter="fade", enter_dur=0.5, exit_dur=fade_out))
-    return out
-
-
-def badge_element(label: str, heading: str, canvas: Canvas, type_: Typography, accent: tuple[int, int, int],
-                  reserve_right: int = 0) -> Element | None:
-    """Nhãn góc trên trái: 'Bước N' trên nền màu chủ đạo + tên bước (tối đa 2 dòng) trên nền tối, trượt vào từ trái."""
-    base = canvas.base
-    px = max(18, round(base * 0.042))
-    margin = round(base * 0.045)
-    pad_x, pad_y = round(px * 0.6), round(px * 0.35)
-    box_h = px + pad_y * 2
-    line_h = round(px * 1.25)
-    radius = round(box_h * 0.3)
-    fg = hex_color(text_color_on(accent))
-    parts = VGroup()
-    x0 = margin
-    if label:
-        label_w = type_.width(label, px) + pad_x * 2
-        parts.add(place(rounded_box(canvas, label_w, box_h, radius, hex_color(accent), 0.94), canvas, x0, margin, "top_left"))
-        parts.add(place(type_.text(label, px, color=fg), canvas, x0 + pad_x, margin + box_h / 2, "left"))
-        x0 += label_w + round(pad_x * 0.5)
-    if heading:
-        max_w = canvas.w - x0 - margin - reserve_right - pad_x * 2
-        lines = type_.wrap(heading, px, max_w)
-        if len(lines) > 2:
-            rest = " ".join(lines[1:])
-            while rest and type_.width(rest + "…", px) > max_w:
-                rest = rest[:-1]
-            lines = [lines[0], rest + "…"]
-        head_w = max(type_.width(line, px) for line in lines) + pad_x * 2
-        head_h = box_h + line_h * (len(lines) - 1)
-        fill, color, opacity = (BLACK, WHITE, 0.63) if label else (hex_color(accent), fg, 0.94)
-        parts.add(place(rounded_box(canvas, head_w, head_h, radius, fill, opacity), canvas, x0, margin, "top_left"))
-        for k, line in enumerate(lines):
-            parts.add(place(type_.text(line, px, color=color), canvas, x0 + pad_x, margin + box_h / 2 + k * line_h, "left"))
-    if not len(parts):
-        return None
-    return Element(parts, start=0.2, enter="slide_left", enter_dur=0.45)
-
-
-def cta_element(text: str, canvas: Canvas, type_: Typography, accent: tuple[int, int, int], start: float = 0.35) -> Element:
-    """Lời kêu gọi hành động trong nút màu chủ đạo viền trắng ở giữa khung, bật ra rồi nhịp nhẹ."""
-    w, h = canvas.w, canvas.h
-    px = max(22, round(min(w, h) * 0.06))
-    lines = type_.wrap(text, px, w * 0.74)[:3]
-    line_h = round(px * 1.25)
-    pad_x, pad_y = round(px * 0.9), round(px * 0.55)
-    box_w = max(type_.width(line, px) for line in lines) + pad_x * 2
-    box_h = line_h * len(lines) + pad_y * 2
-    y0 = h * 0.46 - box_h / 2
-    box = rounded_box(canvas, box_w, box_h, min(box_h * 0.3, px), hex_color(accent), 0.98, WHITE, max(2, round(px * 0.08)))
-    group = VGroup(place(box, canvas, w / 2, y0, "top"))
-    fg = hex_color(text_color_on(accent))
-    for k, line in enumerate(lines):
-        group.add(place(type_.text(line, px, color=fg), canvas, w / 2, y0 + pad_y + line_h * (k + 0.5)))
-    return Element(group, start, enter="pop", enter_dur=0.45, pulse=True)
-
-
-def meme_elements(top: str, bottom: str, canvas: Canvas, type_: Typography, start: float = 0.0) -> list[Element]:
-    """Chữ meme kinh điển: IN HOA, trắng viền đen dày, dòng trên rơi xuống, dòng dưới trồi lên."""
-    w, h = canvas.w, canvas.h
-    px = max(28, round(min(w, h) * 0.075))
-    line_h = round(px * 1.12)
-    margin = round(min(w, h) * 0.06)
-    out = []
-    for text, at_top in ((top, True), (bottom, False)):
-        if not text:
-            continue
-        lines = type_.wrap(text.upper(), px, w * 0.9)[:3]
-        y = margin * 2.2 if at_top else h * 0.68 - line_h * len(lines)
-        group = VGroup()
-        for line in lines:
-            group.add(place(outline(type_.text(line, px), max(2, px * 0.11), canvas), canvas, w / 2, y + line_h / 2))
-            y += line_h
-        out.append(Element(group, start + (0.0 if at_top else 0.25), enter="drop" if at_top else "rise", enter_dur=0.35))
-    return out
-
-
-def pop_text_element(text: str, canvas: Canvas, type_: Typography, accent: tuple[int, int, int], start: float,
-                     end: float) -> Element:
-    """Chữ nhấn mạnh to giữa khung: màu chủ đạo, viền đen, nghiêng nhẹ, bật ra."""
-    w, h = canvas.w, canvas.h
-    px = max(34, round(min(w, h) * 0.12))
-    lines = type_.wrap(text.upper(), px, w * 0.8)[:2]
-    fill = accent if sum(accent) > 160 else (255, 214, 0)
-    group = VGroup()
-    for k, line in enumerate(lines):
-        group.add(place(outline(type_.text(line, px, color=hex_color(fill)), max(3, px * 0.1), canvas), canvas,
-                        w / 2, h * 0.4 + (k - (len(lines) - 1) / 2) * px * 1.1))
-    group.rotate(-4 * math.pi / 180)
-    return Element(group, start, end, enter="pop", enter_dur=0.28)
-
-
-def picture_element(layer, canvas: Canvas, cache_dir: Path, name: str, enter: str = "pop", enter_dur: float = 0.3) -> Element:
-    """Lớp ảnh Pillow của engine cũ (videogen.effects.Layer: sticker, logo) thành phần tử Manim cùng vị trí."""
+def layer_element(layer: Layer, canvas: Canvas, cache_dir: Path) -> Element:
+    """Lớp có hoạt ảnh của videogen (nhãn bước, title card, chữ meme, lời kêu gọi, sticker, logo) thành phần tử Manim
+    cùng vị trí, cùng thời điểm và kiểu xuất hiện."""
     img = layer.image
-    mob = image_mobject(img, cache_dir, name, canvas.length(img.width))
+    mob = image_mobject(img, cache_dir, "layer", canvas.length(img.width))
     place(mob, canvas, layer.pos[0], layer.pos[1], "top_left")
-    return Element(mob, layer.start, layer.end, enter=enter, enter_dur=enter_dur)
+    return Element(mob, layer.start, layer.end, enter=layer.enter, enter_dur=layer.enter_dur, pulse=layer.pulse)
 
 
 # ===== Phụ đề =====

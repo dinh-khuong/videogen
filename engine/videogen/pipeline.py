@@ -1,6 +1,9 @@
 """Điều phối: prompt -> kịch bản (DeepSeek) -> ảnh (thư viện / tìm kiếm) -> giọng đọc (edge-tts) -> video."""
+import hashlib
 import json
+import os
 import random
+import sys
 import re
 import threading
 import unicodedata
@@ -9,14 +12,9 @@ from dataclasses import asdict, dataclass, field
 from itertools import zip_longest
 from pathlib import Path
 
-from videogen_core.audio.cast import VoiceCast, cast_note, voice_rule
-from videogen_core.audio.delivery import apply_tuning, load_line_times
-from videogen_core.audio.tts import load_words
-from videogen_core.audio.voices import (
-    contrast_voice, library_sounds, line_sound, plan_voices, prepare_audio, short_hash, transition_sounds,
-)
-from videogen_core.config import Settings, load_settings
-
+from .cast import VoiceCast, cast_note, is_transition_sound, resolve_transition, speaker_of, voice_rule
+from .config import ENGINE_DIR, ConfigError, Settings, load_settings
+from .delivery import apply_tuning, assemble, load_line_times, prosody
 from .events import Reporter
 from .effects import Layer
 from .graphics import (
@@ -25,13 +23,16 @@ from .graphics import (
 )
 from .image_search import Credit, ProviderPool, UrlRegistry, fetch_image
 from .video_search import VideoProviderPool, fetch_videos
-from .llm import LibraryAsset, Script, Step, generate_script, parse_script, pick_assets, short_title
+from .llm import LibraryAsset, Script, Step, acted, generate_script, parse_script, pick_assets, short_title
 from .probe import VIDEO_EXTS
-from .style import Language, Style, language_for, step_label, tagline
+from .style import Style, language_for, step_label, tagline
+from .tts import TtsJob, load_words, provider_of, synthesize_many
 from .video_builder import ASPECTS, ClipOverlay, Scene, Segment, build_video, split_sizes
 
 OUTPUT_ROOT = Path("output")
 IMAGE_STYLES = ("auto", "cover", "frame")
+# Cách dựng hình: classic = moviepy + Pillow (video_builder) | manim = ManimGL (engine-manim/videogen_manim)
+RENDERERS = ("classic", "manim")
 WEB_MEDIA = ("image", "video", "auto")
 LIBRARY_MODES = ("off", "auto", "selected")
 
@@ -57,6 +58,7 @@ class Options:
     writing_style: str = "auto"
     length: str = "medium"  # short | medium | long
     style: Style = field(default_factory=Style)  # nhịp dựng, chuyển cảnh, phụ đề, màu, logo, lời kêu gọi...
+    renderer: str = "classic"  # xem RENDERERS: cùng kịch bản, giọng đọc và âm thanh, khác cách dựng hình
     music: Path | None = None
     music_volume: float = 0.12
     script_only: bool = False
@@ -147,6 +149,15 @@ class RunResult:
         }
 
 
+def contrast_voice(voice: str, lang_code: str) -> str:
+    """Giọng phụ tương phản với giọng chính (nam <-> nữ) cho câu thoại "second" khi người dùng chưa chọn."""
+    if provider_of(voice) == "gtts":
+        return "gtts:vi" if voice.endswith("-male") else "gtts:vi-male"
+    if lang_code == "vi":
+        return "vi-VN-HoaiMyNeural" if "NamMinh" in voice else "vi-VN-NamMinhNeural"
+    return "en-US-AvaMultilingualNeural" if "Andrew" in voice or "Brian" in voice else "en-US-AndrewMultilingualNeural"
+
+
 def pick_background(path: Path) -> Path:
     if path.is_dir():
         videos = [p for p in path.iterdir() if p.suffix.lower() in VIDEO_EXTS]
@@ -160,6 +171,10 @@ def slugify(text: str) -> str:
     text = text.replace("đ", "d").replace("Đ", "D")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()[:60] or "video"
+
+
+def _hash(*parts: str) -> str:
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:10]
 
 
 CHARS_PER_SECOND = 14.5  # tốc độ đọc trung bình (tiếng Việt, tốc độ gốc), để ước lượng thời lượng lời bình trước khi có giọng
@@ -298,7 +313,7 @@ def _prepare_images(
 
     def find_videos(n: int, step) -> list[StepImage]:
         query = step.image_queries[0]
-        key = short_hash("video", orientation, *step.image_queries)
+        key = _hash("video", orientation, *step.image_queries)
         count = segment_count(step, max(1, opts.clips_per_step))
         if interval and opts.visual_interval <= 0:
             # Nhịp dồn dập (người dùng không đặt tần suất): tối đa nửa số hình là clip, còn lại ảnh (find_one)
@@ -341,7 +356,7 @@ def _prepare_images(
 
     def find_images(n: int, step: Step, count: int) -> list[StepImage]:
         """Nhiều ảnh nối tiếp cho một bước (tần suất đổi hình cao): mỗi ảnh thử các query theo thứ tự xoay vòng."""
-        key = short_hash(orientation, *step.image_queries)
+        key = _hash(orientation, *step.image_queries)
         queries = step.image_queries
         out: list[StepImage] = []
         for k in range(count):
@@ -418,7 +433,7 @@ def _prepare_images(
                 if images:
                     return images
             else:
-                path = images_dir / f"step_{n:02d}_{short_hash(orientation, *step.image_queries)}.jpg"
+                path = images_dir / f"step_{n:02d}_{_hash(orientation, *step.image_queries)}.jpg"
                 credit_path = path.with_suffix(".json")
                 if path.exists():
                     return StepImage(n, path, "web", credit=_load_credit(credit_path), query=query)
@@ -434,7 +449,7 @@ def _prepare_images(
                     return clips
             print(f"      ⚠️  Không tìm được ảnh cho bước {n}, dùng ảnh nền thay thế.", flush=True)
         # Lưu tên khác để lần chạy sau vẫn thử tìm ảnh thật
-        placeholder = images_dir / f"step_{n:02d}_{short_hash(step.heading, step.narration)}_placeholder.jpg"
+        placeholder = images_dir / f"step_{n:02d}_{_hash(step.heading, step.narration)}_placeholder.jpg"
         make_placeholder(step.heading or step.narration[:60], placeholder, size, fonts)
         return StepImage(n, placeholder, "placeholder", query=query)
 
@@ -489,125 +504,125 @@ def _prepare_extras(script: Script, library: dict[str, LibraryAsset]) -> tuple[l
     return overlays, stickers
 
 
+def _prepare_audio(
+    script: Script, work_dir: Path, voices: list[tuple[str, str, str]], reporter: Reporter,
+    fallback_lang: str, effect: str = "none", by_scene: bool = False, steady: bool = False,
+) -> dict[str, Path]:
+    """Giọng đọc cho mở đầu, từng bước và lời kết.
+
+    voices: (giọng, tốc độ, cao độ) của từng người nói, người đầu là giọng chính.
+    by_scene: mỗi bước một người đọc, xoay vòng theo thứ tự (mở đầu/lời kết là giọng chính); không thì câu thoại đọc bằng
+    giọng của nhân vật được gán ("voice": "second"...). Phần có câu thoại diễn xuất (lines): mỗi câu đọc riêng với cảm xúc
+    (tốc độ/cao độ lệch quanh mức của người nói, trừ khi steady) và giọng của nó, rồi ghép thành một file cho phần đó.
+    """
+    audio_dir = work_dir / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    parts = [(script.intro, acted(script.intro_lines, script.intro)), (script.outro, acted(script.outro_lines, script.outro))]
+    parts += [(s.narration, s.acted_lines()) for s in script.steps]
+
+    def job_for(key: str, text: str, voice: str, r: str, p: str) -> TtsJob:
+        # Giữ khóa cache cũ khi không đổi cao độ (render lại không phải tạo lại giọng)
+        parts = (text, voice, r) if p == "+0Hz" else (text, voice, r, p)
+        if effect != "none":
+            parts += (effect,)
+        return TtsJob(text, audio_dir / f"{key}_{_hash(*parts)}.mp3", voice, rate=r, pitch=p)
+
+    texts: dict[str, tuple[str, tuple[str, str, str]]] = {}
+    performed: dict[str, list[tuple[TtsJob, dict]]] = {}
+    keys = ["intro", "outro", *(f"step_{i + 1:02d}" for i in range(len(script.steps)))]
+    for k, (key, (text, lines)) in enumerate(zip(keys, parts)):
+        own = (k - 2) % len(voices) if by_scene and k >= 2 else 0
+        if lines:
+            performed[key] = []
+            for j, line in enumerate(lines):
+                voice, base_rate, base_pitch = voices[own if by_scene else speaker_of(line, len(voices))]
+                r, p = (base_rate, base_pitch) if steady else prosody(base_rate, base_pitch, line["mood"])
+                performed[key].append((job_for(f"{key}_l{j + 1:02d}", line["text"], voice, r, p), line))
+        else:
+            texts[key] = (text, voices[own])
+    jobs: dict[str, TtsJob] = {key: job_for(key, text, *speaker) for key, (text, speaker) in texts.items() if text}
+    all_jobs = list(jobs.values()) + [job for lines in performed.values() for job, _ in lines]
+    synthesize_many(
+        all_jobs,
+        voices[0][1],
+        voices[0][2],
+        on_progress=lambda d, t: reporter.stage("audio", f"Giọng đọc {d}/{t}", d / t),
+        fallback_lang=fallback_lang,
+        effect=effect,
+    )
+    paths = {key: job.path for key, job in jobs.items()}
+    for key, lines in performed.items():
+        out = audio_dir / f"{key}_{_hash(*(str(job.path.name) for job, _ in lines))}.acted.wav"
+        if not out.exists():
+            assemble([(job.path, line["text"], line["mood"]) for job, line in lines], out)
+        paths[key] = out
+    return paths
+
+
+def _cast_voices(cast: VoiceCast, voice: str, rate: str, pitch: str, tuning: dict | None) -> list[tuple[str, str, str]]:
+    """(giọng, tốc độ, cao độ) của từng người nói trong dàn giọng. Giọng thêm có tốc độ/cao độ riêng thì cộng cùng phần AI
+    tinh chỉnh như giọng chính; không đặt thì theo mức chung (đã tinh chỉnh)."""
+    voices = [(voice, rate, pitch)]
+    for extra in cast.extra:
+        r, p = apply_tuning(extra.rate or "+0%", extra.pitch or "+0Hz", tuning)
+        voices.append((extra.voice, r if extra.rate else rate, p if extra.pitch else pitch))
+    return voices
+
+
+def _transition_sounds(scene_steps: list[Step | None], opts: Options) -> list[str | Path | None]:
+    """Tiếng phát khi chuyển vào từng cảnh (cảnh đầu không có), khi người dùng chọn tiếng chuyển cảnh khác mặc định.
+
+    auto: tiếng Đạo diễn AI đặt cho cảnh (transition_sound); cảnh không có thì lần lượt dùng các âm thanh trong thư viện trông
+    như tiếng chuyển cảnh (whoosh, swoosh, "chuyển cảnh"...), thư viện không có thì tiếng "vút" tổng hợp."""
+    mode = opts.style.transition_sound
+    if mode in ("default", "off"):
+        return [None] * len(scene_steps)
+    if mode == "asset":
+        fixed: str | Path | None = opts.style.transition_sound_file
+    elif mode != "auto":
+        fixed = mode
+    else:
+        files = {a.id: Path(a.path) for a in [*opts.transition_sounds, *opts.sounds] if Path(a.path).exists()}
+        pool = [files[a.id] for a in opts.transition_sounds if a.id in files and is_transition_sound(a.search_text())]
+        out: list[str | Path | None] = [None]
+        for i, step in enumerate(scene_steps[1:]):
+            chosen = resolve_transition(step.transition_sound if step else None, files)
+            out.append(chosen or (pool[i % len(pool)] if pool else "whoosh"))
+        return out
+    return [None, *([fixed] * (len(scene_steps) - 1))]
+
+
+def renderer_for(name: str):
+    """Hàm dựng video (cùng chữ ký với video_builder.build_video) của renderer `name`.
+
+    ManimGL nằm ở engine-manim/ cạnh engine/ (đổi bằng MANIM_ENGINE_DIR) và chỉ chứa phần dựng hình: nó dùng các scene,
+    timeline và track âm thanh của engine này."""
+    if name != "manim":
+        return build_video
+    manim_dir = str(Path(os.getenv("MANIM_ENGINE_DIR") or ENGINE_DIR.parent / "engine-manim").resolve())
+    if manim_dir not in sys.path:
+        sys.path.insert(0, manim_dir)
+    try:
+        from videogen_manim import build_video as build_manim
+    except ImportError as e:
+        raise ConfigError(f"Renderer ManimGL chưa sẵn sàng ({e}): pip install -r engine-manim/requirements.txt") from e
+    return build_manim
+
+
 def _style_for(image: StepImage, opts: Options) -> str:
     if opts.image_style in ("cover", "frame"):
         return opts.image_style
     return "frame" if image.kind in ("custom", "library") else "cover"
 
 
-@dataclass
-class LineVisual:
-    """Lớp hình bật ra theo một câu thoại: sticker meme (ảnh/clip ở một góc khung) hoặc chữ nhấn mạnh."""
-    start: float  # giây trong cảnh (đã cộng khoảng lặng đầu cảnh)
-    end: float
-    sticker: StepImage | None = None
-    slot: str = ""  # góc khung của sticker
-    text: str = ""  # chữ nhấn mạnh (pop_text)
-
-
-@dataclass
-class LineEvents:
-    """Hiệu ứng theo từng câu thoại của một cảnh. camera/sounds tính theo giây trong giọng đọc (như Scene.camera/sounds)."""
-    camera: list[tuple[float, str]] = field(default_factory=list)  # (giây, punch | shake | zoom_slow)
-    sounds: list[tuple[float, str | Path]] = field(default_factory=list)  # (giây, tên sfx | file thư viện)
-    visuals: list[LineVisual] = field(default_factory=list)  # theo thứ tự câu, lớp sau vẽ đè lớp trước
-
-
-@dataclass
-class Prepared:
-    """Kịch bản, hình và giọng đọc đã sẵn sàng (3 bước đầu của pipeline), dùng chung cho mọi engine dựng hình."""
-    result: RunResult
-    settings: Settings
-    lang: Language
-    fonts: Fonts
-    size: tuple[int, int]  # khung nội dung (nửa trên khi chia đôi với video nền)
-    frame_size: tuple[int, int]
-    layout: str
-    bg_video: Path | None
-    steps: list[list[StepImage]] = field(default_factory=list)  # đoạn hình nối tiếp của từng bước
-    overlays: list[StepImage | None] = field(default_factory=list)  # clip/ảnh lồng suốt cảnh của từng bước
-    stickers: list[dict[int, StepImage]] = field(default_factory=list)  # sticker meme theo câu thoại của từng bước
-    sound_files: dict[str, Path] = field(default_factory=dict)  # âm thanh thư viện gắn vào câu thoại: id -> file
-    audio: dict[str, Path] = field(default_factory=dict)  # giọng đọc: "intro" | "outro" | "step_01"... -> file
-
-    @property
-    def script(self) -> Script:
-        return self.result.script
-
-    @property
-    def work_dir(self) -> Path:
-        return self.result.work_dir
-
-    @property
-    def director(self) -> bool:
-        return self.script.format == "director"
-
-    def scene_steps(self, opts: Options) -> list[Step | None]:
-        """Bước của từng cảnh theo thứ tự dựng: Đạo diễn AI mỗi bước một cảnh; còn lại mở đầu (None), các bước, lời kết
-        (None, khi có lời kết hoặc lời kêu gọi)."""
-        if self.director:
-            return list(self.script.steps)
-        return [None, *self.script.steps, *([None] if self.script.outro or opts.style.cta else [])]
-
-    def enter_sounds(self, opts: Options) -> list[str | Path | None]:
-        """Tiếng phát khi chuyển vào từng cảnh (xem voices.transition_sounds); in ra log nếu có."""
-        entering = transition_sounds(self.scene_steps(opts), opts.style.transition_sound, opts.style.transition_sound_file,
-                                     opts.sounds, opts.transition_sounds)
-        if any(entering):
-            names = [s.name if isinstance(s, Path) else s for s in entering if s]
-            print(f"      Tiếng chuyển cảnh: {', '.join(dict.fromkeys(names))} ({len(names)} lần)", flush=True)
-        return entering
-
-    def bookend_images(self) -> tuple[list[StepImage], list[StepImage]]:
-        """Hình của cảnh mở đầu và lời kết. Có clip video: montage cắt nhanh từ clip của các bước thay vì một ảnh tĩnh."""
-        steps = self.steps
-        has_clips = any(img.media == "video" for seg in steps for img in seg)
-        intro_imgs = [seg[0] for seg in steps[:4]] if has_clips else steps[0][:1]
-        outro_imgs = [seg[-1] for seg in steps[-3:]] if has_clips else steps[-1][-1:]
-        if all(img.kind == "placeholder" for img in intro_imgs):
-            # Ảnh nền chữ của bước 1 sẽ chồng lên tiêu đề: mở đầu bằng nền gradient trơn
-            blank = self.work_dir / "images" / "intro_placeholder.jpg"
-            make_placeholder("", blank, self.size, self.fonts)
-            intro_imgs = [StepImage(0, blank, "placeholder")]
-        return intro_imgs, outro_imgs
-
-    def line_events(self, step: Step, index: int, path: Path | None, head: float, not_before: float = 0.0,
-                    taken: str | None = None) -> LineEvents:
-        """Hiệu ứng theo từng câu thoại: sticker meme (ảnh, hoặc clip video bật ra), chữ nhấn mạnh, zoom giật/rung,
-        âm thanh meme.
-
-        not_before: lớp hình (sticker, chữ nhấn mạnh) chờ tới thời điểm này (vd sau khi tiêu đề lớn biến mất).
-        taken: góc khung đã có clip lồng suốt cảnh, sticker tránh góc đó.
-        """
-        events = LineEvents()
-        lines = step.acted_lines()
-        times = load_line_times(path) if path and lines else None
-        if not times or len(times) != len(lines):
-            return events
-        slots = iter([s for s in STICKER_SLOTS[:4] if s != taken] * 8)
-        stickers = self.stickers[index] if index < len(self.stickers) else {}
-        for j, (line, span) in enumerate(zip(lines, times)):
-            start, end = span["start"], span["end"]
-            if line.get("camera"):
-                events.camera.append((start, line["camera"]))
-            sound = line_sound(line, start, self.sound_files)
-            if sound:
-                events.sounds.append(sound)
-            show = max(head + start, not_before)
-            sticker = stickers.get(j)
-            if sticker and head + end + 0.5 - show > 0.8:
-                # Clip meme/reaction giữ thêm một chút cho "miếng" hài ngấm
-                until = head + max(end + 0.6, start + 2.0) if sticker.media == "video" else head + end + 0.5
-                events.visuals.append(LineVisual(show, until, sticker=sticker, slot=next(slots)))
-            pop_end = head + max(end, start + 1.2)
-            if line.get("pop_text"):  # luôn hiện đủ 1,2 giây, kể cả khi phải chờ tiêu đề
-                events.visuals.append(LineVisual(show, max(pop_end, show + 1.2), text=line["pop_text"]))
-        return events
-
-
-def prepare(topic: str | None, script_path: str | None, opts: Options, script_data: dict | None = None) -> Prepared:
-    """Ba bước đầu: kịch bản (theo thứ tự ưu tiên: script_data, script_path, hoặc LLM), ảnh/clip, giọng đọc.
-    opts.script_only: chỉ có kịch bản (hình và giọng để trống)."""
+def run(
+    topic: str | None,
+    out_path: str | None,
+    script_path: str | None,
+    opts: Options,
+    script_data: dict | None = None,
+) -> RunResult:
+    """Chạy toàn bộ pipeline. Kịch bản lấy từ (theo thứ tự ưu tiên): script_data, script_path, hoặc LLM."""
     settings = load_settings()
     reporter = opts.reporter
     voice = opts.voice or settings.tts_voice
@@ -615,6 +630,7 @@ def prepare(topic: str | None, script_path: str | None, opts: Options, script_da
     rate = opts.rate or settings.tts_rate
     pitch = opts.pitch or "+0Hz"
     lang = language_for(opts.language)
+    style = opts.style
     fonts = resolve_fonts(settings.font_path, lang.code)
     bg_video = pick_background(opts.bg_video) if opts.bg_video else None
     if bg_video:
@@ -696,16 +712,16 @@ def prepare(topic: str | None, script_path: str | None, opts: Options, script_da
     reporter.stage("script", f"Kịch bản: {script.title}", 1.0)
 
     result = RunResult(script=script, script_file=script_file, work_dir=work_dir)
-    prepared = Prepared(result, settings, lang, fonts, size, frame_size, layout, bg_video)
     if opts.script_only:
         print("✅ Đã lưu kịch bản. Sửa file rồi chạy lại với --script để render video.", flush=True)
-        return prepared
+        return result
 
     print("[2/4] Lấy ảnh/clip minh họa (song song) ...", flush=True)
     reporter.stage("images", "Đang lấy ảnh/clip minh họa")
     steps = _prepare_images(script, work_dir, settings, size, orientation, opts, fonts)
     library = {a.id: a for a in opts.library}
-    sound_files = library_sounds(opts.sounds)
+    # Âm thanh thư viện mà kịch bản gắn vào câu thoại: id -> file (thiếu file thì bỏ qua, không làm hỏng cả video)
+    sound_files = {a.id: Path(a.path) for a in opts.sounds if Path(a.path).exists()}
     used_sounds = [l["sound"] for st in script.steps for l in st.acted_lines() if l.get("sound") in sound_files]
     if used_sounds:
         print(f"      Âm thanh từ thư viện: {len(used_sounds)} lần ({len(set(used_sounds))} tiếng khác nhau)", flush=True)
@@ -713,42 +729,44 @@ def prepare(topic: str | None, script_path: str | None, opts: Options, script_da
     result.images = [img for seg in steps for img in seg]
     result.images += [img for img in step_overlays if img] + [img for by_line in step_stickers for img in by_line.values()]
 
-    plan = plan_voices(script, opts.voice_cast, voice, voice2, rate, pitch, lang.code)
+    director = script.format == "director"
+    cast = opts.voice_cast
+    if cast:
+        voices = _cast_voices(cast, voice, rate, pitch, script.voice_tuning)
+        by_scene = cast.count > 1 and cast.switch == "scene"
+        voice_label = f"{voice}" if cast.count == 1 else \
+            f"{cast.count} giọng {'đổi theo cảnh' if by_scene else 'theo nhân vật'}: " + ", ".join(
+                f"{v} {r} {p}" + (f" ({name})" if name else "") for (v, r, p), name in zip(voices, cast.names))
+    else:
+        all_lines = [*acted(script.intro_lines, script.intro), *acted(script.outro_lines, script.outro),
+                     *(l for st in script.steps for l in st.acted_lines())]
+        dialogue = any(l.get("voice") == "second" for l in all_lines)
+        if dialogue and not voice2:
+            voice2 = contrast_voice(voice, lang.code)
+        voices = [(voice, rate, pitch)] + ([(voice2, rate, pitch)] if voice2 else [])
+        # Cách cũ: giọng thứ hai đọc xen kẽ các bước, trừ khi kịch bản là hội thoại (câu "second" = nhân vật 2)
+        by_scene = bool(voice2) and not director and not dialogue
+        voice_label = (f"{voice}, giọng phụ {voice2}" if director or dialogue else f"{voice} + {voice2} xen kẽ") if voice2 else voice
     effect_label = f", hiệu ứng {opts.voice_effect}" if opts.voice_effect != "none" else ""
     steady_label = ", giữ giọng đều" if opts.voice_steady else ""
-    print(f"[3/4] Tạo giọng đọc ({plan.label}, tốc độ {rate}, cao độ {pitch}{effect_label}{steady_label}) ...", flush=True)
+    print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}{effect_label}{steady_label}) ...", flush=True)
     reporter.stage("audio", "Đang tạo giọng đọc")
-    audio = prepare_audio(
-        script, work_dir, plan.voices, reporter, lang.code, opts.voice_effect, by_scene=plan.by_scene,
-        steady=opts.voice_steady,
+    audio = _prepare_audio(
+        script, work_dir, voices, reporter, lang.code, opts.voice_effect, by_scene=by_scene, steady=opts.voice_steady,
     )
-    prepared.steps, prepared.overlays, prepared.stickers = steps, step_overlays, step_stickers
-    prepared.sound_files, prepared.audio = sound_files, audio
-    return prepared
-
-
-def run(
-    topic: str | None,
-    out_path: str | None,
-    script_path: str | None,
-    opts: Options,
-    script_data: dict | None = None,
-) -> RunResult:
-    """Chạy toàn bộ pipeline. Kịch bản lấy từ (theo thứ tự ưu tiên): script_data, script_path, hoặc LLM."""
-    prepared = prepare(topic, script_path, opts, script_data)
-    result = prepared.result
-    if opts.script_only:
-        return result
-    reporter = opts.reporter
-    script, work_dir, audio, steps = prepared.script, prepared.work_dir, prepared.audio, prepared.steps
-    size, fonts, lang, director = prepared.size, prepared.fonts, prepared.lang, prepared.director
-    step_overlays = prepared.overlays
-    style = opts.style
 
     def segments(images: list[StepImage]) -> list[Segment]:
         return [Segment(img.path, img.media, _style_for(img, opts)) for img in images]
 
-    intro_imgs, outro_imgs = prepared.bookend_images()
+    # Có clip video: mở đầu/kết thúc là montage cắt nhanh từ clip của các bước thay vì một ảnh tĩnh
+    has_clips = any(img.media == "video" for seg in steps for img in seg)
+    intro_imgs = [seg[0] for seg in steps[:4]] if has_clips else steps[0][:1]
+    outro_imgs = [seg[-1] for seg in steps[-3:]] if has_clips else steps[-1][-1:]
+    if all(img.kind == "placeholder" for img in intro_imgs):
+        # Ảnh nền chữ của bước 1 sẽ chồng lên tiêu đề: mở đầu bằng nền gradient trơn
+        blank = work_dir / "images" / "intro_placeholder.jpg"
+        make_placeholder("", blank, size, fonts)
+        intro_imgs = [StepImage(0, blank, "placeholder")]
 
     def badge(label: str, heading: str) -> Layer | None:
         # Nhãn trượt vào từ trái (kèm tiếng "tách" nếu bật hiệu ứng âm thanh)
@@ -760,18 +778,39 @@ def run(
 
     def acting(step: Step, index: int, path: Path | None, not_before: float = 0.0,
                taken: str | None = None) -> tuple[list[Layer | None], list[ClipOverlay], list, list]:
-        """Lớp hình, clip lồng, chuyển động camera và âm thanh theo câu thoại (xem Prepared.line_events)."""
-        events = prepared.line_events(step, index, path, head, not_before, taken)
-        overlays: list[Layer | None] = []
-        clips: list[ClipOverlay] = []
-        for v in events.visuals:
-            if v.text:
-                overlays.append(pop_text_layer(v.text, size, fonts, style.accent, v.start, v.end))
-            elif v.sticker.media == "video":
-                clips.append(ClipOverlay(v.sticker.path, v.slot, v.start, v.end))
-            else:
-                overlays.append(sticker_layer(v.sticker.path, size, v.slot, v.start, v.end))
-        return overlays, clips, events.camera, events.sounds
+        """Hiệu ứng theo từng câu thoại: sticker meme (ảnh, hoặc clip video bật ra), chữ nhấn mạnh, zoom giật/rung,
+        âm thanh meme.
+
+        not_before: lớp hình (sticker, chữ nhấn mạnh) chờ tới thời điểm này (vd sau khi tiêu đề lớn biến mất).
+        taken: góc khung đã có clip lồng suốt cảnh, sticker tránh góc đó.
+        """
+        lines = step.acted_lines()
+        times = load_line_times(path) if path and lines else None
+        if not times or len(times) != len(lines):
+            return [], [], [], []
+        overlays, clips, camera, sounds = [], [], [], []
+        slots = iter([s for s in STICKER_SLOTS[:4] if s != taken] * 8)
+        stickers = step_stickers[index] if index < len(step_stickers) else {}
+        for j, (line, span) in enumerate(zip(lines, times)):
+            start, end = span["start"], span["end"]
+            if line.get("camera"):
+                camera.append((start, line["camera"]))
+            if line.get("sound") in sound_files:  # tiếng thật trong thư viện thay cho sfx tổng hợp
+                sounds.append((max(0.0, start - 0.05), sound_files[line["sound"]]))
+            elif line.get("sfx"):
+                sounds.append((max(0.0, start - 0.05), line["sfx"]))
+            show = max(head + start, not_before)
+            sticker = stickers.get(j)
+            if sticker and head + end + 0.5 - show > 0.8:
+                if sticker.media == "video":
+                    # Clip meme/reaction chen vào đúng câu thoại, giữ thêm một chút cho "miếng" hài ngấm
+                    clips.append(ClipOverlay(sticker.path, next(slots), show, head + max(end + 0.6, start + 2.0)))
+                else:
+                    overlays.append(sticker_layer(sticker.path, size, next(slots), show, head + end + 0.5))
+            pop_end = head + max(end, start + 1.2)
+            if line.get("pop_text"):  # luôn hiện đủ 1,2 giây, kể cả khi phải chờ tiêu đề
+                overlays.append(pop_text_layer(line["pop_text"], size, fonts, style.accent, show, max(pop_end, show + 1.2)))
+        return overlays, clips, camera, sounds
 
     def scene(images: list[StepImage], key: str, narration: str, overlays: list[Layer | None], pop: bool,
               step: Step | None = None, not_before: float = 0.0, index: int = -1) -> Scene:
@@ -824,20 +863,28 @@ def run(
             if style.cta:
                 outro.append(cta_layer(style.cta, size, fonts, style.accent))
             scenes.append(scene(outro_imgs, "outro", script.outro, outro, True))
-    for sc, sound in zip(scenes, prepared.enter_sounds(opts)):
+    scene_steps: list[Step | None] = list(script.steps) if director else \
+        [None, *script.steps, *([None] if len(scenes) > len(script.steps) + 1 else [])]
+    entering = _transition_sounds(scene_steps, opts)
+    for sc, sound in zip(scenes, entering):
         sc.enter_sound = sound
+    if any(entering):
+        names = [s.name if isinstance(s, Path) else s for s in entering if s]
+        print(f"      Tiếng chuyển cảnh: {', '.join(dict.fromkeys(names))} ({len(names)} lần)", flush=True)
     clip_count = sum(1 for seg in steps for img in seg if img.media == "video")
     if clip_count:
         print(f"      Ghép {clip_count} clip video từ {sum(1 for s in steps if any(i.media == 'video' for i in s))} bước", flush=True)
 
-    print(f"[4/4] Dựng video {prepared.layout} ({len(scenes)} cảnh) ...", flush=True)
-    reporter.stage("render", f"Đang dựng video {prepared.layout}")
-    if prepared.bg_video:
-        print(f"      Video nền: {prepared.bg_video}", flush=True)
+    render = renderer_for(opts.renderer)
+    engine_label = " bằng ManimGL" if opts.renderer == "manim" else ""
+    print(f"[4/4] Dựng video {layout} ({len(scenes)} cảnh){engine_label} ...", flush=True)
+    reporter.stage("render", f"Đang dựng video {layout}{engine_label}")
+    if bg_video:
+        print(f"      Video nền: {bg_video}", flush=True)
     final_out = Path(out_path) if out_path else work_dir / f"{slugify(script.title)}.mp4"
     final_out.parent.mkdir(parents=True, exist_ok=True)
     thumbnail = final_out.with_suffix(".jpg")
-    result.duration = build_video(
+    result.duration = render(
         scenes,
         final_out,
         aspect=opts.aspect,
@@ -845,12 +892,12 @@ def run(
         music_volume=opts.music_volume,
         fonts=fonts,
         work_dir=work_dir,
-        bg_video=prepared.bg_video,
+        bg_video=bg_video,
         logger=reporter.render_logger(),
         thumbnail_path=thumbnail,
         style=style,
     )
-    result.video, result.thumbnail, result.size = final_out, thumbnail, prepared.frame_size
+    result.video, result.thumbnail, result.size = final_out, thumbnail, frame_size
     reporter.stage("render", "Hoàn tất", 1.0)
     print(f"✅ Hoàn tất! Video: {final_out.resolve()}", flush=True)
     return result

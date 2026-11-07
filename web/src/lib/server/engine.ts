@@ -1,9 +1,7 @@
 import "server-only";
 import { spawn, type ChildProcess } from "node:child_process";
-import path from "node:path";
 import type { EngineHealth } from "@/lib/types";
-import type { RenderEngine } from "@/lib/video-options";
-import { ENGINE_DIR, MANIM_ENGINE_DIR, PYTHON_BIN } from "./paths";
+import { ENGINE_DIR, PYTHON_BIN } from "./paths";
 import { tokenEnv } from "./tokens";
 
 /** Dòng stdout bắt đầu bằng tiền tố này là một sự kiện JSON của engine (xem engine/videogen/events.py). */
@@ -30,17 +28,6 @@ export function engineEnv(): NodeJS.ProcessEnv {
 
 export function engineArgs(...args: string[]): string[] {
   return ["-m", "videogen", ...args];
-}
-
-/**
- * Lệnh chạy job bằng engine dựng hình đã chọn. Engine ManimGL (engine-manim/) import videogen_core/videogen từ
- * ENGINE_DIR nên ENGINE_DIR được thêm vào PYTHONPATH.
- */
-export function jobCommand(engine: RenderEngine, specPath: string): { args: string[]; cwd: string; env: NodeJS.ProcessEnv } {
-  if (engine !== "manim") return { args: engineArgs("job", specPath), cwd: ENGINE_DIR, env: engineEnv() };
-  const env = engineEnv();
-  env.PYTHONPATH = [ENGINE_DIR, env.PYTHONPATH].filter(Boolean).join(path.delimiter);
-  return { args: ["-m", "videogen_manim", "job", specPath], cwd: MANIM_ENGINE_DIR, env };
 }
 
 /** Chạy một lệnh ngắn của engine (probe, doctor) và lấy stdout. */

@@ -11,6 +11,7 @@ import subprocess
 from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +19,7 @@ from moviepy.audio.AudioClip import AudioArrayClip
 from moviepy.editor import VideoClip, VideoFileClip, vfx
 from PIL import Image, ImageDraw
 
-from videogen_core.audio.mix import AUDIO_RATE, FADE_OUT, SceneAudio, build_track, decode_audio
-
+from . import sfx
 from .effects import (
     ALL_MOTIONS, MOTIONS, STILL, TRANSITION_FNS, WHOOSH_TRANSITIONS, Layer, color_filter, draw_layer, in_out_cubic, make_motion, motion_box,
     out_cubic, pick_transitions, zoom_crop,
@@ -36,7 +36,14 @@ ASPECTS = {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (1080, 1080)}
 SPLIT_RATIO = 0.5  # tỉ lệ chiều cao phần nội dung (nửa trên) khi có video nền
 CLIP_MAX_SIDE = 1280  # clip lớn hơn được thu nhỏ trước khi dựng (giải mã 4K mỗi khung hình rất chậm)
 
-FADE_IN = 0.4  # mờ dần đầu video (cuối video: mix.FADE_OUT, chung cho hình và tiếng)
+AUDIO_RATE = 44100
+EDGE_FADE = 0.008  # làm mềm đầu/cuối mỗi đoạn âm thanh để không có tiếng "bụp"
+FADE_IN, FADE_OUT = 0.4, 0.6  # mờ dần đầu/cuối video (hình và tiếng)
+MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
+# Âm thanh của người dùng gắn vào câu thoại: dài tối đa chừng này, đỉnh chuẩn hóa về SOUND_PEAK rồi nhân ASSET_SOUND_GAIN
+MAX_SOUND_SECONDS, SOUND_PEAK, ASSET_SOUND_GAIN, SOUND_FADE_OUT = 10.0, 0.9, 0.35, 0.25
+WHOOSH_GAIN, POP_GAIN = 0.16, 0.11  # âm lượng hiệu ứng âm thanh so với giọng đọc
+TRANSITION_ASSET_GAIN = 0.6  # tiếng chuyển cảnh lấy từ thư viện lặp lại ở mọi cảnh: nhỏ hơn tiếng gắn vào câu thoại
 
 
 @dataclass
@@ -83,10 +90,21 @@ class Scene:
 class SceneRender:
     frame: Callable[[float], Image.Image]
     duration: float
-    speech: np.ndarray | None
     sources: list
-    pops: list[float]
-    sounds: list[tuple[float, str | Path]] = field(default_factory=list)  # thời điểm đã tính trong scene
+
+
+@dataclass
+class Timeline:
+    """Thời gian của cả video, chung cho mọi renderer (moviepy ở đây, ManimGL ở engine-manim/): cùng kịch bản cho ra
+    cùng thời lượng cảnh, chuyển động, kiểu chuyển cảnh và track âm thanh."""
+    speeches: list[np.ndarray | None]  # giọng đọc đã giải mã của từng scene
+    durations: list[float]
+    segments: list[list[Segment]]  # đoạn hình thật sự dùng của từng scene (bỏ bớt nếu scene quá ngắn)
+    motions: list[list[str | None]]  # chuyển động Ken Burns của từng đoạn ảnh (None: clip video)
+    starts: list[float]  # scene sau bắt đầu chồng lên `transition` giây cuối của scene trước
+    transition: float
+    kinds: list[str]  # kiểu chuyển cảnh giữa scene i và i+1
+    total: float
 
 
 PUNCH_ZOOM, PUNCH_HOLD = 1.18, 0.9
@@ -226,8 +244,94 @@ def _clip_layer(clip: ClipOverlay, size: tuple[int, int], cache_dir: Path | None
     return layer, source
 
 
+def decode_audio(path: Path) -> np.ndarray:
+    """Giải mã toàn bộ file âm thanh bằng ffmpeg thành mảng float32 (số mẫu, 2 kênh) ở AUDIO_RATE.
+
+    Không dùng AudioFileClip của moviepy 1.x: nó đọc lố cuối file mp3 và trả về dữ liệu rác trong bộ đệm,
+    gây tiếng "bụp"/âm thanh bị cắt ở cuối mỗi đoạn giọng đọc.
+    """
+    raw = subprocess.run(
+        [ffmpeg_exe(), "-v", "error", "-i", str(path), "-vn", "-ac", "2", "-ar", str(AUDIO_RATE), "-f", "f32le", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    return np.frombuffer(raw, dtype=np.float32).reshape(-1, 2).copy()
+
+
+@lru_cache(maxsize=32)
+def _asset_sound(path: Path) -> tuple[np.ndarray, float] | None:
+    """(mẫu âm thanh, âm lượng) của một file trong thư viện, dùng như hiệu ứng: cắt gọn, chuẩn hóa đỉnh để các file to nhỏ
+    khác nhau nghe đều tay so với giọng đọc. File hỏng không được làm hỏng cả video."""
+    try:
+        samples = decode_audio(path)[: int(MAX_SOUND_SECONDS * AUDIO_RATE)]
+    except Exception as e:  # noqa: BLE001
+        print(f"      Bỏ qua âm thanh {path.name}: {type(e).__name__}", flush=True)
+        return None
+    peak = float(np.abs(samples).max()) if len(samples) else 0.0
+    if peak < 1e-4:
+        return None
+    return _fade(samples / peak * SOUND_PEAK, 0.0, SOUND_FADE_OUT), ASSET_SOUND_GAIN
+
+
+def _transition_effect(ref: str | Path | None, start: float, transition: float, index: int,
+                       kind: str) -> tuple[float, np.ndarray, float] | None:
+    """(thời điểm, mẫu, âm lượng) của tiếng chuyển cảnh: tiếng "vút" nằm giữa đoạn chuyển và dài theo nó, tiếng khác
+    (tổng hợp) phát ngay giữa đoạn chuyển, file thư viện phát từ lúc bắt đầu chuyển."""
+    if ref == "whoosh":
+        sound = sfx.whoosh(round(max(0.4, transition * 1.4), 2), seed=index % 3, direction=-1 if kind.endswith("right") else 1)
+        return start + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN
+    if isinstance(ref, Path):
+        sound = _asset_sound(ref)
+        return (start, sound[0], sound[1] * TRANSITION_ASSET_GAIN) if sound else None
+    named = sfx.named(ref) if ref else None
+    return (max(0.0, start + transition / 2 - 0.05), named[0], named[1]) if named else None
+
+
+def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
+    n = len(samples)
+    for seconds, ramp_up in ((fade_in, True), (fade_out, False)):
+        k = min(n, int(seconds * AUDIO_RATE))
+        if k > 1:
+            ramp = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
+            if ramp_up:
+                samples[:k] *= ramp
+            else:
+                samples[n - k:] *= ramp[::-1]
+    return samples
+
+
+def _mix_at(track: np.ndarray, samples: np.ndarray, start: float) -> None:
+    i = int(round(start * AUDIO_RATE))
+    if not len(samples) or i >= len(track):
+        return
+    if i < 0:
+        samples, i = samples[-i:], 0
+    part = samples[: len(track) - i]
+    track[i : i + len(part)] += part
+
+
+def _mix_track(
+    speeches: list[np.ndarray | None], starts: list[float], duration: float, music_path: Path | None,
+    music_volume: float, effects: list[tuple[float, np.ndarray, float]] | None = None,
+) -> np.ndarray:
+    """Ghép giọng đọc của các scene, hiệu ứng âm thanh và nhạc nền thành một track duy nhất, chính xác tới từng mẫu."""
+    track = np.zeros((int(np.ceil(duration * AUDIO_RATE)), 2), dtype=np.float32)
+    for speech, start in zip(speeches, starts):
+        if speech is not None:
+            _mix_at(track, _fade(speech.copy(), EDGE_FADE, EDGE_FADE), start)
+    for start, samples, gain in effects or []:
+        _mix_at(track, samples * gain, start)
+    if music_path:
+        music = decode_audio(music_path)
+        if len(music):
+            reps = int(np.ceil(len(track) / len(music)))
+            music = np.tile(music, (reps, 1))[: len(track)] * music_volume
+            track += _fade(music, MUSIC_FADE_IN, MUSIC_FADE_OUT)
+    _fade(track, 0.0, FADE_OUT)
+    np.clip(track, -1.0, 1.0, out=track)
+    return track
+
+
 def _audio_clip(track: np.ndarray) -> AudioArrayClip:
-    """Track âm thanh (mix.build_track) thành clip moviepy."""
     clip = AudioArrayClip(track, fps=AUDIO_RATE)
 
     def make_frame(t):
@@ -244,31 +348,21 @@ def _audio_clip(track: np.ndarray) -> AudioArrayClip:
 
 def _build_scene(
     scene: Scene, index: int, size: tuple[int, int], style: Style, fonts: Fonts, cache_dir: Path | None,
-    rng: random.Random,
+    timeline: Timeline,
 ) -> SceneRender:
     pacing = style.timing
-    speech_samples = decode_audio(scene.audio_path) if scene.audio_path else None
+    speech_samples, duration = timeline.speeches[index], timeline.durations[index]
     speech = len(speech_samples) / AUDIO_RATE if speech_samples is not None else 0.0
-    duration = pacing.head + speech + pacing.tail if speech_samples is not None else SILENT_SCENE
-
-    # Chia scene thành các đoạn hình đều nhau (bỏ bớt đoạn nếu scene quá ngắn)
-    segments = scene.segments[: max(1, int(duration // pacing.min_segment))]
+    segments = timeline.segments[index]
     seg_len = duration / len(segments)
     blend = min(pacing.segment_blend, seg_len / 3)
     sources, bases = [], []
-    last_motion = None
-    chosen = scene.motion if scene.motion in ALL_MOTIONS else None
-    for k, seg in enumerate(segments):
+    for seg, motion in zip(segments, timeline.motions[index]):
         if seg.media == "video":
             fn, source = _video_frames(seg, size, cache_dir, seg_len + blend, pacing.clip_push)
             sources.append(source)
         else:
-            # Ảnh đầu dùng chuyển động hợp cảm xúc cảnh (nếu có), các ảnh sau đổi kiểu để không lặp một chuyển động
-            if chosen and last_motion is None:
-                last_motion = chosen
-            else:
-                last_motion = rng.choice([m for m in MOTIONS if m != last_motion])
-            fn = _image_frames(seg, last_motion, size, seg_len + blend, pacing.zoom)
+            fn = _image_frames(seg, motion, size, seg_len + blend, pacing.zoom)
         bases.append(fn)
     clip_layers = []
     for clip in scene.clips:
@@ -314,8 +408,7 @@ def _build_scene(
             subtitles.draw(img, t)
         return img
 
-    sounds = [(pacing.head + t, name) for t, name in scene.sounds]
-    return SceneRender(frame, duration, speech_samples, sources, scene.pops, sounds)
+    return SceneRender(frame, duration, sources)
 
 
 def split_sizes() -> tuple[tuple[int, int], tuple[int, int]]:
@@ -351,6 +444,71 @@ def _seed(scenes: list[Scene]) -> int:
     return int(hashlib.sha1(text.encode("utf-8")).hexdigest()[:8], 16)
 
 
+def plan_timeline(scenes: list[Scene], style: Style) -> Timeline:
+    """Thời lượng từng scene (theo giọng đọc), đoạn hình, chuyển động, chuyển cảnh và thời điểm bắt đầu của từng scene.
+    Cùng kịch bản -> cùng lựa chọn ngẫu nhiên (render lại cho kết quả giống nhau)."""
+    pacing = style.timing
+    rng = random.Random(_seed(scenes))
+    speeches, durations, segments, motions = [], [], [], []
+    for scene in scenes:
+        speech = decode_audio(scene.audio_path) if scene.audio_path else None
+        duration = pacing.head + len(speech) / AUDIO_RATE + pacing.tail if speech is not None else SILENT_SCENE
+        # Chia scene thành các đoạn hình đều nhau (bỏ bớt đoạn nếu scene quá ngắn)
+        segs = scene.segments[: max(1, int(duration // pacing.min_segment))]
+        chosen = scene.motion if scene.motion in ALL_MOTIONS else None
+        kinds: list[str | None] = []
+        last_motion = None
+        for seg in segs:
+            if seg.media == "video":
+                kinds.append(None)
+                continue
+            # Ảnh đầu dùng chuyển động hợp cảm xúc cảnh (nếu có), các ảnh sau đổi kiểu để không lặp một chuyển động
+            if chosen and last_motion is None:
+                last_motion = chosen
+            else:
+                last_motion = rng.choice([m for m in MOTIONS if m != last_motion])
+            kinds.append(last_motion)
+        speeches.append(speech)
+        durations.append(duration)
+        segments.append(segs)
+        motions.append(kinds)
+    transition = min([pacing.transition] + [d / 3 for d in durations])
+    starts = [0.0]
+    for d in durations[:-1]:
+        starts.append(starts[-1] + d - transition)
+    kinds = pick_transitions(style.transition, len(scenes) - 1, rng)
+    return Timeline(speeches, durations, segments, motions, starts, transition, kinds, starts[-1] + durations[-1])
+
+
+def audio_track(scenes: list[Scene], timeline: Timeline, style: Style, music_path: Path | None,
+                music_volume: float) -> np.ndarray:
+    """Track âm thanh cuối của video (float32, 2 kênh, AUDIO_RATE): giọng đọc, tiếng chuyển cảnh, tiếng "tách", âm thanh
+    theo câu thoại và nhạc nền, đặt theo timeline. Mọi renderer dùng chung nên âm thanh giống nhau từng mẫu."""
+    head, starts, transition, kinds = style.timing.head, timeline.starts, timeline.transition, timeline.kinds
+    effects: list[tuple[float, np.ndarray, float]] = []
+    if style.sfx and style.transition_sound == "default":
+        for i, kind in enumerate(kinds):
+            if kind not in WHOOSH_TRANSITIONS:
+                continue
+            sound = sfx.whoosh(round(max(0.4, transition * 1.4), 2), seed=i % 3, direction=-1 if kind.endswith("right") else 1)
+            effects.append((starts[i + 1] + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN))
+    if style.sfx:
+        for start, scene in zip(starts, scenes):
+            effects.extend((start + p, sfx.pop(), POP_GAIN) for p in scene.pops)
+    # Tiếng chuyển cảnh người dùng chọn (hoặc AI/thư viện chọn cho từng cảnh)
+    for i, kind in enumerate(kinds):
+        effect = _transition_effect(scenes[i + 1].enter_sound, starts[i + 1], transition, i, kind)
+        if effect:
+            effects.append(effect)
+    # Âm thanh meme do Đạo diễn AI đặt theo câu thoại: luôn phát (AI đã chủ động chọn)
+    for start, scene in zip(starts, scenes):
+        for t, ref in scene.sounds:
+            sound = _asset_sound(ref) if isinstance(ref, Path) else sfx.named(ref)
+            if sound:
+                effects.append((start + head + t, sound[0], sound[1]))
+    return _mix_track(timeline.speeches, [s + head for s in starts], timeline.total, music_path, music_volume, effects)
+
+
 def build_video(
     scenes: list[Scene],
     out_path: Path,
@@ -368,24 +526,16 @@ def build_video(
     """Render video ra out_path, trả về thời lượng (giây). `logger`: "bar", None hoặc proglog logger."""
     style = style or Style()
     fonts = fonts or resolve_fonts()
-    pacing = style.timing
     if bg_video:
         size, bg_size = split_sizes()
         frame_size = ASPECTS["9:16"]
     else:
         size = frame_size = ASPECTS[aspect]
     cache_dir = (work_dir or out_path.parent) / "clips"
-    rng = random.Random(_seed(scenes))
-    renders = [_build_scene(s, i, size, style, fonts, cache_dir, rng) for i, s in enumerate(scenes)]
-
-    transition = min([pacing.transition] + [r.duration / 3 for r in renders])
-    # Scene sau bắt đầu chồng lên `transition` giây cuối của scene trước
-    starts = [0.0]
-    for r in renders[:-1]:
-        starts.append(starts[-1] + r.duration - transition)
-    total = starts[-1] + renders[-1].duration
-    kinds = pick_transitions(style.transition, len(renders) - 1, rng)
-    transitions = [TRANSITION_FNS[k] for k in kinds]
+    timeline = plan_timeline(scenes, style)
+    renders = [_build_scene(s, i, size, style, fonts, cache_dir, timeline) for i, s in enumerate(scenes)]
+    starts, transition, total = timeline.starts, timeline.transition, timeline.total
+    transitions = [TRANSITION_FNS[k] for k in timeline.kinds]
 
     background = _background_clip(bg_video, bg_size, total, cache_dir) if bg_video else None
     logo = logo_layer(style.logo, frame_size) if style.logo else None
@@ -419,10 +569,7 @@ def build_video(
             img = Image.blend(black, img, max(0.0, k))
         return img
 
-    audio = _audio_clip(build_track(
-        [SceneAudio(r.speech, r.pops, r.sounds, sc.enter_sound) for r, sc in zip(renders, scenes)], starts, pacing.head,
-        total, transition, kinds, WHOOSH_TRANSITIONS, music_path, music_volume, style.sfx, style.transition_sound,
-    ))
+    audio = _audio_clip(audio_track(scenes, timeline, style, music_path, music_volume))
     final = VideoClip(lambda t: np.asarray(compose(t)), duration=total).set_audio(audio)
 
     temp_audio = (work_dir or out_path.parent) / f"{out_path.stem}.temp-audio.m4a"

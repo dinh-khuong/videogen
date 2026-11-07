@@ -6,11 +6,15 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from videogen_core.ffmpeg import ffmpeg_exe
-
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".flac", ".opus"}
+
+
+def ffmpeg_exe() -> str:
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 def video_info(path: Path) -> dict:

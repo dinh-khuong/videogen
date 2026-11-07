@@ -1,5 +1,5 @@
 // Các dịch vụ cần token/API key (dùng chung giữa client và server). `env` là tên biến môi trường engine đọc
-// (xem engine/videogen_core/config.py): token đang dùng của dịch vụ được truyền cho engine qua biến đó.
+// (xem engine/videogen/config.py): token đang dùng của dịch vụ được truyền cho engine qua biến đó.
 
 export const TOKEN_GROUPS = {
   ai: "AI viết kịch bản",

@@ -7,9 +7,8 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from videogen_core.audio.cast import SPEAKERS
-from videogen_core.audio.delivery import acted
-from videogen_core.config import Settings, require
+from .cast import SPEAKERS
+from .config import Settings, require
 
 SYSTEM_PROMPT = """Bạn là biên tập viên viết kịch bản {role} ngắn, cuốn hút, chính xác.
 Người dùng đưa ra chủ đề hoặc một yêu cầu chi tiết (có thể dài: nội dung cần nói, đối tượng người xem, giọng văn,
@@ -161,6 +160,13 @@ class Step:
 
     def acted_lines(self) -> list[dict]:
         return acted(self.lines, self.narration)
+
+
+def acted(lines: list[dict], text: str) -> list[dict]:
+    """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
+    if not lines or " ".join(l["text"] for l in lines) != text:
+        return []
+    return lines
 
 
 @dataclass
@@ -395,7 +401,7 @@ def _media_ref(value) -> dict | None:
 
 def normalize_line(value) -> dict | None:
     """Chuẩn hóa một câu thoại (bỏ trường lạ/không hợp lệ)."""
-    from videogen_core.audio.delivery import mood_of
+    from .delivery import mood_of
 
     if isinstance(value, str):
         value = {"text": value}
@@ -424,7 +430,7 @@ def normalize_line(value) -> dict | None:
 
 
 def parse_script(data: dict, default_title: str) -> Script:
-    from videogen_core.audio.delivery import normalize_tuning
+    from .delivery import normalize_tuning
 
     steps = []
     for s in data["steps"]:
@@ -559,7 +565,7 @@ def generate_script(
     writing: phong cách viết (writing.STYLES). cast: câu mô tả các giọng đọc (nhân vật nào giọng nào).
     speakers: dàn giọng người dùng đặt — các giá trị "voice" AI được gán cho câu thoại (rỗng/một giọng: không gán);
     None = tự động như cũ (chỉ kiểu hai nhân vật mới có "voice" main/second). cast_rule: luật giọng của dàn giọng."""
-    from videogen_core.audio.delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, sentence_lines
+    from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, sentence_lines
     from .writing import EXPRESSIVE_RULE, writing_style
 
     client = OpenAI(
