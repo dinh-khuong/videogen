@@ -6,8 +6,10 @@
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/check-node.mjs",
     "dev": "next dev",
     "build": "next build",
+    "prestart": "node scripts/check-node.mjs",
     "start": "next start",
     "lint": "eslint",
     "import-dataset": "node scripts/import-dataset.mjs",
