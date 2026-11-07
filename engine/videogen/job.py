@@ -57,14 +57,15 @@ import json
 import traceback
 from pathlib import Path
 
-from .cast import TRANSITION_SOUNDS, parse_cast
-from .config import ConfigError
+from videogen_core.audio.cast import TRANSITION_SOUNDS, parse_cast
+from videogen_core.audio.tts import PITCH_RE, RATE_RE, VOICE_EFFECTS
+from videogen_core.config import ConfigError
+
 from .events import DIRECTOR_STAGES, JsonReporter
 from .image_search import SEARCH_ENGINES
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
-from .tts import PITCH_RE, RATE_RE, VOICE_EFFECTS
 from .video_builder import ASPECTS
 from .writing import WRITING_STYLES
 
@@ -205,7 +206,8 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     )
 
 
-def run_job(spec_path: Path) -> int:
+def run_job(spec_path: Path, render=run) -> int:
+    """Chạy job từ spec. render: hàm dựng video cùng chữ ký với pipeline.run (engine ManimGL truyền hàm của nó)."""
     reporter = JsonReporter()
     try:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -217,7 +219,7 @@ def run_job(spec_path: Path) -> int:
         if opts.director:
             reporter.stages = DIRECTOR_STAGES
         work_dir = opts.work_dir
-        result = run(
+        result = render(
             spec.get("topic"),
             str(work_dir / "video.mp4"),
             None,

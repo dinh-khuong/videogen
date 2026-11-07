@@ -80,11 +80,11 @@ def _library_from_dir(folder: Path, analyze: bool = False):
 
 
 def cmd_make(argv: list[str]) -> int:
-    from .config import ConfigError
+    from videogen_core.config import ConfigError
     from .image_search import SEARCH_ENGINES
     from .pipeline import IMAGE_STYLES, Options, run
     from .style import COLOR_FILTERS, PACINGS, SUBTITLE_STYLES, TRANSITIONS, VIDEO_TYPES, Style
-    from .tts import VOICE_EFFECTS
+    from videogen_core.audio.tts import VOICE_EFFECTS
     from .video_builder import ASPECTS
     from .writing import WRITING_STYLES
 
@@ -275,7 +275,7 @@ def cmd_analyze(argv: list[str]) -> int:
 def cmd_voice_sample(argv: list[str]) -> int:
     """Tạo file nghe thử giọng đọc (web app dùng cho nút "Nghe thử")."""
     from .style import language_for
-    from .tts import VOICE_EFFECTS, voice_sample
+    from videogen_core.audio.tts import VOICE_EFFECTS, voice_sample
 
     parser = argparse.ArgumentParser(prog="videogen voice-sample", description="Tạo file mp3 nghe thử một giọng đọc.")
     parser.add_argument("--voice", required=True)
@@ -299,7 +299,7 @@ def cmd_voice_sample(argv: list[str]) -> int:
 
 def cmd_zerotts_voices(argv: list[str]) -> int:
     """Danh sách giọng của mô hình ZeroTTS (lần đầu sẽ tải mô hình). In JSON {"ok", "voices": [...]}."""
-    from .tts import zerotts_voices
+    from videogen_core.audio.tts import zerotts_voices
 
     try:
         voices = zerotts_voices()
@@ -334,7 +334,7 @@ def cmd_doctor(argv: list[str]) -> int:
     """Kiểm tra môi trường: thư viện, API key, nguồn ảnh, font, ffmpeg."""
     report: dict = {"python": sys.version.split()[0], "problems": [], "warnings": []}
     try:
-        from .config import load_settings
+        from videogen_core.config import load_settings
         from .graphics import find_font
         from .image_search import PROVIDERS, engine_status
 
@@ -356,7 +356,7 @@ def cmd_doctor(argv: list[str]) -> int:
         report["video_providers"] = active_video_providers(settings)
         report["voice"] = settings.tts_voice
         report["fpt_tts"] = bool(settings.fpt_api_key)
-        from .tts import zerotts_available
+        from videogen_core.audio.tts import zerotts_available
 
         report["zerotts"] = zerotts_available()
         from .analyze import ocr_available

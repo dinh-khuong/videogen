@@ -26,7 +26,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from .config import Settings, load_settings
+from videogen_core.config import Settings, load_settings
+
 from .events import JsonReporter
 from .llm import extract_json, normalize_hashtags
 from .probe import AUDIO_EXTS, IMAGE_EXTS, audio_info, ffmpeg_exe, video_info

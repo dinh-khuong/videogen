@@ -139,6 +139,13 @@ def _even_words(text: str, duration: float) -> list[dict]:
     return [w for w in out if w["text"]]
 
 
+def acted(lines: list[dict], text: str) -> list[dict]:
+    """Câu thoại còn khớp lời bình (người dùng sửa lời bình thì quay về đọc một mạch như thường)."""
+    if not lines or " ".join(l["text"] for l in lines) != text:
+        return []
+    return lines
+
+
 def lines_path(audio_path: Path) -> Path:
     """Mốc thời gian từng câu thoại trong file ghép: [{"start": giây, "end": giây}]."""
     return audio_path.with_suffix(".lines.json")
@@ -154,7 +161,7 @@ def load_line_times(audio_path: Path) -> list[dict] | None:
 
 def assemble(parts: list[tuple[Path, str, str]], out_path: Path) -> Path:
     """Ghép các câu (file mp3, chữ, cảm xúc) thành một file WAV + mốc từng từ + mốc từng câu."""
-    from .video_builder import decode_audio
+    from .mix import decode_audio
 
     chunks: list[np.ndarray] = []
     words: list[dict] = []

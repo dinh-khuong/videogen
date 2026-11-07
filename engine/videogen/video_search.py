@@ -22,7 +22,8 @@ from urllib.parse import quote_plus
 
 import requests
 
-from .config import Settings
+from videogen_core.config import Settings
+
 from .image_search import TARGET_RATIO, Credit, ProviderUnavailable, UrlRegistry, _request
 from .probe import ffmpeg_exe, video_info
 

@@ -25,7 +25,7 @@ import edge_tts
 import requests
 from gtts import gTTS
 
-from .config import ConfigError, load_settings
+from ..config import ConfigError, load_settings
 
 MAX_CONCURRENCY = 8
 EDGE_RETRIES = 8
@@ -203,7 +203,7 @@ def _zerotts_synthesize(text: str, voice: str, out_path: Path) -> None:
     from zerotts.audio import concat_with_silence
     from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
 
-    from .probe import ffmpeg_exe
+    from ..ffmpeg import ffmpeg_exe
 
     text = normalize_vi_text(text)
     segments = [s for s in (clean_segment_punctuation(c) for c in chunk_text(normalize_punctuation(text), max_chunk_sec=15)) if s]
@@ -253,7 +253,7 @@ def audio_filters(effect: str, tempo: float = 1.0, pitch: float = 1.0) -> list[s
 
 
 def _post_process(src: Path, dest: Path, filters: list[str]) -> None:
-    from .probe import ffmpeg_exe
+    from ..ffmpeg import ffmpeg_exe
 
     tmp = dest.with_suffix(".fx.mp3")
     subprocess.run(
