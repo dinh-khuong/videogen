@@ -58,7 +58,11 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - **AI tinh chỉnh giọng cho hợp video** (bật mặc định, tắt được): AI viết kịch bản / Đạo diễn AI được chỉnh thêm cao độ (±15 Hz)
     và tốc độ (±20%) quanh mức bạn chọn theo không khí video (chuyện ma trầm, chậm hơn; quảng cáo sáng, nhanh hơn), kèm lý do.
     Trang video hiện mức AI đã chỉnh, nghe thử được cả mức đó lẫn mức ban đầu; "Sửa kịch bản & tạo lại" bắt đầu từ mức AI đã chỉnh.
-  - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn.
+  - **Giọng thứ hai đọc xen kẽ** các bước chẵn, như hai người dẫn (chế độ "Tự động", như trước).
+  - **Số người nói 1–4 giọng**: mỗi giọng thêm có tốc độ, cao độ và tên nhân vật riêng. **Chuyển giọng theo cảnh** (mỗi cảnh một
+    người đọc, xoay vòng) hoặc **theo nhân vật / lời thoại** (AI gán từng câu cho một nhân vật, đối đáp như podcast). "1 giọng"
+    là đúng một giọng, không có giọng phụ chen ngang.
+  - **Đồng bộ giọng**: biến hóa theo cảm xúc từng câu (mặc định) hoặc giữ đều — mọi câu đúng tốc độ/cao độ của người nói.
   - **Giọng kiểu kênh quen thuộc** (một lần bấm): kênh kiến thức, "chị Google", "anh Google", ngọng Tây dễ thương, bé ngọng, sóc chuột lầy lội, kể chuyện ma, robot, tổng đài.
   - **Giọng "chị Google"** và **"anh Google"** (gTTS, miễn phí; Google chỉ có giọng nữ nên giọng nam là cùng giọng đó hạ trầm) và **FPT.AI** (Ban Mai, Lê Minh, Lan Nhi... — giọng Việt tự nhiên, cần `FPT_AI_API_KEY`).
   - **Hiệu ứng giọng**: dễ thương/ngọng nhẹ, sóc chuột, trầm ma mị, robot, radio, vang. Xử lý bằng ffmpeg, giữ nguyên tốc độ nên phụ đề vẫn khớp.
@@ -70,6 +74,9 @@ Quy trình tạo một video: **chủ đề** → DeepSeek viết kịch bản (
   - Title card và nhãn bước có hoạt ảnh (trồi lên, trượt vào, bật ra); **màu chủ đạo** tùy chọn.
   - **Màu phim**: rực rỡ, ấm áp, mát lạnh, điện ảnh, hoài cổ, đen trắng.
   - **Thanh tiến độ**, **hiệu ứng âm thanh** tự tổng hợp ("vút" khi chuyển cảnh, "tách" khi hiện nhãn — không dùng file mẫu nên không lo bản quyền).
+  - **Tiếng khi chuyển cảnh** chọn riêng: không có, vút, tách, ting, bùm, rít đĩa, cốp, một âm thanh trong Assets, hoặc để
+    **AI/thư viện chọn** (Đạo diễn AI chọn tiếng cho từng cảnh; kịch bản nhanh dùng lần lượt các tiếng whoosh/swoosh/"chuyển cảnh"
+    trong Assets, không có thì tiếng "vút").
   - **Logo** (ảnh trong Assets) ở góc trên phải và **lời kêu gọi cuối video** (vd số điện thoại, ưu đãi) dạng nút nổi bật.
 - **Giao diện sáng / tối / theo hệ thống** (nút chuyển ở thanh bên).
 - **Không còn tiếng khi không xem**: video/audio trong trang tự dừng khi thu nhỏ cửa sổ hoặc chuyển tab, khi cuộn/thu gọn

@@ -43,6 +43,7 @@ MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 2.0
 # Âm thanh của người dùng gắn vào câu thoại: dài tối đa chừng này, đỉnh chuẩn hóa về SOUND_PEAK rồi nhân ASSET_SOUND_GAIN
 MAX_SOUND_SECONDS, SOUND_PEAK, ASSET_SOUND_GAIN, SOUND_FADE_OUT = 10.0, 0.9, 0.35, 0.25
 WHOOSH_GAIN, POP_GAIN = 0.16, 0.11  # âm lượng hiệu ứng âm thanh so với giọng đọc
+TRANSITION_ASSET_GAIN = 0.6  # tiếng chuyển cảnh lấy từ thư viện lặp lại ở mọi cảnh: nhỏ hơn tiếng gắn vào câu thoại
 
 
 @dataclass
@@ -81,6 +82,8 @@ class Scene:
     clips: list[ClipOverlay] = field(default_factory=list)  # clip video lồng trên hình (vẽ dưới chữ/phụ đề)
     # Chuyển động của ảnh đầu tiên trong scene (theo cảm xúc hoặc do Đạo diễn AI chọn); None: luân phiên ngẫu nhiên
     motion: str | None = None
+    # Tiếng phát khi chuyển vào scene này (tên trong sfx.named | file âm thanh); None: theo style (tiếng "vút" mặc định)
+    enter_sound: str | Path | None = None
 
 
 @dataclass
@@ -256,6 +259,20 @@ def _asset_sound(path: Path) -> tuple[np.ndarray, float] | None:
     if peak < 1e-4:
         return None
     return _fade(samples / peak * SOUND_PEAK, 0.0, SOUND_FADE_OUT), ASSET_SOUND_GAIN
+
+
+def _transition_effect(ref: str | Path | None, start: float, transition: float, index: int,
+                       kind: str) -> tuple[float, np.ndarray, float] | None:
+    """(thời điểm, mẫu, âm lượng) của tiếng chuyển cảnh: tiếng "vút" nằm giữa đoạn chuyển và dài theo nó, tiếng khác
+    (tổng hợp) phát ngay giữa đoạn chuyển, file thư viện phát từ lúc bắt đầu chuyển."""
+    if ref == "whoosh":
+        sound = sfx.whoosh(round(max(0.4, transition * 1.4), 2), seed=index % 3, direction=-1 if kind.endswith("right") else 1)
+        return start + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN
+    if isinstance(ref, Path):
+        sound = _asset_sound(ref)
+        return (start, sound[0], sound[1] * TRANSITION_ASSET_GAIN) if sound else None
+    named = sfx.named(ref) if ref else None
+    return (max(0.0, start + transition / 2 - 0.05), named[0], named[1]) if named else None
 
 
 def _fade(samples: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
@@ -492,14 +509,20 @@ def build_video(
         return img
 
     effects: list[tuple[float, np.ndarray, float]] = []
-    if style.sfx:
+    if style.sfx and style.transition_sound == "default":
         for i, kind in enumerate(kinds):
             if kind not in WHOOSH_TRANSITIONS:
                 continue
             sound = sfx.whoosh(round(max(0.4, transition * 1.4), 2), seed=i % 3, direction=-1 if kind.endswith("right") else 1)
             effects.append((starts[i + 1] + transition / 2 - len(sound) / AUDIO_RATE / 2, sound, WHOOSH_GAIN))
+    if style.sfx:
         for start, render in zip(starts, renders):
             effects.extend((start + p, sfx.pop(), POP_GAIN) for p in render.pops)
+    # Tiếng chuyển cảnh người dùng chọn (hoặc AI/thư viện chọn cho từng cảnh)
+    for i, kind in enumerate(kinds):
+        effect = _transition_effect(scenes[i + 1].enter_sound, starts[i + 1], transition, i, kind)
+        if effect:
+            effects.append(effect)
     # Âm thanh meme do Đạo diễn AI đặt theo câu thoại: luôn phát (AI đã chủ động chọn)
     for start, render in zip(starts, renders):
         for t, ref in render.sounds:

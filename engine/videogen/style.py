@@ -58,6 +58,9 @@ class Style:
     sfx: bool = False               # tiếng "vút" khi chuyển cảnh, tiếng "tách" khi hiện nhãn
     logo: Path | None = None        # ảnh logo ở góc trên phải
     cta: str = ""                   # lời kêu gọi hiện nổi bật ở cuối video
+    # Tiếng khi chuyển cảnh (xem cast.TRANSITION_SOUNDS): default = như cũ (tiếng "vút" theo sfx ở kiểu chuyển trượt/quét)
+    transition_sound: str = "default"
+    transition_sound_file: Path | None = None  # transition_sound "asset": một file trong Assets cho mọi lần chuyển
 
     def __post_init__(self) -> None:
         for name, allowed in (

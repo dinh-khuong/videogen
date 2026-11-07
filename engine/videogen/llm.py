@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from .cast import SPEAKERS
 from .config import Settings, require
 
 SYSTEM_PROMPT = """Bạn là biên tập viên viết kịch bản {role} ngắn, cuốn hút, chính xác.
@@ -51,7 +52,7 @@ Yêu cầu:
 """
 
 VOICE_LINE = """
-- "voice" của câu thoại: "main" (nhân vật 1) hoặc "second" (nhân vật 2). {cast}"""
+- "voice" của câu thoại: {speakers}. {cast}"""
 
 VIDEO_TYPES = {
     "howto": dict(
@@ -142,7 +143,7 @@ class Step:
     library_image: str | None = None  # id asset thư viện (ảnh/video) do LLM chọn
     media: str | None = None  # "video" | "image": loại nội dung nên tìm trên mạng cho bước này
     extra_assets: list[str] = field(default_factory=list)  # id asset thư viện ghép nối tiếp sau library_image
-    # Câu thoại có diễn xuất (Đạo diễn AI): [{"text", "mood", "voice": "main"|"second", "sfx", "sound", "camera",
+    # Câu thoại có diễn xuất (Đạo diễn AI): [{"text", "mood", "voice": "main"|"second"|"third"|"fourth", "sfx", "sound", "camera",
     # "sticker": {"asset": id} | {"path": ...}, "pop_text"}]. Chỉ dùng khi ghép lại đúng bằng narration.
     lines: list[dict] = field(default_factory=list)
     # Hình theo thứ tự: [{"asset": id}] hoặc [{"path", "media", "credit", "query"}] (ảnh/clip AI đã tải về)
@@ -153,6 +154,9 @@ class Step:
     overlay: dict | None = None
     # Chuyển động ảnh của cảnh (xem effects.ALL_MOTIONS) hoặc None: tự chọn theo cảm xúc câu thoại
     motion: str | None = None
+    # Tiếng phát khi chuyển VÀO cảnh này (style.transition_sound "auto"): tên tiếng tổng hợp (cast.TRANSITION_NAMES)
+    # hoặc id âm thanh thư viện; None = hệ thống tự chọn
+    transition_sound: str | None = None
 
     def acted_lines(self) -> list[dict]:
         return acted(self.lines, self.narration)
@@ -407,8 +411,8 @@ def normalize_line(value) -> dict | None:
     if not text:
         return None
     line: dict = {"text": text, "mood": mood_of(value.get("mood"))}
-    if value.get("voice") == "second":
-        line["voice"] = "second"
+    if value.get("voice") in SPEAKERS[1:]:
+        line["voice"] = value["voice"]
     if value.get("sfx") in SFX_NAMES:
         line["sfx"] = value["sfx"]
     sound = str(value.get("sound") or "").strip()
@@ -451,6 +455,7 @@ def parse_script(data: dict, default_title: str) -> Script:
                 title_card=bool(s.get("title_card")),
                 overlay=normalize_overlay(s.get("overlay")),
                 motion=s.get("motion") if s.get("motion") in SCENE_MOTIONS else None,
+                transition_sound=" ".join(str(s.get("transition_sound") or "").split())[:80] or None,
             )
         )
     if not steps or any(not st.narration for st in steps):
@@ -552,10 +557,14 @@ def generate_script(
     voice: str | None = None,
     writing: str = "auto",
     cast: str = "",
+    speakers: tuple[str, ...] | None = None,
+    cast_rule: str = "",
 ) -> Script:
     """voice: mô tả giọng người dùng đã chọn (vd "vi-VN-HoaiMyNeural, cao độ +4Hz, tốc độ +0%"). Có giá trị nghĩa là
     AI được quyền tinh chỉnh giọng (trường "voice_tuning" của kịch bản); None = giữ nguyên giọng người dùng chọn.
-    writing: phong cách viết (writing.STYLES). cast: câu mô tả hai giọng đọc khi viết kiểu hai nhân vật."""
+    writing: phong cách viết (writing.STYLES). cast: câu mô tả các giọng đọc (nhân vật nào giọng nào).
+    speakers: dàn giọng người dùng đặt — các giá trị "voice" AI được gán cho câu thoại (rỗng/một giọng: không gán);
+    None = tự động như cũ (chỉ kiểu hai nhân vật mới có "voice" main/second). cast_rule: luật giọng của dàn giọng."""
     from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, sentence_lines
     from .writing import EXPRESSIVE_RULE, writing_style
 
@@ -576,9 +585,14 @@ def generate_script(
     tone = " ".join((tone or "").split())[:200] or (style.tone if writing != "auto" else "")
     system = system.replace("{tone}", f"\n- Giọng văn: {tone}." if tone else "")
     system = system.replace("{moods}", "; ".join(f"{k} ({m.label})" for k, m in MOODS.items()))
-    system = system.replace("{voice_example}", ', "voice": "main"' if style.dialogue else "")
-    system = system.replace("{voice_line}", VOICE_LINE.replace("{cast}", cast).rstrip() if style.dialogue else "")
-    system = system.replace("{writing_rule}", style.classic).replace("{expressive_rule}", EXPRESSIVE_RULE)
+    cast_set = speakers is not None
+    voices = speakers if cast_set else SPEAKERS[:2] if style.dialogue else ()
+    voiced = len(voices) > 1
+    who = " hoặc ".join(f'"{name}" (nhân vật {i + 1})' for i, name in enumerate(voices))
+    system = system.replace("{voice_example}", ', "voice": "main"' if voiced else "")
+    system = system.replace("{voice_line}", VOICE_LINE.replace("{speakers}", who).replace("{cast}", cast).rstrip() if voiced else "")
+    system = system.replace("{writing_rule}", style.classic + (f"\n- {cast_rule}" if cast_rule else ""))
+    system = system.replace("{expressive_rule}", EXPRESSIVE_RULE)
     system = system.replace("{library_field}", LIBRARY_FIELD if library else "")
     # Chế độ tự động: LLM quyết định bước nào dùng clip video, bước nào dùng ảnh
     system = system.replace("{media_field}", MEDIA_FIELD if web_media == "auto" else "")
@@ -623,6 +637,10 @@ def generate_script(
         if library:
             _assign_library(script, library, library_mode)
         _act_plain_text(script, sentence_lines)
+        if cast_set:
+            for line in [*script.intro_lines, *script.outro_lines, *(l for st in script.steps for l in st.lines)]:
+                if line.get("voice") not in voices[1:]:
+                    line.pop("voice", None)  # giọng ngoài dàn giọng (vd giọng phụ khi người dùng chọn một giọng)
         if not voice:
             script.voice_tuning = None  # người dùng không cho AI chỉnh giọng
         if same_text(script.title, short_title(topic, 200)) or same_text(script.title, topic):

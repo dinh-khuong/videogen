@@ -374,6 +374,10 @@ export type VideoStyle = {
   accent: string;
   progressBar: boolean;
   sfx: boolean;
+  /** tiếng khi chuyển cảnh; "default" = như cũ (tiếng “vút” theo sfx ở kiểu chuyển trượt/quét) */
+  transitionSound: TransitionSound;
+  /** id asset audio phát ở mọi lần chuyển cảnh (transitionSound "asset") */
+  transitionSoundId: string | null;
   /** id asset ảnh làm logo (góc trên phải) */
   logoId: string | null;
   /** lời kêu gọi hiện ở cuối video */
@@ -388,9 +392,85 @@ export const DEFAULT_STYLE: VideoStyle = {
   accent: ACCENTS[0].value,
   progressBar: true,
   sfx: true,
+  transitionSound: "default",
+  transitionSoundId: null,
   logoId: null,
   cta: "",
 };
+
+/** Tiếng khi chuyển cảnh (khớp engine/videogen/cast.py TRANSITION_SOUNDS). */
+export const TRANSITION_SOUNDS = {
+  default: { label: "Mặc định", hint: "Tiếng “vút” ở kiểu chuyển trượt/quét khi bật “Hiệu ứng âm thanh”" },
+  off: { label: "Không có", hint: "Chuyển cảnh im lặng" },
+  whoosh: { label: "Vút", hint: "Tiếng gió lướt qua ở mọi lần chuyển cảnh" },
+  pop: { label: "Tách", hint: "Tiếng “pop” ngắn, gọn" },
+  ding: { label: "Ting", hint: "Chuông nhẹ, hợp video mẹo/kiến thức" },
+  boom: { label: "Bùm", hint: "Trầm, mạnh — hợp video kịch tính, meme" },
+  scratch: { label: "Rít đĩa", hint: "Kiểu “khoan đã”, hài hước" },
+  bonk: { label: "Cốp", hint: "Tiếng gõ vui nhộn" },
+  asset: { label: "Âm thanh trong Assets", hint: "Một file âm thanh ngắn bạn chọn, phát ở mọi lần chuyển" },
+  auto: { label: "AI / thư viện chọn", hint: "Đạo diễn AI chọn tiếng cho từng cảnh; kịch bản nhanh dùng tiếng chuyển cảnh trong Assets (whoosh, swoosh...)" },
+} as const;
+export type TransitionSound = keyof typeof TRANSITION_SOUNDS;
+
+/** Số người nói tối đa trong một video (khớp engine/videogen/cast.py). */
+export const MAX_SPEAKERS = 4;
+
+/** Cách chuyển giọng khi video có nhiều người nói. */
+export const VOICE_SWITCHES = {
+  scene: { label: "Đổi giọng theo cảnh", hint: "Mỗi cảnh một người đọc, lần lượt xoay vòng các giọng (như nhiều người dẫn thay phiên)." },
+  character: { label: "Theo nhân vật / lời thoại", hint: "AI gán từng câu thoại cho một nhân vật, các giọng đối đáp như hội thoại, podcast." },
+} as const;
+export type VoiceSwitch = keyof typeof VOICE_SWITCHES;
+
+/** Giọng thứ 2..4 trong video nhiều giọng: giọng, tốc độ, cao độ riêng và tên nhân vật (tùy chọn). */
+export type CastVoice = { voice: string; rate: string; pitch: string; name: string };
+
+/** Dàn giọng của video do người dùng đặt. Không có (null) = tự động như trước: giọng thứ hai đọc xen kẽ, AI thêm giọng phụ khi cần. */
+export type VoiceCast = {
+  /** số người nói 1-4 */
+  count: number;
+  switchBy: VoiceSwitch;
+  /** tên nhân vật của giọng chính (tùy chọn) */
+  mainName: string;
+  /** giọng 2..count */
+  extra: CastVoice[];
+};
+
+export const MAX_CAST_NAME_CHARS = 30;
+const RATE_RE = /^[+-]\d{1,3}%$/;
+const PITCH_RE = /^[+-]\d{1,3}Hz$/;
+
+/** Chuẩn hóa dàn giọng gửi lên / lưu trong trình duyệt (giá trị lạ bị bỏ; thiếu giọng thì giảm số người nói). */
+export function normalizeCast(raw: unknown): VoiceCast | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Partial<VoiceCast>;
+  const name = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, MAX_CAST_NAME_CHARS) : "");
+  const wanted = Math.min(Math.max(Math.round(Number(c.count) || 1), 1), MAX_SPEAKERS);
+  const extra = (Array.isArray(c.extra) ? c.extra : [])
+    .filter((v): v is CastVoice => !!v && typeof v === "object" && typeof v.voice === "string" && VOICE_RE.test(v.voice))
+    .slice(0, wanted - 1)
+    .map((v) => ({
+      voice: v.voice,
+      rate: typeof v.rate === "string" && RATE_RE.test(v.rate) ? v.rate : "+0%",
+      pitch: typeof v.pitch === "string" && PITCH_RE.test(v.pitch) ? v.pitch : "+0Hz",
+      name: name(v.name),
+    }));
+  return {
+    count: extra.length + 1,
+    switchBy: c.switchBy === "scene" ? "scene" : "character",
+    mainName: name(c.mainName),
+    extra,
+  };
+}
+
+/** Giọng gợi ý cho người nói thứ index+1: giọng của ngôn ngữ (rồi giọng đa ngôn ngữ) chưa ai dùng, xen kẽ nam/nữ. */
+export function suggestCastVoice(language: string, taken: string[], index: number): CastVoice {
+  const pool = [...languageOf(language).voices, ...MULTILINGUAL_VOICES].map((v) => v.value);
+  const voice = pool.find((v) => !taken.includes(v)) ?? pool[index % pool.length];
+  // Giọng phải dùng lại (hết giọng khác): đổi cao độ cho dễ phân biệt
+  return { voice, rate: "+0%", pitch: taken.includes(voice) ? (index % 2 ? "+6Hz" : "-6Hz") : "+0Hz", name: "" };
+}
 
 /** Giọng đọc của video. */
 export type VoiceSettings = {
@@ -403,6 +483,10 @@ export type VoiceSettings = {
   effect: VoiceEffect;
   /** AI được tinh chỉnh cao độ/tốc độ quanh mức đã chọn cho hợp không khí video */
   aiTune: boolean;
+  /** số người nói, chuyển giọng theo cảnh/nhân vật, giọng riêng từng người; null = tự động (như trước) */
+  cast: VoiceCast | null;
+  /** giữ giọng đều suốt video: không đổi tốc độ/cao độ theo cảm xúc từng câu */
+  steady: boolean;
 };
 
 export const DEFAULT_VOICE: VoiceSettings = {
@@ -413,10 +497,12 @@ export const DEFAULT_VOICE: VoiceSettings = {
   pitch: "+0Hz",
   effect: "none",
   aiTune: true,
+  cast: null,
+  steady: false,
 };
 
 /** Giọng kiểu các kênh quen thuộc (tiếng Việt): đặt cùng lúc giọng, tốc độ, cao độ, hiệu ứng. */
-export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2" | "aiTune"> }[] = [
+export const VOICE_PERSONAS: { label: string; hint: string; voice: Omit<VoiceSettings, "language" | "voice2" | "aiTune" | "cast" | "steady"> }[] = [
   { label: "Kênh kiến thức", hint: "Nam trầm, đọc nhanh vừa", voice: { voice: "vi-VN-NamMinhNeural", rate: "+10%", pitch: "-6Hz", effect: "none" } },
   { label: "Chị Google", hint: "Giọng meme kinh điển", voice: { voice: "gtts:vi", rate: "+15%", pitch: "+0Hz", effect: "none" } },
   { label: "Anh Google", hint: "Giọng Google nam, trầm", voice: { voice: "gtts:vi-male", rate: "+15%", pitch: "+0Hz", effect: "none" } },
@@ -448,6 +534,8 @@ export const LEGACY_STYLE: VideoStyle = {
   accent: ACCENTS[0].value,
   progressBar: false,
   sfx: false,
+  transitionSound: "default",
+  transitionSoundId: null,
   logoId: null,
   cta: "",
 };
@@ -465,6 +553,8 @@ export function normalizeStyle(raw: Partial<VideoStyle> | null | undefined): Vid
     accent: typeof s.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(s.accent) ? s.accent.toLowerCase() : DEFAULT_STYLE.accent,
     progressBar: s.progressBar ?? DEFAULT_STYLE.progressBar,
     sfx: s.sfx ?? DEFAULT_STYLE.sfx,
+    transitionSound: pick(s.transitionSound, TRANSITION_SOUNDS, DEFAULT_STYLE.transitionSound),
+    transitionSoundId: s.transitionSound === "asset" && typeof s.transitionSoundId === "string" && s.transitionSoundId ? s.transitionSoundId : null,
     logoId: typeof s.logoId === "string" && s.logoId ? s.logoId : null,
     cta: typeof s.cta === "string" ? s.cta.replace(/\s+/g, " ").trim().slice(0, MAX_CTA_CHARS) : "",
   };
@@ -482,7 +572,7 @@ export type Preset = {
   webMedia: "image" | "video" | "auto";
   clipsPerStep: number;
   voice: Pick<VoiceSettings, "rate" | "pitch">;
-  style: Omit<VideoStyle, "logoId" | "cta" | "accent">;
+  style: Omit<VideoStyle, "logoId" | "cta" | "accent" | "transitionSound" | "transitionSoundId">;
 };
 
 export const PRESETS: Preset[] = [

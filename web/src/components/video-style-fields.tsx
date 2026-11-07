@@ -11,32 +11,43 @@ import {
   FPT_VOICES,
   ZEROTTS_VOICES,
   LANGUAGES,
+  MAX_CAST_NAME_CHARS,
   MAX_CTA_CHARS,
+  MAX_SPEAKERS,
   MULTILINGUAL_VOICES,
   PACINGS,
   PITCH_MAX,
   PITCH_MIN,
+  PITCHES,
   RATES,
+  SOUND_EFFECT_MAX_SECONDS,
   SUBTITLE_STYLES,
   TRANSITIONS,
+  TRANSITION_SOUNDS,
   VOICE_EFFECTS,
   VOICE_MOODS,
   VOICE_PERSONAS,
+  VOICE_SWITCHES,
   gttsMaleVoice,
   gttsVoice,
   hzValue,
   languageOf,
   pitchHz,
   pitchLabel,
+  suggestCastVoice,
   voiceLabel,
+  type CastVoice,
   type ColorFilter,
   type Pacing,
   type SubtitleStyle,
   type TransitionKind,
+  type TransitionSound,
   type VideoStyle,
   type Voice,
+  type VoiceCast,
   type VoiceEffect,
   type VoiceSettings,
+  type VoiceSwitch,
 } from "@/lib/video-options";
 import { PAUSE_MEDIA_EVENT, pauseOtherMedia } from "./media-guard";
 import { AssetThumb } from "./assets-library";
@@ -440,20 +451,22 @@ export function VoiceFields({
             <VoicePreview player={player} params={previewParams(value.voice, value)} onPlay={() => rememberVoice(value.voice)} />
           </div>
         </Field>
-        <Field
-          label={dialogue ? "Giọng nhân vật 2" : "Giọng thứ hai (đọc xen kẽ)"}
-          hint={dialogue ? "Giọng chính là nhân vật 1. Để trống: tự chọn giọng khác giới với giọng chính." : "Các bước chẵn dùng giọng này, như hai người dẫn."}
-        >
-          <div className="flex gap-2">
-            <select className={inputClass} value={value.voice2} onChange={(e) => set({ voice2: e.target.value })}>
-              <option value="">{dialogue ? "Tự chọn (khác giới)" : "Không dùng"}</option>
-              <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} zerotts={zerotts} />
-            </select>
-            {value.voice2 && (
-              <VoicePreview player={player} params={previewParams(value.voice2, value)} onPlay={() => rememberVoice(value.voice2)} />
-            )}
-          </div>
-        </Field>
+        {!value.cast && (
+          <Field
+            label={dialogue ? "Giọng nhân vật 2" : "Giọng thứ hai (đọc xen kẽ)"}
+            hint={dialogue ? "Giọng chính là nhân vật 1. Để trống: tự chọn giọng khác giới với giọng chính." : "Các bước chẵn dùng giọng này, như hai người dẫn."}
+          >
+            <div className="flex gap-2">
+              <select className={inputClass} value={value.voice2} onChange={(e) => set({ voice2: e.target.value })}>
+                <option value="">{dialogue ? "Tự chọn (khác giới)" : "Không dùng"}</option>
+                <VoiceOptions language={value.language} current={value.voice2} fpt={fpt} zerotts={zerotts} />
+              </select>
+              {value.voice2 && (
+                <VoicePreview player={player} params={previewParams(value.voice2, value)} onPlay={() => rememberVoice(value.voice2)} />
+              )}
+            </div>
+          </Field>
+        )}
       </div>
       <div>
         <p className="mb-1.5 text-sm font-medium text-zinc-700">Sắc thái giọng</p>
@@ -511,6 +524,185 @@ export function VoiceFields({
           hint={`AI được chỉnh thêm cao độ (±${AI_TUNE_PITCH_LIMIT}Hz) và tốc độ (±${AI_TUNE_RATE_LIMIT}%) quanh mức bạn chọn theo không khí video — vd chuyện ma trầm, chậm hơn; quảng cáo sáng, nhanh hơn. Mức AI chọn và lý do hiện ở trang video, nghe thử được.`}
         />
       )}
+      <CastFields value={value} onChange={(patch) => set(patch)} player={player} fpt={fpt} zerotts={zerotts} dialogue={dialogue} />
+    </div>
+  );
+}
+
+type CastChoice = "auto" | "1" | "2" | "3" | "4";
+
+/** Số người nói, chuyển giọng theo cảnh hay theo nhân vật, giọng/tốc độ/cao độ/tên từng người, giữ giọng đều hay biến hóa. */
+function CastFields({
+  value,
+  onChange,
+  player,
+  fpt,
+  zerotts,
+  dialogue,
+}: {
+  value: VoiceSettings;
+  onChange: (patch: Partial<VoiceSettings>) => void;
+  player: VoicePlayer;
+  fpt: boolean;
+  zerotts: ZeroTtsState;
+  dialogue?: boolean;
+}) {
+  const cast = value.cast;
+  const setCast = (patch: Partial<VoiceCast>) => cast && onChange({ cast: { ...cast, ...patch } });
+  const setExtra = (i: number, patch: Partial<CastVoice>) =>
+    cast && setCast({ extra: cast.extra.map((v, k) => (k === i ? { ...v, ...patch } : v)) });
+  const choose = (choice: CastChoice) => {
+    if (choice === "auto") return onChange({ cast: null });
+    const count = Number(choice);
+    const extra = [...(cast?.extra ?? [])].slice(0, count - 1);
+    // Thêm người nói: giọng gợi ý chưa ai dùng (giọng thứ hai cũ được giữ làm người nói 2)
+    while (extra.length < count - 1) {
+      const taken = [value.voice, ...extra.map((v) => v.voice)];
+      extra.push(extra.length === 0 && value.voice2 && !taken.includes(value.voice2)
+        ? { voice: value.voice2, rate: value.rate, pitch: value.pitch, name: "" }
+        : suggestCastVoice(value.language, taken, extra.length + 1));
+    }
+    // Viết kiểu hai nhân vật thì mặc định chuyển giọng theo lời thoại; còn lại giữ lựa chọn trước
+    onChange({ cast: { count, switchBy: cast?.switchBy ?? (dialogue ? "character" : "scene"), mainName: cast?.mainName ?? "", extra } });
+  };
+  const choice: CastChoice = cast ? (String(cast.count) as CastChoice) : "auto";
+  const hints: Record<CastChoice, string> = {
+    auto: value.voice2
+      ? "Như trước: giọng thứ hai đọc xen kẽ các bước (kịch bản hội thoại: là nhân vật 2)."
+      : "Như trước: một giọng chính; Đạo diễn AI có thể thêm giọng phụ chen ngang khi cần.",
+    "1": "Đúng một giọng cả video, không có giọng phụ chen ngang.",
+    "2": "",
+    "3": "",
+    "4": "",
+  };
+  return (
+    <div className="space-y-4 rounded-xl p-3 ring-1 ring-zinc-200">
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-zinc-700">Số người nói trong video</p>
+        <Segmented<CastChoice>
+          value={choice}
+          onChange={choose}
+          options={[
+            { value: "auto", label: "Tự động" },
+            ...Array.from({ length: MAX_SPEAKERS }, (_, i) => ({ value: String(i + 1) as CastChoice, label: `${i + 1} giọng` })),
+          ]}
+        />
+        {hints[choice] && <p className="mt-1 text-xs text-zinc-500">{hints[choice]}</p>}
+        {cast?.count === 1 && dialogue && (
+          <p className="mt-1 text-xs text-amber-700">Phong cách “Hai nhân vật” cần ít nhất 2 giọng: với 1 giọng mọi câu do giọng chính đọc.</p>
+        )}
+      </div>
+
+      {cast && cast.count > 1 && (
+        <>
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-zinc-700">Chuyển giọng</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(Object.keys(VOICE_SWITCHES) as VoiceSwitch[]).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={cast.switchBy === k}
+                  onClick={() => setCast({ switchBy: k })}
+                  className={cx(
+                    "rounded-xl p-3 text-left ring-1 transition-colors",
+                    cast.switchBy === k ? "bg-brand-50 ring-2 ring-brand-500" : "bg-surface ring-zinc-200 hover:ring-zinc-300",
+                  )}
+                >
+                  <p className={cx("text-sm font-medium", cast.switchBy === k ? "text-brand-700" : "text-zinc-800")}>{VOICE_SWITCHES[k].label}</p>
+                  <p className="mt-0.5 text-xs text-zinc-500">{VOICE_SWITCHES[k].hint}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-zinc-700">{cast.switchBy === "character" ? "Nhân vật" : "Người dẫn"} và giọng</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className={cx(inputClass, "sm:w-32")}
+                maxLength={MAX_CAST_NAME_CHARS}
+                value={cast.mainName}
+                onChange={(e) => setCast({ mainName: e.target.value })}
+                placeholder="Tên người 1"
+                aria-label="Tên người nói 1"
+              />
+              <p className="text-sm text-zinc-600">
+                Giọng chính ở trên: <span className="font-medium">{voiceLabel(value.voice)}</span> · {value.rate} · {value.pitch}
+              </p>
+            </div>
+            {cast.extra.map((v, i) => (
+              <div key={i} className="flex flex-wrap gap-2">
+                <input
+                  className={cx(inputClass, "sm:w-32")}
+                  maxLength={MAX_CAST_NAME_CHARS}
+                  value={v.name}
+                  onChange={(e) => setExtra(i, { name: e.target.value })}
+                  placeholder={`Tên người ${i + 2}`}
+                  aria-label={`Tên người nói ${i + 2}`}
+                />
+                <select className={cx(inputClass, "min-w-48 flex-1 sm:w-auto")} value={v.voice} onChange={(e) => setExtra(i, { voice: e.target.value })} aria-label={`Giọng người nói ${i + 2}`}>
+                  <VoiceOptions language={value.language} current={v.voice} fpt={fpt} zerotts={zerotts} />
+                </select>
+                <select className={cx(inputClass, "sm:w-40")} value={v.rate} onChange={(e) => setExtra(i, { rate: e.target.value })} aria-label={`Tốc độ người nói ${i + 2}`}>
+                  {!RATES.some((r) => r.value === v.rate) && <option value={v.rate}>{v.rate}</option>}
+                  {RATES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <select className={cx(inputClass, "sm:w-44")} value={v.pitch} onChange={(e) => setExtra(i, { pitch: e.target.value })} aria-label={`Cao độ người nói ${i + 2}`}>
+                  {!PITCHES.some((p) => p.value === v.pitch) && <option value={v.pitch}>{v.pitch}</option>}
+                  {PITCHES.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label} ({p.value})
+                    </option>
+                  ))}
+                </select>
+                <VoicePreview player={player} params={previewParams(v.voice, { ...value, rate: v.rate, pitch: v.pitch })} />
+              </div>
+            ))}
+            <p className="text-xs text-zinc-500">
+              {cast.switchBy === "character"
+                ? "Đặt tên để AI gọi đúng tên nhân vật (để trống: AI tự đặt). Mỗi nhân vật luôn giữ đúng giọng của mình."
+                : "Cảnh 1 do người 1 đọc, cảnh 2 người 2... rồi quay vòng. Tên (tùy chọn) để người dẫn gọi nhau."}
+            </p>
+          </div>
+        </>
+      )}
+
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-zinc-700">Đồng bộ giọng</p>
+        <Segmented<"expressive" | "steady">
+          value={value.steady ? "steady" : "expressive"}
+          onChange={(v) => onChange({ steady: v === "steady" })}
+          options={[
+            { value: "expressive", label: "Biến hóa theo cảm xúc", hint: "Lên xuống theo từng câu" },
+            { value: "steady", label: "Giữ đều, nhất quán", hint: "Cùng tốc độ, cao độ suốt video" },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Chọn một âm thanh ngắn trong Assets làm tiếng chuyển cảnh. */
+function TransitionSoundPicker({ value, onChange }: { value: string | null; onChange: (id: string | null) => void }) {
+  const { data } = useApi<Page<AssetItem>>(`/api/assets?kind=audio&maxDuration=${SOUND_EFFECT_MAX_SECONDS}&limit=300`);
+  const current = data?.items.find((a) => a.id === value);
+  return (
+    <div className="space-y-1">
+      <select className={inputClass} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} required>
+        <option value="">Chọn âm thanh...</option>
+        {value && data && !current && <option value={value}>(Âm thanh đã bị xóa — chọn lại)</option>}
+        {data?.items.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.title || a.id}
+            {a.duration ? ` (${a.duration.toFixed(1)}s)` : ""}
+          </option>
+        ))}
+      </select>
+      {data?.total === 0 && <p className="text-xs text-amber-700">Assets chưa có âm thanh ngắn nào: tải file mp3/wav lên trang Assets trước.</p>}
     </div>
   );
 }
@@ -613,7 +805,35 @@ export function StyleFields({ value, onChange }: { value: VideoStyle; onChange: 
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Toggle checked={value.progressBar} onChange={(progressBar) => set({ progressBar })} label="Thanh tiến độ" hint="Vạch màu chạy ở mép trên, giữ chân người xem." />
-        <Toggle checked={value.sfx} onChange={(sfx) => set({ sfx })} label="Hiệu ứng âm thanh" hint="Tiếng “vút” khi chuyển cảnh, “tách” khi hiện nhãn bước." />
+        <Toggle
+          checked={value.sfx}
+          onChange={(sfx) => set({ sfx })}
+          label="Hiệu ứng âm thanh"
+          hint={value.transitionSound === "default" ? "Tiếng “vút” khi chuyển cảnh, “tách” khi hiện nhãn bước." : "Tiếng “tách” khi hiện nhãn bước (tiếng chuyển cảnh chọn riêng bên dưới)."}
+        />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Tiếng khi chuyển cảnh" hint={TRANSITION_SOUNDS[value.transitionSound].hint}>
+          <select
+            className={inputClass}
+            value={value.transitionSound}
+            onChange={(e) => {
+              const transitionSound = e.target.value as TransitionSound;
+              set({ transitionSound, transitionSoundId: transitionSound === "asset" ? value.transitionSoundId : null });
+            }}
+          >
+            {(Object.keys(TRANSITION_SOUNDS) as TransitionSound[]).map((k) => (
+              <option key={k} value={k}>
+                {TRANSITION_SOUNDS[k].label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {value.transitionSound === "asset" && (
+          <Field label="Âm thanh chuyển cảnh" hint={`Âm thanh ngắn (tối đa ${SOUND_EFFECT_MAX_SECONDS} giây) trong Assets, vd tiếng whoosh.`}>
+            <TransitionSoundPicker value={value.transitionSoundId} onChange={(transitionSoundId) => set({ transitionSoundId })} />
+          </Field>
+        )}
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Logo / thương hiệu" hint="Ảnh trong Assets (nên là PNG nền trong suốt), đặt ở góc trên phải.">

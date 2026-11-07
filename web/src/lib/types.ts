@@ -1,5 +1,5 @@
 import type { TokenProvider } from "./token-providers";
-import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceEffect, WritingStyle } from "./video-options";
+import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceCast, VoiceEffect, WritingStyle } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
@@ -115,12 +115,15 @@ export type ScriptStep = {
   overlay?: { ref: { asset: string } | { path: string; media?: "image" | "video" }; position: "br" | "bl" | "tr" | "tl" | "center" } | null;
   /** Chuyển động ảnh của cảnh (vd zoom_in, pan_left, still); bỏ trống: theo cảm xúc câu thoại */
   motion?: string | null;
+  /** Tiếng khi chuyển vào cảnh này (Đạo diễn AI chọn khi tiếng chuyển cảnh là "AI chọn"): tên tiếng có sẵn hoặc id âm thanh trong Assets */
+  transition_sound?: string | null;
 };
 
 export type ScriptLine = {
   text: string;
   mood: string;
-  voice?: "second";
+  /** người nói: bỏ trống = giọng chính / nhân vật 1; second/third/fourth = nhân vật 2/3/4 */
+  voice?: "second" | "third" | "fourth";
   sfx?: string;
   /** id asset audio (âm thanh ngắn trong Assets) phát khi bắt đầu câu */
   sound?: string;
@@ -177,8 +180,12 @@ export type JobInput = {
   numSteps?: number | null;
   language?: string;
   voice?: string;
-  /** giọng thứ hai đọc xen kẽ các bước chẵn; với kịch bản hai nhân vật là giọng nhân vật 2 */
+  /** giọng thứ hai đọc xen kẽ các bước chẵn; với kịch bản hai nhân vật là giọng nhân vật 2 (chỉ khi không có voiceCast) */
   voice2?: string | null;
+  /** số người nói, chuyển giọng theo cảnh/nhân vật, giọng riêng từng người; null/job cũ = tự động như trước */
+  voiceCast?: VoiceCast | null;
+  /** giữ giọng đều: không đổi tốc độ/cao độ theo cảm xúc từng câu (job cũ: không) */
+  voiceSteady?: boolean;
   rate?: string;
   /** cao độ giọng, vd "+6Hz" */
   pitch?: string;

@@ -6,7 +6,10 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
   "topic": "cách pha cà phê phin",
   "script": {...},                          # kịch bản có sẵn (bỏ qua LLM), cùng cấu trúc script.json
   "num_steps": 5, "language": "tiếng Việt", "voice": null, "rate": null,
-  "voice2": null,                           # giọng thứ hai đọc xen kẽ các bước chẵn
+  "voice2": null,                           # giọng thứ hai đọc xen kẽ các bước chẵn (chỉ khi không có voice_cast)
+  "voice_cast": null,                       # dàn giọng (null = tự động, như cũ): {"count": 1-4, "switch": "scene" | "character",
+                                            #   "main_name": "", "voices": [{"voice", "rate", "pitch", "name"}]} (giọng 2..count)
+  "voice_steady": false,                    # giữ giọng đều: không đổi tốc độ/cao độ theo cảm xúc từng câu
   "pitch": "+0Hz",                          # cao độ giọng, vd "+5Hz" / "-8Hz"
   "voice_effect": "none",                   # none | cute | chipmunk | deep | robot | radio | echo
   "ai_voice": false,                        # cho AI tinh chỉnh cao độ/tốc độ giọng cho hợp video (quanh rate/pitch)
@@ -20,6 +23,9 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
             "subtitle_style": "auto",       # auto | box | karaoke | outline | none
             "color_filter": "none",         # none | vivid | warm | cool | cinematic | vintage | bw
             "accent": "#e95420", "progress_bar": false, "sfx": false,
+            "transition_sound": "default",  # default (theo sfx) | off | whoosh | pop | ding | boom | scratch | bonk
+                                            #   | asset (transition_sound_file) | auto (AI/thư viện chọn từng cảnh)
+            "transition_sound_file": "/abs/vut.mp3",
             "logo": "/abs/logo.png", "cta": "Gọi ngay 0909 123 456"},
   "aspect": "16:9",                         # 16:9 | 9:16 | 1:1
   "bg_video": "/abs/gameplay.mp4",          # có -> bố cục 9:16 chia đôi
@@ -41,7 +47,8 @@ Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc scri
                "description": "...", "tags": ["..."],
                "summary": "tóm tắt AI", "ocr_text": "chữ trong asset", "duration": null}],
   "sounds": [{"id": "...", "path": "/abs/tieng.mp3", "description": "...", "tags": [],   # âm thanh ngắn Đạo diễn AI gắn vào
-              "summary": "...", "duration": 1.5}]                                        #   câu thoại (khác nhạc nền "music")
+              "summary": "...", "duration": 1.5}],                                       #   câu thoại (khác nhạc nền "music")
+  "transition_sounds": [...]                # như "sounds": âm thanh ngắn để chọn làm tiếng chuyển cảnh (transition_sound auto)
 }
 
 Kết quả: <work_dir>/result.json (xem RunResult.to_dict) và sự kiện {"type": "result"} trên stdout.
@@ -50,13 +57,14 @@ import json
 import traceback
 from pathlib import Path
 
+from .cast import TRANSITION_SOUNDS, parse_cast
 from .config import ConfigError
 from .events import DIRECTOR_STAGES, JsonReporter
 from .image_search import SEARCH_ENGINES
 from .llm import LibraryAsset
 from .pipeline import IMAGE_STYLES, LIBRARY_MODES, WEB_MEDIA, Options, run
 from .style import VIDEO_TYPES, Style
-from .tts import VOICE_EFFECTS
+from .tts import PITCH_RE, RATE_RE, VOICE_EFFECTS
 from .video_builder import ASPECTS
 from .writing import WRITING_STYLES
 
@@ -66,6 +74,28 @@ def _count(value, limit: int = 20) -> int | None:
     if value is None or value == "":
         return None
     return min(max(int(value), 0), limit)
+
+
+def _check_prosody(rate: str | None, pitch: str | None) -> None:
+    if rate and not RATE_RE.match(rate):
+        raise ValueError(f"Tốc độ đọc không hợp lệ: {rate}")
+    if pitch and not PITCH_RE.match(pitch):
+        raise ValueError(f"Cao độ giọng không hợp lệ: {pitch}")
+
+
+def _sound_assets(items) -> list[LibraryAsset]:
+    return [
+        LibraryAsset(
+            id=str(item["id"]),
+            path=str(item["path"]),
+            description=item.get("description") or "",
+            tags=list(item.get("tags") or []),
+            kind="audio",
+            summary=item.get("summary") or "",
+            duration=float(item["duration"]) if item.get("duration") else None,
+        )
+        for item in items or []
+    ]
 
 
 def _options(spec: dict, reporter: JsonReporter) -> Options:
@@ -104,6 +134,9 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
     if voice_effect not in VOICE_EFFECTS:
         raise ValueError(f"voice_effect không hợp lệ: {voice_effect}")
     style_spec = spec.get("style") or {}
+    transition_sound = style_spec.get("transition_sound") or "default"
+    if transition_sound not in TRANSITION_SOUNDS:
+        raise ValueError(f"transition_sound không hợp lệ: {transition_sound}")
     style = Style(
         pacing=style_spec.get("pacing") or "normal",
         transition=style_spec.get("transition") or "mix",
@@ -114,7 +147,11 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         sfx=bool(style_spec.get("sfx")),
         logo=optional_path("logo", style_spec),
         cta=style_spec.get("cta") or "",
+        transition_sound=transition_sound,
+        transition_sound_file=optional_path("transition_sound_file", style_spec) if transition_sound == "asset" else None,
     )
+    if style.transition_sound == "asset" and not style.transition_sound_file:
+        raise ValueError("transition_sound asset cần transition_sound_file")
 
     return Options(
         aspect=aspect,
@@ -122,6 +159,8 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
         language=spec.get("language") or "tiếng Việt",
         voice=spec.get("voice") or None,
         voice2=spec.get("voice2") or None,
+        voice_cast=parse_cast(spec.get("voice_cast"), _check_prosody),
+        voice_steady=bool(spec.get("voice_steady")),
         rate=spec.get("rate") or None,
         pitch=spec.get("pitch") or None,
         voice_effect=voice_effect,
@@ -155,18 +194,8 @@ def _options(spec: dict, reporter: JsonReporter) -> Options:
             )
             for item in spec.get("library") or []
         ],
-        sounds=[
-            LibraryAsset(
-                id=str(item["id"]),
-                path=str(item["path"]),
-                description=item.get("description") or "",
-                tags=list(item.get("tags") or []),
-                kind="audio",
-                summary=item.get("summary") or "",
-                duration=float(item["duration"]) if item.get("duration") else None,
-            )
-            for item in spec.get("sounds") or []
-        ],
+        sounds=_sound_assets(spec.get("sounds")),
+        transition_sounds=_sound_assets(spec.get("transition_sounds")),
         library_mode=library_mode,
         work_dir=Path(spec["work_dir"]),
         reporter=reporter,

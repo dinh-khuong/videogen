@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from itertools import zip_longest
 from pathlib import Path
 
+from .cast import VoiceCast, cast_note, is_transition_sound, resolve_transition, speaker_of, voice_rule
 from .config import Settings, load_settings
 from .delivery import apply_tuning, assemble, load_line_times, prosody
 from .events import Reporter
@@ -38,7 +39,10 @@ class Options:
     num_steps: int | None = None
     language: str = "tiếng Việt"
     voice: str | None = None
-    voice2: str | None = None  # giọng thứ hai: đọc xen kẽ các bước chẵn (như hai người dẫn)
+    voice2: str | None = None  # giọng thứ hai: đọc xen kẽ các bước chẵn (như hai người dẫn); bỏ qua khi có voice_cast
+    # Dàn giọng: số người nói, chuyển giọng theo cảnh/nhân vật, giọng riêng từng người (None = tự động, cách cũ)
+    voice_cast: VoiceCast | None = None
+    voice_steady: bool = False  # giữ giọng đều: mọi câu đọc đúng tốc độ/cao độ của người nói, không đổi theo cảm xúc
     rate: str | None = None
     pitch: str | None = None  # cao độ giọng, vd "+5Hz" (trong trẻo hơn) hoặc "-8Hz" (trầm hơn)
     voice_effect: str = "none"  # hiệu ứng giọng: cute | chipmunk | deep | robot | radio | echo (xem tts.VOICE_EFFECTS)
@@ -71,6 +75,8 @@ class Options:
     library: list[LibraryAsset] = field(default_factory=list)  # asset ảnh/video của người dùng
     # Âm thanh ngắn (kind "audio") trong thư viện để Đạo diễn AI gắn vào câu thoại như hiệu ứng (khác nhạc nền `music`)
     sounds: list[LibraryAsset] = field(default_factory=list)
+    # Âm thanh ngắn để chọn làm tiếng chuyển cảnh khi style.transition_sound là "auto"
+    transition_sounds: list[LibraryAsset] = field(default_factory=list)
     library_mode: str = "off"  # off | auto (LLM tự chọn nếu phù hợp) | selected (asset là nội dung chính)
     work_dir: Path | None = None  # mặc định output/<tiêu-đề>/
     reporter: Reporter = field(default_factory=Reporter)
@@ -145,12 +151,6 @@ def contrast_voice(voice: str, lang_code: str) -> str:
     if lang_code == "vi":
         return "vi-VN-HoaiMyNeural" if "NamMinh" in voice else "vi-VN-NamMinhNeural"
     return "en-US-AvaMultilingualNeural" if "Andrew" in voice or "Brian" in voice else "en-US-AndrewMultilingualNeural"
-
-
-def cast_note(voice: str, voice2: str) -> str:
-    """Câu cho AI biết hai nhân vật do giọng nào đọc (để đặt tên, xưng hô hợp giọng)."""
-    return (f"Nhân vật 1 do giọng {voice} đọc, nhân vật 2 do giọng {voice2} đọc "
-            "(đoán giới tính theo tên giọng; không chắc thì xưng hô trung tính).")
 
 
 def pick_background(path: Path) -> Path:
@@ -500,49 +500,47 @@ def _prepare_extras(script: Script, library: dict[str, LibraryAsset]) -> tuple[l
 
 
 def _prepare_audio(
-    script: Script, work_dir: Path, voices: tuple[str, str | None], rate: str, pitch: str, reporter: Reporter,
-    fallback_lang: str, effect: str = "none", alternate: bool = True,
+    script: Script, work_dir: Path, voices: list[tuple[str, str, str]], reporter: Reporter,
+    fallback_lang: str, effect: str = "none", by_scene: bool = False, steady: bool = False,
 ) -> dict[str, Path]:
     """Giọng đọc cho mở đầu, từng bước và lời kết.
 
-    alternate: có giọng thứ hai thì các bước chẵn dùng giọng đó (đọc xen kẽ), trừ khi kịch bản là hội thoại (có câu
-    "voice": "second": giọng thứ hai là nhân vật thứ hai). Phần có câu thoại diễn xuất (lines): mỗi câu đọc riêng với
-    cảm xúc (tốc độ/cao độ) và giọng của nó, rồi ghép thành một file cho phần đó.
+    voices: (giọng, tốc độ, cao độ) của từng người nói, người đầu là giọng chính.
+    by_scene: mỗi bước một người đọc, xoay vòng theo thứ tự (mở đầu/lời kết là giọng chính); không thì câu thoại đọc bằng
+    giọng của nhân vật được gán ("voice": "second"...). Phần có câu thoại diễn xuất (lines): mỗi câu đọc riêng với cảm xúc
+    (tốc độ/cao độ lệch quanh mức của người nói, trừ khi steady) và giọng của nó, rồi ghép thành một file cho phần đó.
     """
     audio_dir = work_dir / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
-    main, second = voices
     parts = [(script.intro, acted(script.intro_lines, script.intro)), (script.outro, acted(script.outro_lines, script.outro))]
     parts += [(s.narration, s.acted_lines()) for s in script.steps]
-    if any(l.get("voice") == "second" for _, lines in parts for l in lines):
-        alternate = False
 
-    def job_for(key: str, text: str, voice: str, r: str = rate, p: str = pitch) -> TtsJob:
+    def job_for(key: str, text: str, voice: str, r: str, p: str) -> TtsJob:
         # Giữ khóa cache cũ khi không đổi cao độ (render lại không phải tạo lại giọng)
         parts = (text, voice, r) if p == "+0Hz" else (text, voice, r, p)
         if effect != "none":
             parts += (effect,)
         return TtsJob(text, audio_dir / f"{key}_{_hash(*parts)}.mp3", voice, rate=r, pitch=p)
 
-    texts: dict[str, tuple[str, str]] = {}
+    texts: dict[str, tuple[str, tuple[str, str, str]]] = {}
     performed: dict[str, list[tuple[TtsJob, dict]]] = {}
     keys = ["intro", "outro", *(f"step_{i + 1:02d}" for i in range(len(script.steps)))]
     for k, (key, (text, lines)) in enumerate(zip(keys, parts)):
-        own = second if alternate and second and k >= 2 and (k - 2) % 2 == 1 else main
+        own = (k - 2) % len(voices) if by_scene and k >= 2 else 0
         if lines:
             performed[key] = []
             for j, line in enumerate(lines):
-                voice = (second or own) if line.get("voice") == "second" else own
-                r, p = prosody(rate, pitch, line["mood"])
+                voice, base_rate, base_pitch = voices[own if by_scene else speaker_of(line, len(voices))]
+                r, p = (base_rate, base_pitch) if steady else prosody(base_rate, base_pitch, line["mood"])
                 performed[key].append((job_for(f"{key}_l{j + 1:02d}", line["text"], voice, r, p), line))
         else:
-            texts[key] = (text, own)
-    jobs: dict[str, TtsJob] = {key: job_for(key, text, voice) for key, (text, voice) in texts.items() if text}
+            texts[key] = (text, voices[own])
+    jobs: dict[str, TtsJob] = {key: job_for(key, text, *speaker) for key, (text, speaker) in texts.items() if text}
     all_jobs = list(jobs.values()) + [job for lines in performed.values() for job, _ in lines]
     synthesize_many(
         all_jobs,
-        rate,
-        pitch,
+        voices[0][1],
+        voices[0][2],
         on_progress=lambda d, t: reporter.stage("audio", f"Giọng đọc {d}/{t}", d / t),
         fallback_lang=fallback_lang,
         effect=effect,
@@ -554,6 +552,39 @@ def _prepare_audio(
             assemble([(job.path, line["text"], line["mood"]) for job, line in lines], out)
         paths[key] = out
     return paths
+
+
+def _cast_voices(cast: VoiceCast, voice: str, rate: str, pitch: str, tuning: dict | None) -> list[tuple[str, str, str]]:
+    """(giọng, tốc độ, cao độ) của từng người nói trong dàn giọng. Giọng thêm có tốc độ/cao độ riêng thì cộng cùng phần AI
+    tinh chỉnh như giọng chính; không đặt thì theo mức chung (đã tinh chỉnh)."""
+    voices = [(voice, rate, pitch)]
+    for extra in cast.extra:
+        r, p = apply_tuning(extra.rate or "+0%", extra.pitch or "+0Hz", tuning)
+        voices.append((extra.voice, r if extra.rate else rate, p if extra.pitch else pitch))
+    return voices
+
+
+def _transition_sounds(scene_steps: list[Step | None], opts: Options) -> list[str | Path | None]:
+    """Tiếng phát khi chuyển vào từng cảnh (cảnh đầu không có), khi người dùng chọn tiếng chuyển cảnh khác mặc định.
+
+    auto: tiếng Đạo diễn AI đặt cho cảnh (transition_sound); cảnh không có thì lần lượt dùng các âm thanh trong thư viện trông
+    như tiếng chuyển cảnh (whoosh, swoosh, "chuyển cảnh"...), thư viện không có thì tiếng "vút" tổng hợp."""
+    mode = opts.style.transition_sound
+    if mode in ("default", "off"):
+        return [None] * len(scene_steps)
+    if mode == "asset":
+        fixed: str | Path | None = opts.style.transition_sound_file
+    elif mode != "auto":
+        fixed = mode
+    else:
+        files = {a.id: Path(a.path) for a in [*opts.transition_sounds, *opts.sounds] if Path(a.path).exists()}
+        pool = [files[a.id] for a in opts.transition_sounds if a.id in files and is_transition_sound(a.search_text())]
+        out: list[str | Path | None] = [None]
+        for i, step in enumerate(scene_steps[1:]):
+            chosen = resolve_transition(step.transition_sound if step else None, files)
+            out.append(chosen or (pool[i % len(pool)] if pool else "whoosh"))
+        return out
+    return [None, *([fixed] * (len(scene_steps) - 1))]
 
 
 def _style_for(image: StepImage, opts: Options) -> str:
@@ -618,10 +649,17 @@ def run(
                 voice_desc = f"{voice}, cao độ {pitch}, tốc độ {rate}"
                 if opts.voice_effect != "none":
                     voice_desc += f", hiệu ứng {opts.voice_effect}"
+            cast = opts.voice_cast
+            if cast:
+                cast_voices = [voice, *(v.voice for v in cast.extra)]
+                cast_text, speakers, rule = cast_note(cast_voices, cast.names), cast.speakers if cast.by_character else (), \
+                    voice_rule(cast, cast_voices)
+            else:
+                cast_text, speakers, rule = cast_note([voice, voice2 or contrast_voice(voice, lang.code)]), None, ""
             script = generate_script(
                 topic, settings, opts.num_steps, opts.language, library, opts.library_mode, opts.web_media,
                 video_type=opts.video_type, tone=opts.tone, length=opts.length, voice=voice_desc,
-                writing=opts.writing_style, cast=cast_note(voice, voice2 or contrast_voice(voice, lang.code)),
+                writing=opts.writing_style, cast=cast_text, speakers=speakers, cast_rule=rule,
             )
         work_dir = opts.work_dir or director_dir or OUTPUT_ROOT / slugify(script.title)
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -670,17 +708,29 @@ def run(
     result.images += [img for img in step_overlays if img] + [img for by_line in step_stickers for img in by_line.values()]
 
     director = script.format == "director"
-    all_lines = [*acted(script.intro_lines, script.intro), *acted(script.outro_lines, script.outro),
-                 *(l for st in script.steps for l in st.acted_lines())]
-    dialogue = any(l.get("voice") == "second" for l in all_lines)
-    if dialogue and not voice2:
-        voice2 = contrast_voice(voice, lang.code)
-    voice_label = (f"{voice}, giọng phụ {voice2}" if director or dialogue else f"{voice} + {voice2} xen kẽ") if voice2 else voice
+    cast = opts.voice_cast
+    if cast:
+        voices = _cast_voices(cast, voice, rate, pitch, script.voice_tuning)
+        by_scene = cast.count > 1 and cast.switch == "scene"
+        voice_label = f"{voice}" if cast.count == 1 else \
+            f"{cast.count} giọng {'đổi theo cảnh' if by_scene else 'theo nhân vật'}: " + ", ".join(
+                f"{v} {r} {p}" + (f" ({name})" if name else "") for (v, r, p), name in zip(voices, cast.names))
+    else:
+        all_lines = [*acted(script.intro_lines, script.intro), *acted(script.outro_lines, script.outro),
+                     *(l for st in script.steps for l in st.acted_lines())]
+        dialogue = any(l.get("voice") == "second" for l in all_lines)
+        if dialogue and not voice2:
+            voice2 = contrast_voice(voice, lang.code)
+        voices = [(voice, rate, pitch)] + ([(voice2, rate, pitch)] if voice2 else [])
+        # Cách cũ: giọng thứ hai đọc xen kẽ các bước, trừ khi kịch bản là hội thoại (câu "second" = nhân vật 2)
+        by_scene = bool(voice2) and not director and not dialogue
+        voice_label = (f"{voice}, giọng phụ {voice2}" if director or dialogue else f"{voice} + {voice2} xen kẽ") if voice2 else voice
     effect_label = f", hiệu ứng {opts.voice_effect}" if opts.voice_effect != "none" else ""
-    print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}{effect_label}) ...", flush=True)
+    steady_label = ", giữ giọng đều" if opts.voice_steady else ""
+    print(f"[3/4] Tạo giọng đọc ({voice_label}, tốc độ {rate}, cao độ {pitch}{effect_label}{steady_label}) ...", flush=True)
     reporter.stage("audio", "Đang tạo giọng đọc")
     audio = _prepare_audio(
-        script, work_dir, (voice, voice2), rate, pitch, reporter, lang.code, opts.voice_effect, alternate=not director,
+        script, work_dir, voices, reporter, lang.code, opts.voice_effect, by_scene=by_scene, steady=opts.voice_steady,
     )
 
     def segments(images: list[StepImage]) -> list[Segment]:
@@ -791,6 +841,14 @@ def run(
             if style.cta:
                 outro.append(cta_layer(style.cta, size, fonts, style.accent))
             scenes.append(scene(outro_imgs, "outro", script.outro, outro, True))
+    scene_steps: list[Step | None] = list(script.steps) if director else \
+        [None, *script.steps, *([None] if len(scenes) > len(script.steps) + 1 else [])]
+    entering = _transition_sounds(scene_steps, opts)
+    for sc, sound in zip(scenes, entering):
+        sc.enter_sound = sound
+    if any(entering):
+        names = [s.name if isinstance(s, Path) else s for s in entering if s]
+        print(f"      Tiếng chuyển cảnh: {', '.join(dict.fromkeys(names))} ({len(names)} lần)", flush=True)
     clip_count = sum(1 for seg in steps for img in seg if img.media == "video")
     if clip_count:
         print(f"      Ghép {clip_count} clip video từ {sum(1 for s in steps if any(i.media == 'video' for i in s))} bước", flush=True)

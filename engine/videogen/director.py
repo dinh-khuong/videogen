@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
+from .cast import SPEAKERS, TRANSITION_NAMES, cast_note, is_transition_sound, voice_rule
 from .config import ConfigError, Settings, require
 from .delivery import MOODS, TUNE_PITCH_LIMIT, TUNE_RATE_LIMIT, apply_tuning, mood_of, normalize_tuning
 from .image_search import ProviderPool, UrlRegistry, fetch_image
@@ -181,6 +182,11 @@ SEARCH_SOUNDS_TOOL = {"type": "function", "function": {
     }, "required": []},
 }}
 
+# Chỉ đưa cho AI khi người dùng để AI chọn tiếng chuyển cảnh (Director._tools)
+TRANSITION_PROP = {"type": "string", "description": "Tiếng phát khi chuyển VÀO cảnh này (bỏ trống ở cảnh đầu): "
+                                                    + ", ".join(TRANSITION_NAMES) + " hoặc id âm thanh chuyển cảnh trong thư viện. "
+                                                    "Bỏ trống/auto: hệ thống tự chọn."}
+
 SCENE_PROPS = {
     "heading": {"type": "string", "description": "Nhãn nhỏ góc trên (tùy chọn)."},
     "lines": {"type": "array", "items": LINE_SCHEMA, "description": "Câu thoại của cảnh theo thứ tự đọc (một ý, số câu theo phong cách viết)."},
@@ -272,12 +278,25 @@ class Director:
     def __init__(self, topic: str, settings: Settings, opts: "Options", work_dir: Path, orientation: str) -> None:
         self.topic, self.settings, self.opts, self.work_dir, self.orientation = topic, settings, opts, work_dir, orientation
         self.style = writing_style(opts.writing_style)
-        if self.style.dialogue:
-            from .pipeline import cast_note, contrast_voice
+        voice = opts.voice or settings.tts_voice
+        # Dàn giọng người dùng đặt (None = tự động: giọng chính + giọng phụ "second" khi cần, như cũ)
+        self.voice_cast = opts.voice_cast
+        if self.voice_cast:
+            voices = [voice, *(v.voice for v in self.voice_cast.extra)]
+            self.cast, self.cast_rule = cast_note(voices, self.voice_cast.names), voice_rule(self.voice_cast, voices)
+            # Giá trị "voice" AI được gán cho câu thoại: chỉ khi chuyển giọng theo nhân vật
+            self.speakers = self.voice_cast.speakers if self.voice_cast.by_character else ()
+        else:
+            from .pipeline import contrast_voice
             from .style import language_for
 
-            voice = opts.voice or settings.tts_voice
-            self.cast = cast_note(voice, opts.voice2 or contrast_voice(voice, language_for(opts.language).code))
+            self.cast = cast_note([voice, opts.voice2 or contrast_voice(voice, language_for(opts.language).code)])
+            self.cast_rule = ""
+            self.speakers = SPEAKERS[:2]
+        # Tiếng chuyển cảnh do AI chọn từng cảnh (style.transition_sound "auto"): tiếng tổng hợp + âm thanh thư viện hợp
+        self.transitions = opts.style.transition_sound == "auto"
+        pool = {a.id: a for a in [*opts.transition_sounds, *opts.sounds]}
+        self.transition_pool = {i: a for i, a in pool.items() if is_transition_sound(a.search_text())} if self.transitions else {}
         self.library = {a.id: a for a in opts.library}
         self.sounds = {a.id: a for a in opts.sounds}
         self.memes = [a for a in opts.library if _is_meme(a)]
@@ -484,8 +503,12 @@ class Director:
             line = {"text": " ".join(str(item["text"]).split()), "mood": mood_of(item.get("mood"))}
             if item.get("mood") and item["mood"] not in MOODS:
                 warnings.append(f"mood '{item['mood']}' không có, dùng neutral")
-            if item.get("voice") == "second":
-                line["voice"] = "second"
+            voice = item.get("voice")
+            if voice in self.speakers[1:]:
+                line["voice"] = voice
+            elif voice and voice != "main" and self.voice_cast:
+                warnings.append(f"voice '{voice}' không có trong dàn giọng ({', '.join(self.speakers) or 'chỉ một giọng'}), "
+                                "đọc bằng giọng chính")
             sound = str(item.get("sound") or "").strip()
             if sound:
                 if sound in self.sounds:
@@ -562,6 +585,14 @@ class Director:
                 scene["motion"] = motion
             else:
                 scene.pop("motion", None)
+        if "transition_sound" in args and self.transitions:
+            sound = str(args.get("transition_sound") or "").strip()
+            if not sound or sound == "auto":
+                scene.pop("transition_sound", None)
+            elif sound in TRANSITION_NAMES or sound in self.transition_pool:
+                scene["transition_sound"] = sound
+            else:
+                warnings.append(f"transition_sound '{sound}' không có (dùng {', '.join(TRANSITION_NAMES)} hoặc id trong danh sách)")
 
     def _find(self, scene_id: str) -> int | None:
         return next((i for i, s in enumerate(self.scenes) if s["id"] == scene_id), None)
@@ -858,7 +889,19 @@ class Director:
             if used_sounds and used_sounds.most_common(1)[0][1] >= 3:
                 notes.append(f"Tiếng '{used_sounds.most_common(1)[0][0]}' lặp {used_sounds.most_common(1)[0][1]} lần: dùng tiếng khác cho đỡ nhàm.")
         seconds = sum(1 for l in lines if l.get("voice") == "second")
-        if self.style.dialogue:
+        if self.voice_cast and self.voice_cast.by_character:
+            said = Counter(l.get("voice", "main") for l in lines)
+            share = 1 / (2 * len(self.speakers))  # mỗi nhân vật nói ít nhất chừng nửa phần chia đều
+            quiet = [v for v in self.speakers if said[v] < max(1, share * len(lines))]
+            if quiet:
+                notes.append(f"Nhân vật {', '.join(quiet)} nói quá ít ({', '.join(f'{v}: {said[v]}' for v in self.speakers)} "
+                             f"/{len(lines)} câu): chia lời cho đủ {len(self.speakers)} nhân vật đối đáp.")
+            solo = [s["id"] for s in self.scenes if len(s["lines"]) >= 2 and len({l.get("voice", "main") for l in s["lines"]}) == 1]
+            if len(solo) > len(self.scenes) // 2:
+                notes.append(f"Nhiều cảnh chỉ một nhân vật nói ({', '.join(solo)}): cho nhân vật khác hỏi lại/phản ứng.")
+        elif self.voice_cast:
+            pass  # một giọng, hoặc đổi giọng theo cảnh: hệ thống tự gán giọng, không có gì để soi
+        elif self.style.dialogue:
             if not 0.3 <= seconds / len(lines) <= 0.7:
                 notes.append(f"Mới {seconds}/{len(lines)} câu do nhân vật 2 (voice second) nói: hai nhân vật phải đối đáp gần đều nhau.")
             solo = [s["id"] for s in self.scenes if len(s["lines"]) >= 2 and len({l.get("voice", "main") for l in s["lines"]}) == 1]
@@ -866,6 +909,11 @@ class Director:
                 notes.append(f"Cảnh chỉ một nhân vật nói ({', '.join(solo)}): cho nhân vật kia hỏi lại/phản ứng.")
         elif self.style.humor and not seconds and len(lines) >= 6:
             notes.append("Có thể thêm vài câu giọng phụ (voice second) để đối đáp, đỡ độc thoại.")
+        if self.transitions and len(self.scenes) >= 3:
+            chosen = [s.get("transition_sound") for s in self.scenes[1:]]
+            if not any(chosen):
+                notes.append("Chưa chọn tiếng chuyển cảnh nào (transition_sound): đặt cho các cảnh từ cảnh 2, hợp nhịp từng chỗ "
+                             "chuyển (bỏ trống thì hệ thống tự dùng tiếng \"vút\").")
         clips = [a for a in self.library.values() if a.kind == "video"] + [m for m in self.web.values() if m["media"] == "video"]
         moving = sum(1 for s in self.scenes if s.get("overlay") or any(self._kind_of(v) == "video" for v in s["visuals"])
                      or any(self._kind_of(l.get("sticker", "")) == "video" for l in s["lines"]))
@@ -898,7 +946,8 @@ class Director:
             extra = [x for x in (s.get("heading") and f"nhãn '{s['heading']}'", s.get("title_card") and "title card",
                                  (s.get("meme_top") or s.get("meme_bottom")) and f"meme '{s.get('meme_top', '')} / {s.get('meme_bottom', '')}'",
                                  s.get("overlay") and f"lồng {s['overlay']} ({s.get('overlay_position', 'br')})",
-                                 s.get("motion") and f"chuyển động {s['motion']}")
+                                 s.get("motion") and f"chuyển động {s['motion']}",
+                                 s.get("transition_sound") and f"tiếng chuyển cảnh {s['transition_sound']}")
                      if x]
             visuals = ", ".join(s["visuals"]) or (f"(tự tìm: {s['fallback_query']})" if s.get("fallback_query") else "(KHÔNG CÓ HÌNH)")
             out.append(f"{k}. {s['id']} ~{self._scene_seconds(s):.0f}s | hình: {visuals}" + (f" | {'; '.join(extra)}" if extra else ""))
@@ -954,13 +1003,20 @@ class Director:
             + (" Nhịp dựng: nhanh, dồn dập (hình đổi liên tục, nhiều ảnh)." if self.fast() else ""),
             f"Giọng đọc người dùng chọn: {self.voice_summary()}."
             + (" Bạn được quyền tinh chỉnh bằng tune_voice." if opts.ai_voice else " Giữ nguyên, không chỉnh giọng.")
-            + (f" {self.cast}" if self.style.dialogue else ""),
+            + (f" {self.cast_rule or self.cast}" if self.voice_cast or self.style.dialogue else "")
+            + (" Mọi câu đọc đều giọng (không đổi tốc độ/cao độ theo mood)." if opts.voice_steady else ""),
             f"Thư viện của người dùng: {lib}.",
             "Tìm trên mạng: " + ("được phép (search_web)." if opts.web_images else "TẮT, chỉ dùng thư viện."),
         ]
         if self.sounds:
             parts.append(f"Âm thanh trong thư viện: {len(self.sounds)} tiếng ngắn (search_sounds, gắn vào câu bằng \"sound\"). "
                          "Chỉ dùng các tiếng này, không có sfx tổng hợp.")
+        if self.transitions:
+            pool = "\n".join(a.catalog_line() for a in list(self.transition_pool.values())[:15])
+            parts.append("Tiếng chuyển cảnh: bạn chọn cho từng cảnh (từ cảnh 2) bằng \"transition_sound\" — phát đúng lúc chuyển "
+                         f"vào cảnh đó. Tiếng có sẵn: {', '.join(TRANSITION_NAMES)} (whoosh hợp hầu hết chỗ chuyển; boom/ding "
+                         "cho chỗ bất ngờ/ý hay; scratch khi \"khoan đã\")."
+                         + (f" Âm thanh chuyển cảnh trong thư viện (dùng id):\n{pool}" if pool else ""))
         if opts.library_mode == "selected" and opts.library:
             parts.append("Người dùng ĐÃ CHỌN các asset sau làm nội dung chính, hãy dùng hết theo thứ tự:\n"
                          + "\n".join(a.catalog_line(True) for a in opts.library))
@@ -1028,17 +1084,26 @@ class Director:
     def _tools(self) -> list[dict]:
         """Công cụ cho AI: tune_voice chỉ khi người dùng cho chỉnh giọng. Thư viện có âm thanh thì có search_sounds + "sound"
         và bỏ "sfx" tổng hợp."""
-        tools = [t for t in TOOLS if t["function"]["name"] != "tune_voice" or self.opts.ai_voice]
-        if not self.sounds:
-            return tools
-        tools = copy.deepcopy(tools)
+        tools = copy.deepcopy([t for t in TOOLS if t["function"]["name"] != "tune_voice" or self.opts.ai_voice])
         for tool in tools:
-            lines = tool["function"]["parameters"]["properties"].get("lines")
-            if lines:
-                props = lines["items"]["properties"]
+            params = tool["function"]["parameters"]["properties"]
+            lines = params.get("lines")
+            if not lines:
+                continue
+            props = lines["items"]["properties"]
+            if len(self.speakers) < 2:
+                props.pop("voice", None)  # một giọng / đổi giọng theo cảnh: hệ thống tự gán giọng
+            elif self.voice_cast:
+                props["voice"] = {"type": "string", "enum": list(self.speakers),
+                                  "description": "Nhân vật nói câu này: " + ", ".join(
+                                      f"{v} = nhân vật {i + 1}" + (f" ({n})" if n else "")
+                                      for i, (v, n) in enumerate(zip(self.speakers, self.voice_cast.names)))}
+            if self.transitions:
+                params["transition_sound"] = TRANSITION_PROP
+            if self.sounds:
                 props.pop("sfx", None)
                 props["sound"] = SOUND_PROP
-        return [*tools, SEARCH_SOUNDS_TOOL]
+        return [*tools, SEARCH_SOUNDS_TOOL] if self.sounds else tools
 
     def run(self) -> Script:
         client = OpenAI(
@@ -1056,6 +1121,8 @@ class Director:
                   .replace("{visual_rule}", FAST_VISUAL_RULE.replace("{interval}", f"{self.interval():g}") if self.fast()
                            else VISUAL_RULE)
                   .replace("{max_points}", str(self.max_points())))
+        if self.cast_rule:
+            system += "\n\nGIỌNG ĐỌC (người dùng đặt, ưu tiên hơn luật về giọng phụ ở trên): " + self.cast_rule
         tools = self._tools()
         messages: list[dict] = [
             {"role": "system", "content": system.replace("{language}", self.opts.language)},
@@ -1149,6 +1216,8 @@ class Director:
                 step["overlay"] = {"ref": self._ref(sc["overlay"]), "position": sc.get("overlay_position", "br")}
             if sc.get("motion"):
                 step["motion"] = sc["motion"]
+            if sc.get("transition_sound"):
+                step["transition_sound"] = sc["transition_sound"]
             steps.append(step)
         meta = self.meta or {}
         return parse_script({
@@ -1184,6 +1253,8 @@ class Director:
                 base.update(overlay=overlay_id, overlay_position=overlay.get("position", "br"))
             if step.get("motion"):
                 base["motion"] = step["motion"]
+            if step.get("transition_sound"):
+                base["transition_sound"] = step["transition_sound"]
             self._apply(scene, base, [])
             if scene["lines"]:
                 self.scenes.append(scene)

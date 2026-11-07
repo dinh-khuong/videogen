@@ -49,6 +49,8 @@ function ScriptEditorForm({
           pitch: source.pitch || "+0Hz",
           effect: source.voiceEffect ?? "none",
           aiTune: false,
+          cast: source.voiceCast ?? null,
+          steady: source.voiceSteady === true,
         }
       : { ...DEFAULT_VOICE, aiTune: false };
     return tuning ? { ...base, rate: tuning.final_rate || base.rate, pitch: tuning.final_pitch || base.pitch } : base;
@@ -93,7 +95,9 @@ function ScriptEditorForm({
           libraryMode: "off",
           language: voice.language,
           voice: voice.voice,
-          voice2: voice.voice2 || null,
+          voice2: voice.cast ? null : voice.voice2 || null,
+          voiceCast: voice.cast,
+          voiceSteady: voice.steady,
           rate: voice.rate,
           pitch: voice.pitch,
           voiceEffect: voice.effect,
