@@ -17,6 +17,10 @@ export const DB_PATH = path.join(DATA_DIR, "app.db");
 export const MIGRATIONS_DIR = path.resolve(/* turbopackIgnore: true */ process.cwd(), "drizzle");
 
 export const ENGINE_DIR = path.resolve(/* turbopackIgnore: true */ process.env.ENGINE_DIR || path.join(PROJECT_ROOT, "engine"));
+/** Engine dựng hình bằng ManimGL; dùng chung Python (PYTHON_BIN) và code của ENGINE_DIR (videogen_core, videogen). */
+export const MANIM_ENGINE_DIR = path.resolve(
+  /* turbopackIgnore: true */ process.env.MANIM_ENGINE_DIR || path.join(PROJECT_ROOT, "engine-manim"),
+);
 
 function defaultPython(): string {
   for (const venv of [".venv", "venv"]) {

@@ -226,7 +226,7 @@ export const SOUND_EFFECT_MAX_SECONDS = 10;
 export const PITCH_MIN = -30;
 export const PITCH_MAX = 30;
 
-/** Giới hạn AI được tinh chỉnh quanh mức người dùng chọn (khớp engine/videogen/delivery.py). */
+/** Giới hạn AI được tinh chỉnh quanh mức người dùng chọn (khớp engine/videogen_core/audio/delivery.py). */
 export const AI_TUNE_PITCH_LIMIT = 15;
 export const AI_TUNE_RATE_LIMIT = 20;
 
@@ -301,6 +301,16 @@ export const LENGTHS = {
   long: { label: "Dài", hint: "2-3 phút, 8-12 phần" },
 } as const;
 export type VideoLength = keyof typeof LENGTHS;
+
+/** Engine dựng hình: cùng kịch bản, ảnh/clip, giọng đọc và track âm thanh, chỉ khác cách dựng hình (engine/ và engine-manim/). */
+export const RENDER_ENGINES = {
+  classic: { label: "Cổ điển (moviepy)", hint: "Ảnh chuyển động Ken Burns, chữ vẽ bằng Pillow. Ổn định, dùng từ trước tới nay." },
+  manim: {
+    label: "ManimGL",
+    hint: "Chữ vector sắc nét và hoạt ảnh kiểu 3Blue1Brown, render bằng OpenGL (cần cài manimgl). Cùng giọng đọc và âm thanh.",
+  },
+} as const;
+export type RenderEngine = keyof typeof RENDER_ENGINES;
 
 /** Công cụ tìm ảnh trên mạng (khớp engine/videogen/image_search.py PROVIDERS). */
 export const SEARCH_ENGINES = {
@@ -398,7 +408,7 @@ export const DEFAULT_STYLE: VideoStyle = {
   cta: "",
 };
 
-/** Tiếng khi chuyển cảnh (khớp engine/videogen/cast.py TRANSITION_SOUNDS). */
+/** Tiếng khi chuyển cảnh (khớp engine/videogen_core/audio/cast.py TRANSITION_SOUNDS). */
 export const TRANSITION_SOUNDS = {
   default: { label: "Mặc định", hint: "Tiếng “vút” ở kiểu chuyển trượt/quét khi bật “Hiệu ứng âm thanh”" },
   off: { label: "Không có", hint: "Chuyển cảnh im lặng" },
@@ -413,7 +423,7 @@ export const TRANSITION_SOUNDS = {
 } as const;
 export type TransitionSound = keyof typeof TRANSITION_SOUNDS;
 
-/** Số người nói tối đa trong một video (khớp engine/videogen/cast.py). */
+/** Số người nói tối đa trong một video (khớp engine/videogen_core/audio/cast.py). */
 export const MAX_SPEAKERS = 4;
 
 /** Cách chuyển giọng khi video có nhiều người nói. */

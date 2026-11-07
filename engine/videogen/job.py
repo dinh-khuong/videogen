@@ -3,6 +3,8 @@
 Spec (mọi trường trừ work_dir đều tùy chọn; cần topic hoặc script):
 {
   "work_dir": "/abs/thư/mục/job",          # nơi lưu kịch bản, ảnh, audio, video, result.json
+  "engine": "classic",                      # web chọn lệnh theo trường này: classic = python -m videogen (engine/),
+                                            #   manim = python -m videogen_manim (engine-manim/); engine Python bỏ qua
   "topic": "cách pha cà phê phin",
   "script": {...},                          # kịch bản có sẵn (bỏ qua LLM), cùng cấu trúc script.json
   "num_steps": 5, "language": "tiếng Việt", "voice": null, "rate": null,

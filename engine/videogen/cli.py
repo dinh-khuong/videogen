@@ -378,6 +378,13 @@ def cmd_doctor(argv: list[str]) -> int:
 
         report["moviepy"] = moviepy.__version__
         report["ffmpeg"] = imageio_ffmpeg.get_ffmpeg_exe()
+        # Engine dựng hình thứ hai (engine-manim/): chỉ xem đã cài manimgl chưa, không mở OpenGL cho nhanh
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            report["manimgl"] = version("manimgl")
+        except PackageNotFoundError:
+            report["manimgl"] = None
     except Exception as e:
         report["problems"].append(f"{type(e).__name__}: {e} (chạy: pip install -r requirements.txt)")
     report["ok"] = not report["problems"]

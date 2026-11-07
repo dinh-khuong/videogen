@@ -6,10 +6,10 @@ import readline from "node:readline";
 import { and, asc, eq } from "drizzle-orm";
 import { analyzer } from "./analyzer";
 import { db, nowIso } from "./db";
-import { EVENT_PREFIX, engineArgs, engineEnv, killTree } from "./engine";
+import { EVENT_PREFIX, jobCommand, killTree } from "./engine";
 import { ingestResult, type EngineResult } from "./ingest";
 import { buildSpec, getJobRow, jobDir, updateJob, waitsForAnalysis } from "./jobs";
-import { ENGINE_DIR, PYTHON_BIN, TMP_DIR, ensureDirs } from "./paths";
+import { PYTHON_BIN, TMP_DIR, ensureDirs } from "./paths";
 import { jobs } from "./schema";
 
 const CONCURRENCY = Math.max(1, Number(process.env.JOB_CONCURRENCY) || 1);
@@ -36,7 +36,8 @@ type Running = {
 
 /**
  * Hàng đợi job tạo video. Mỗi job chạy engine Python trong một tiến trình riêng
- * (`python -m videogen job spec.json`), đọc sự kiện tiến độ từ stdout và cập nhật SQLite.
+ * (`python -m videogen job spec.json`, hoặc `python -m videogen_manim job spec.json` với engine ManimGL), đọc sự kiện
+ * tiến độ từ stdout và cập nhật SQLite.
  */
 class JobRunner {
   private running = new Map<string, Running>();
@@ -126,20 +127,22 @@ class JobRunner {
     const dir = jobDir(id);
     fs.mkdirSync(dir, { recursive: true });
 
-    let specPath: string;
+    let command: ReturnType<typeof jobCommand>;
     try {
-      specPath = path.join(dir, "spec.json");
-      fs.writeFileSync(specPath, JSON.stringify(buildSpec(row), null, 2));
+      const specPath = path.join(dir, "spec.json");
+      const spec = buildSpec(row);
+      fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
+      command = jobCommand(spec.engine === "manim" ? "manim" : "classic", specPath);
     } catch (e) {
       updateJob(id, { status: "failed", error: (e as Error).message, finishedAt: nowIso() });
       return;
     }
 
     const log = fs.createWriteStream(path.join(dir, "log.txt"), { flags: "a" });
-    log.write(`\n=== ${nowIso()} — ${PYTHON_BIN} ${engineArgs("job", specPath).join(" ")}\n`);
-    const child = spawn(PYTHON_BIN, engineArgs("job", specPath), {
-      cwd: ENGINE_DIR,
-      env: engineEnv(),
+    log.write(`\n=== ${nowIso()} — ${PYTHON_BIN} ${command.args.join(" ")} (${command.cwd})\n`);
+    const child = spawn(PYTHON_BIN, command.args, {
+      cwd: command.cwd,
+      env: command.env,
       // Tiến trình con làm trưởng nhóm để hủy được cả ffmpeg do nó sinh ra
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],

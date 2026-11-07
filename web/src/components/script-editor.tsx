@@ -103,6 +103,8 @@ function ScriptEditorForm({
           voiceEffect: voice.effect,
           videoType,
           style,
+          // Dựng lại bằng đúng engine của video gốc
+          engine: source?.engine ?? "classic",
           contactId: defaults.contactId ?? null,
           sourceVideoId: defaults.sourceVideoId ?? null,
           musicId: music.musicId || null,

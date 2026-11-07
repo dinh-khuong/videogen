@@ -1,5 +1,5 @@
 import type { TokenProvider } from "./token-providers";
-import type { SearchEngine, VideoLength, VideoStyle, VideoType, VoiceCast, VoiceEffect, WritingStyle } from "./video-options";
+import type { RenderEngine, SearchEngine, VideoLength, VideoStyle, VideoType, VoiceCast, VoiceEffect, WritingStyle } from "./video-options";
 
 // Kiểu dữ liệu dùng chung giữa API (server) và giao diện (client).
 
@@ -202,6 +202,8 @@ export type JobInput = {
   length?: VideoLength;
   /** nhịp dựng, chuyển cảnh, phụ đề, màu, logo, lời kêu gọi... (job cũ không có: dựng như trước) */
   style?: VideoStyle;
+  /** engine dựng hình: classic (moviepy, engine/) hoặc manim (ManimGL, engine-manim/); job cũ: classic */
+  engine?: RenderEngine;
   aspect: "16:9" | "9:16" | "1:1";
   layout: "normal" | "split";
   /** id asset video làm nền (bố cục chia đôi) */
@@ -340,6 +342,8 @@ export type EngineHealth = {
   search_engines?: Partial<Record<SearchEngine, boolean>>;
   video_providers?: string[];
   voice?: string;
+  /** phiên bản manimgl đã cài (engine ManimGL), null = chưa cài */
+  manimgl?: string | null;
   /** có FPT_AI_API_KEY (giọng FPT.AI) */
   fpt_tts?: boolean;
   /** đã cài thư viện zerotts (giọng ZeroTTS chạy trên máy) */

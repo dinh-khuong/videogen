@@ -38,8 +38,13 @@ def main() -> None:
         result = doctor()
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result["ok"] else 1)
+    from videogen.events import JsonReporter
     from videogen.job import run_job
 
-    from .pipeline import run
-
+    try:
+        from .pipeline import run
+    except ImportError as e:  # chưa cài manimgl (hoặc thư viện của nó): báo gọn cho web thay vì traceback
+        JsonReporter().emit("error", message=f"Engine ManimGL thiếu thư viện {e.name or e}: "
+                                             "pip install -r engine-manim/requirements.txt")
+        sys.exit(2)
     sys.exit(run_job(args.spec, run))
